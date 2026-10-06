@@ -1,7 +1,7 @@
 import { requireCohort } from './roster';
 import { COLLECTIONS } from './schema';
 import { App, audited, requireAdmin } from './session';
-import { Doc, HubError, normalizeEmail, text, toBoolean, validateEmail } from './util';
+import { Doc, driveNamePart, HubError, normalizeEmail, text, toBoolean, validateEmail } from './util';
 
 const NAME_LIMIT = 80;
 const BATCH_LIMIT = 8;
@@ -86,8 +86,8 @@ async function present(app: App, cohortId: string) {
     rootName,
     rootUrl: rootId ? `https://drive.google.com/drive/folders/${rootId}` : '',
     rootProblem,
-    prefix: text(record?.FolderPrefix),
-    suffix: text(record?.FolderSuffix),
+    prefix: driveNamePart(record?.FolderPrefix),
+    suffix: driveNamePart(record?.FolderSuffix),
   };
 }
 

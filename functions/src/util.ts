@@ -12,6 +12,12 @@ export function text(value: unknown): string {
   return String(value).trim();
 }
 
+/** Drive prefixes and suffixes keep leading and trailing spaces. Folder names are built from them. */
+export function driveNamePart(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  return String(value);
+}
+
 export function normalizeEmail(value: unknown): string {
   return text(value).toLowerCase();
 }

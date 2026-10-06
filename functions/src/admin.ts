@@ -4,7 +4,7 @@ import { adminSchema, cohortSheetName, COLLECTIONS, docIdFor, fieldConfig, staff
 import { App, audited, requireAdmin } from './session';
 import { validateTicketCategory } from './messaging';
 import { assertSafeResourceHtml } from './formsPure';
-import { Doc, HubError, normalizeEmail, text, toBoolean, uuid, validateEmail } from './util';
+import { Doc, driveNamePart, HubError, normalizeEmail, text, toBoolean, uuid, validateEmail } from './util';
 
 const BUILTIN_QUOTES = [
   'A clear question is the start of a strong essay.',
@@ -142,8 +142,8 @@ async function saveCohort(app: App, _actor: string, record: Doc, originalKey: st
       SheetName: sheetName,
       Status: text(values.Status) || 'Active',
       DriveRootFolderId: existing ? text(existing.DriveRootFolderId) : '',
-      FolderPrefix: existing ? text(existing.FolderPrefix) : '',
-      FolderSuffix: existing ? text(existing.FolderSuffix) : '',
+      FolderPrefix: existing ? driveNamePart(existing.FolderPrefix) : '',
+      FolderSuffix: existing ? driveNamePart(existing.FolderSuffix) : '',
     });
     return { key: cohortId };
   });

@@ -1,7 +1,7 @@
 import { HubUser, normalizeStaffView } from './permissions';
 import { cohortSheetName, COLLECTIONS } from './schema';
 import { App, deny } from './session';
-import { dateOnlyValue, Doc, HubError, normalizeEmail, text, toBoolean } from './util';
+import { dateOnlyValue, Doc, driveNamePart, HubError, normalizeEmail, text, toBoolean } from './util';
 
 export interface CohortEntry {
   id: string;
@@ -41,8 +41,8 @@ export async function listCohorts(app: App, includeInactive = false): Promise<Co
         sheetName: text(record.SheetName) || cohortSheetName(id),
         status: text(record.Status) || 'Active',
         driveRootFolderId: text(record.DriveRootFolderId),
-        prefix: text(record.FolderPrefix),
-        suffix: text(record.FolderSuffix),
+        prefix: driveNamePart(record.FolderPrefix),
+        suffix: driveNamePart(record.FolderSuffix),
       };
     })
     .filter((entry) => entry.id && (includeInactive || entry.status.toLowerCase() !== 'inactive'))
