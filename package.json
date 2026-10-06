@@ -8,6 +8,7 @@
     "test": "npm --prefix functions test",
     "schema": "npm --prefix functions run schema",
     "seed": "npm --prefix functions run seed",
+    "import-sheet": "npm --prefix functions run import-sheet --",
     "emulators": "firebase emulators:start --only auth,functions,firestore"
   },
   "dependencies": {

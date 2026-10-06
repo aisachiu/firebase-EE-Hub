@@ -7,9 +7,10 @@
   },
   "scripts": {
     "build": "tsc",
-    "test": "tsc -p tsconfig.test.json && node --test lib-test/logic.test.js",
+    "test": "tsc -p tsconfig.test.json && node --test lib-test/*.test.js",
     "schema": "node lib/schema-check.js",
-    "seed": "node lib/seed.js"
+    "seed": "node lib/seed.js",
+    "import-sheet": "node lib/import-sheet.js"
   },
   "dependencies": {
     "firebase-admin": "^13.5.0",

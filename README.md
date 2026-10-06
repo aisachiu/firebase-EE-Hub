@@ -34,7 +34,52 @@ The emulator password for those buttons is `ee-hub-demo`. Google sign-in is the 
 
 `npm test` checks phase cycles, milestone permissions, form answers, and ticket routing. `npm run schema` checks field names and that each table has its key. The audit log stays append-only, with no key.
 
+## Import the existing spreadsheet
+
+The Apps Script workbook is the database. `npm run import-sheet` reads that Google Sheet and writes the same tables into Firestore: cohorts, `COHORT: 2026` rosters, staff and students, phases, milestones, forms and `FORM: …` answers, tickets, messages, resources, and the audit log. Sheet dates are stored as `YYYY-MM-DD` or ISO timestamps. Emails are lowercased so they match Google sign-in.
+
+Try it on the emulator first. Start `npm run emulators`, then in another terminal:
+
+```bash
+export GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON=/path/to/service-account.json
+npm run import-sheet -- "https://docs.google.com/spreadsheets/d/SPREADSHEET_ID/edit" --dry-run
+npm run import-sheet -- "https://docs.google.com/spreadsheets/d/SPREADSHEET_ID/edit"
+npm run dev
+```
+
+Share the spreadsheet with the service account email (Viewer is enough). The same JSON used for Drive sync works when that account can read the sheet. If the variable is unset, the command uses application default credentials from `gcloud auth application-default login`.
+
+`--dry-run` prints row counts and does not write. A real import replaces each collection that the workbook contains, including cohort members, ticket messages, and audit logs, so running it again does not duplicate rows. Collections whose tabs are missing are left as they are. Every `FORM:` tab is stored in one response collection, so the import keeps the answers from the form tabs that are present. `CONTENT_PAGES` rows are copied into resources when that resource id is not already there.
+
+Sign-in still uses the email on `USERS-STAFF` or `USERS-STUDENTS`. The import does not create passwords. On the emulator, Google sign-in is the path for those real emails. The demo password buttons only exist for the seeded example accounts.
+
+To load the same workbook into a live project after deploy:
+
+```bash
+npm run import-sheet -- "https://docs.google.com/spreadsheets/d/SPREADSHEET_ID/edit" --production --project=YOUR_PROJECT_ID
+```
+
+That command uses the service account as Firebase Admin. Give that account the Cloud Datastore User role on the project. Leave `FIRESTORE_EMULATOR_HOST` unset.
+
 ## Deploy
+
+Cloud Functions need the Blaze plan. The safest order is: import into the emulator and click through one student, one supervisor, and one coordinator, then deploy, then import into the live project.
+
+1. Create a Firebase project and turn on Authentication → Google, and Firestore.
+2. Add a web app. Put its config in `web/.env.production` (this file is not committed):
+
+```bash
+VITE_FIREBASE_API_KEY=
+VITE_FIREBASE_AUTH_DOMAIN=
+VITE_FIREBASE_PROJECT_ID=
+VITE_FIREBASE_APP_ID=
+```
+
+Do not set `VITE_USE_EMULATORS` for that build.
+
+3. Create `functions/.env` with `EE_TIMEZONE=Asia/Hong_Kong`. To create and share cohort Drive folders, also set `GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON` to the service account key JSON, or to a path to that file, and share the cohort folder with that account. Without it, the hub still runs and the Admin Drive panel says sync is not configured.
+
+4. From this repo:
 
 ```bash
 firebase login
@@ -44,8 +89,7 @@ npm run build:functions
 firebase deploy
 ```
 
-Set `EE_TIMEZONE` (default `Asia/Hong_Kong`) on the function. To create and share cohort Drive folders, set `GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON` to the service account key and share the cohort folder with that account. Without it, the rest of the hub still runs and the Admin Drive panel says sync is not configured.
+5. In Authentication → Settings → Authorized domains, include the Hosting domain Firebase prints after deploy.
+6. Run the import command with `--production` and the same project id. The first sign-in is Google, using an email that is already on the staff or student tab.
 
-## Data
-
-Cohorts, members, phases, milestones, users, subjects, resources, FAQs, quotations, action items, milestone events, form definitions and responses, tickets, messages, to-do templates, and audit logs are Firestore collections. Cohort members and ticket messages are subcollections. This pass does not import a live spreadsheet.
+Hosting serves the built web app. The callable is `eeHub`. Firestore rules deny all client writes, so the function and the import script are the only writers.
