@@ -1,0 +1,10 @@
+node_modules/
+functions/lib/
+functions/lib-test/
+web/dist/
+.env
+functions/.env
+*.log
+.firebase/
+firestore-debug.log
+ui-debug.log
