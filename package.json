@@ -1,0 +1,21 @@
+{
+  "name": "firebase-ee-hub",
+  "private": true,
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "build:functions": "npm --prefix functions run build",
+    "test": "npm --prefix functions test",
+    "schema": "npm --prefix functions run schema",
+    "seed": "npm --prefix functions run seed",
+    "import-sheet": "npm --prefix functions run import-sheet --",
+    "emulators": "firebase emulators:start --only auth,functions,firestore"
+  },
+  "dependencies": {
+    "firebase": "^11.10.0"
+  },
+  "devDependencies": {
+    "firebase-tools": "^14.17.0",
+    "vite": "^6.3.6"
+  }
+}
