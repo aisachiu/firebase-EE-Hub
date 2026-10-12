@@ -1,8 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { getAppBootstrap } from './bootstrap';
 import { lintFormSource, normalizeFormFields, validateFormAnswers, formWritesClosed } from './formsPure';
+import { verifiedGoogleEmail } from './identity';
 import { canCompleteMilestone, HubUser } from './permissions';
 import { validatePhasePrerequisites } from './phaseRules';
+import { App, requireUser } from './session';
+import { Store } from './store';
 import { assigneeForRoute, staffCanSeeTicket, studentCanSeeTicket, TicketShape } from './ticketsPure';
 
 const student: HubUser = { email: 'student@vsa.example.edu', displayName: 'Jamie', role: 'student' };
@@ -18,6 +22,41 @@ const coordinator: HubUser = {
   email: 'coordinator@vsa.example.edu', displayName: 'Alex', role: 'staff',
   permissions: { isStaff: true, isSupervisor: false, isLead: false, isCoordinator: true, isAdmin: true, canAdmin: true },
 };
+
+test('only verified Google identities produce an app email', () => {
+  assert.equal(verifiedGoogleEmail({ token: {
+    email: 'STAFF@VSA.EXAMPLE.EDU',
+    email_verified: true,
+    firebase: { sign_in_provider: 'google.com' },
+  } }), 'staff@vsa.example.edu');
+  assert.throws(() => verifiedGoogleEmail(null), /Sign in with Google/);
+  assert.throws(() => verifiedGoogleEmail({ token: {
+    email: 'staff@vsa.example.edu',
+    email_verified: false,
+    firebase: { sign_in_provider: 'google.com' },
+  } }), /verified Google account/);
+  assert.throws(() => verifiedGoogleEmail({ token: {
+    email: 'staff@vsa.example.edu',
+    email_verified: true,
+    firebase: { sign_in_provider: 'password' },
+  } }), /verified Google account/);
+});
+
+test('unknown identities do not generate audit writes', async () => {
+  let auditWrites = 0;
+  const store = {
+    addAudit: async () => { auditWrites++; },
+    get: async () => null,
+    findBy: async () => null,
+    getMeta: async () => null,
+    list: async () => [],
+  } as unknown as Store;
+  const createApp = (): App => ({ store, email: 'unknown@vsa.example.edu', timeZone: 'Asia/Hong_Kong' });
+
+  await assert.rejects(requireUser(createApp(), 'TEST_UNKNOWN_USER'), /Access denied/);
+  assert.equal((await getAppBootstrap(createApp())).user, null);
+  assert.equal(auditWrites, 0);
+});
 
 test('phase prerequisites reject a cycle and a missing phase', () => {
   const chain = [

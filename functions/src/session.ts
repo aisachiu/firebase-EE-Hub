@@ -61,12 +61,7 @@ export async function currentUser(app: App): Promise<HubUser> {
 export async function requireUser(app: App, operation: string): Promise<HubUser> {
   try {
     return await currentUser(app);
-  } catch (error) {
-    try {
-      await audit(app, 'ACCESS_DENIED', { operation, reason: 'Unauthenticated' }, app.email);
-    } catch (auditError) {
-      console.error('Unable to audit denied access', auditError);
-    }
+  } catch {
     throw new HubError('Access denied.');
   }
 }

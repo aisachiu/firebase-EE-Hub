@@ -3,8 +3,10 @@ functions/lib/
 functions/lib-test/
 web/dist/
 .env
+web/.env.production
 functions/.env
 *.log
 .firebase/
 firestore-debug.log
 ui-debug.log
+r1.json

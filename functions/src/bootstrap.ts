@@ -33,9 +33,7 @@ export async function getAppBootstrap(app: App) {
     let messages = null;
     try { messages = await getOpeningMessages(app); } catch (error) { console.error('Unable to load opening messages', error); }
     return { user, quote, quotes, messages };
-  } catch (error) {
-    try { await audit(app, 'ACCESS_DENIED', { reason: 'No authorized account' }, app.email); }
-    catch (auditError) { console.error('Unable to audit denied login', auditError); }
+  } catch {
     return { user: null, quote, quotes };
   }
 }
