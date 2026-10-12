@@ -144,6 +144,7 @@ async function saveCohort(app: App, _actor: string, record: Doc, originalKey: st
       DriveRootFolderId: existing ? text(existing.DriveRootFolderId) : '',
       FolderPrefix: existing ? driveNamePart(existing.FolderPrefix) : '',
       FolderSuffix: existing ? driveNamePart(existing.FolderSuffix) : '',
+      EEDocTemplateId: existing ? text(existing.EEDocTemplateId) : '',
     });
     return { key: cohortId };
   });
@@ -161,7 +162,7 @@ export async function deleteAdminRecord(app: App, entity: string, keyValue: unkn
       const cohortId = /^\d{4}$/.test(key) ? key : key;
       const existing = await app.store.get(COLLECTIONS.cohorts, cohortId);
       if (!existing) {
-        await app.store.set(COLLECTIONS.cohorts, cohortId, { Cohort: cohortId, SheetName: cohortSheetName(cohortId), Status: 'Inactive', DriveRootFolderId: '', FolderPrefix: '', FolderSuffix: '' });
+        await app.store.set(COLLECTIONS.cohorts, cohortId, { Cohort: cohortId, SheetName: cohortSheetName(cohortId), Status: 'Inactive', DriveRootFolderId: '', FolderPrefix: '', FolderSuffix: '', EEDocTemplateId: '' });
       } else {
         existing.Status = 'Inactive';
         await app.store.set(COLLECTIONS.cohorts, cohortId, existing);

@@ -89,7 +89,7 @@ export async function dispatch(app: App, method: string, args: unknown[]): Promi
     case 'getStudentForm': return getStudentForm(app, args[0]);
     case 'saveStudentForm': return saveStudentForm(app, args[0], args[1]);
     case 'getFormResponse': return getFormResponse(app, args[0], args[1]);
-    case 'getCohortDriveSettings': return getCohortDriveSettings(app, args[0]);
+    case 'getCohortDriveSettings': return getCohortDriveSettings(app, args[0], args[1]);
     case 'saveCohortDriveSettings': return saveCohortDriveSettings(app, args[0], args[1]);
     case 'checkCohortDriveFolders': return checkCohortDriveFolders(app, args[0], args[1], args[2]);
     case 'syncCohortDriveFolders': return syncCohortDriveFolders(app, args[0], args[1], args[2]);
