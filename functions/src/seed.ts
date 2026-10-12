@@ -47,7 +47,7 @@ async function seed() {
     StudentId: STUDENT, DisplayName: 'Jamie Wong', Cohort: '2026', studentEmail: STUDENT, parentEmail: 'family.wong@vsa.example.edu',
   });
   await store.set(COLLECTIONS.cohorts, '2026', {
-    Cohort: '2026', SheetName: 'COHORT: 2026', Status: 'Active', DriveRootFolderId: '', FolderPrefix: 'EE ', FolderSuffix: '',
+    Cohort: '2026', SheetName: 'COHORT: 2026', Status: 'Active', DriveRootFolderId: '', FolderPrefix: 'EE ', FolderSuffix: '', EEDocTemplateId: '',
   });
   await store.setMember('2026', STUDENT, {
     StudentId: STUDENT,

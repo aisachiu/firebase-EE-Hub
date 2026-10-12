@@ -77,7 +77,7 @@ VITE_FIREBASE_APP_ID=
 
 Do not set `VITE_USE_EMULATORS` for that build.
 
-3. Create `functions/.env` with `EE_TIMEZONE=Asia/Hong_Kong`. To create and share cohort Drive folders, also set `GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON` to the service account key JSON, or to a path to that file, and share the cohort folder with that account. Without it, the hub still runs and the Admin Drive panel says sync is not configured.
+3. Create `functions/.env` with `EE_TIMEZONE=Asia/Hong_Kong`. Student Drive folders are not created by a service account. An Admin or Coordinator connects Google Drive in the cohort roster, and that Google account owns the folders and the copied EE documents. Enable the Google Drive API on the Firebase project, and keep the Google sign-in OAuth client internal to the school Workspace so the Drive scope can be granted without a public verification review. The local demo can save a folder link and a template link; it cannot create Drive files.
 
 4. From this repo:
 

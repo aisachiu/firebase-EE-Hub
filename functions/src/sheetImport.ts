@@ -303,6 +303,7 @@ function ensureCohortsForMembers(plan: SheetImportPlan): void {
       DriveRootFolderId: '',
       FolderPrefix: '',
       FolderSuffix: '',
+      EEDocTemplateId: '',
     });
     warn(plan, `Cohort ${member.cohortId} has a roster sheet and no COHORTS row. It was added as Active.`);
   });
