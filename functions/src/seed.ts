@@ -9,10 +9,8 @@ import { addDays, parseActionDate, serializeDateOnly } from './util';
 const PASSWORD = 'ee-hub-demo';
 const PROJECT = process.env.GCLOUD_PROJECT || process.env.GOOGLE_CLOUD_PROJECT || 'demo-ee-hub';
 
-if (process.env.EE_SEED_PRODUCTION !== '1') {
-  process.env.FIRESTORE_EMULATOR_HOST ||= '127.0.0.1:8080';
-  process.env.FIREBASE_AUTH_EMULATOR_HOST ||= '127.0.0.1:9099';
-}
+process.env.FIRESTORE_EMULATOR_HOST = '127.0.0.1:8080';
+process.env.FIREBASE_AUTH_EMULATOR_HOST = '127.0.0.1:9099';
 
 const COORDINATOR = 'coordinator@vsa.example.edu';
 const SUPERVISOR = 'supervisor@vsa.example.edu';
@@ -197,7 +195,7 @@ async function seed() {
     Body: 'I want to write about cities in fiction. Is that too broad for 4,000 words?',
     CreatedAt: now,
   });
-  console.log(`Seeded ${PROJECT}. Demo password for the emulator: ${PASSWORD}`);
+  console.log(`Seeded ${PROJECT} emulators.`);
   console.log(`Student ${STUDENT}`);
   console.log(`Supervisor ${SUPERVISOR}`);
   console.log(`Coordinator ${COORDINATOR}`);

@@ -11,12 +11,15 @@ const config = {
 
 const app = initializeApp(config);
 const auth = getAuth(app);
-const functions = getFunctions(app);
+const functions = getFunctions(app, 'asia-east2');
 const useEmulators = import.meta.env.VITE_USE_EMULATORS === 'true';
 
 if (useEmulators) {
   connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true });
   connectFunctionsEmulator(functions, '127.0.0.1', 5001);
+  window.eeSignInDemo = function(email) {
+    return signInWithEmailAndPassword(auth, email, 'ee-hub-demo');
+  };
 }
 
 const eeHub = httpsCallable(functions, 'eeHub');
@@ -44,10 +47,6 @@ window.eeConnectDrive = function() {
     const credential = GoogleAuthProvider.credentialFromResult(result);
     return credential && credential.accessToken ? credential.accessToken : '';
   });
-};
-
-window.eeSignInDemo = function(email) {
-  return signInWithEmailAndPassword(auth, email, 'ee-hub-demo');
 };
 
 window.eeSignOut = function() {
