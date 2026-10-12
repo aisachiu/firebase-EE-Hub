@@ -584,6 +584,7 @@
         selectedMemberIds: [],
         driveBusy: false,
         driveAccessToken: '',
+        driveSettingsLoaded: false,
         assignmentStudentIds: [],
         importRecords: null,
         journeyOpen: false,
@@ -4971,7 +4972,7 @@
         if (count) count.textContent = state.selectedMemberIds.length + ' selected';
         if (action) action.disabled = state.selectedMemberIds.length === 0;
         if (selectAll) selectAll.checked = selectable.length > 0 && selectable.every(function(input) { return input.checked; });
-        const driveDisabled = state.driveBusy || state.selectedMemberIds.length === 0;
+        const driveDisabled = !state.driveSettingsLoaded || state.driveBusy || state.selectedMemberIds.length === 0;
         const checkDrive = document.getElementById('check-drive-folders');
         const updateDrive = document.getElementById('update-drive-folders');
         if (checkDrive) checkDrive.disabled = driveDisabled;
@@ -5016,8 +5017,16 @@
         ['drive-prefix', 'drive-suffix'].forEach(function(id) {
           document.getElementById(id).addEventListener('input', updateDriveNamePreview);
         });
+        state.driveSettingsLoaded = false;
         applyDriveConnection();
         loadDriveSettings();
+      }
+
+      function setDriveFormLocked(locked) {
+        ['save-drive-root', 'drive-root-url', 'drive-template-url', 'drive-prefix', 'drive-suffix', 'drive-share-student', 'drive-share-parent'].forEach(function(id) {
+          const node = document.getElementById(id);
+          if (node) node.disabled = locked;
+        });
       }
 
       function applyDriveConnection() {
@@ -5065,13 +5074,19 @@
       }
 
       function loadDriveSettings() {
+        setDriveFormLocked(true);
         const request = state.driveAccessToken ? { accessToken: state.driveAccessToken } : {};
         return callServer('getCohortDriveSettings', state.cohortId, request).then(function(settings) {
           state.driveSettings = settings;
+          state.driveSettingsLoaded = true;
           applyDriveFolderSettings(settings);
+          setDriveFormLocked(false);
           updateSelectedCount();
           return settings;
         }).catch(function(error) {
+          state.driveSettingsLoaded = true;
+          setDriveFormLocked(false);
+          updateSelectedCount();
           if (driveConnectionExpired(error)) {
             state.driveAccessToken = '';
             applyDriveConnection();
