@@ -583,6 +583,7 @@
         status: '',
         selectedMemberIds: [],
         driveBusy: false,
+        driveAccessToken: '',
         assignmentStudentIds: [],
         importRecords: null,
         journeyOpen: false,
@@ -4982,32 +4983,106 @@
         const panel = document.getElementById('drive-folder-panel');
         if (!panel) return;
         panel.innerHTML = `<h2>Drive folders</h2>
-          <p class="muted">Create one folder per selected student inside the cohort folder. Each folder link is saved on that student as EE folder. Sharing does not send an email.</p>
+          <p class="muted">Connect Google Drive, then create one folder per selected student inside the cohort folder. The Google account you connect owns the new folders and the copied EE documents, so keep the cohort folder in that account’s My Drive. Students are shared as editors, and no email is sent. A copy of the EE document template is placed in each folder and saved on that student.</p>
+          <div class="toolbar"><button type="button" class="button secondary" id="connect-drive">Connect Google Drive</button><strong id="drive-connect-label">Not connected</strong></div>
           <div class="form-grid">
             <div class="field wide"><label for="drive-root-url">Cohort folder</label>
-              <div class="toolbar"><button type="button" class="button secondary" id="save-drive-root">Save folder link</button><strong id="drive-root-label">No folder selected</strong></div>
+              <div class="toolbar"><button type="button" class="button secondary" id="save-drive-root">Save folder and template</button><strong id="drive-root-label">No folder selected</strong></div>
               <input id="drive-root-url" placeholder="Paste a Google Drive folder link">
               <p class="notice" id="drive-root-problem" hidden></p>
+            </div>
+            <div class="field wide"><label for="drive-template-url">EE document template</label>
+              <strong id="drive-template-label">No template yet</strong>
+              <input id="drive-template-url" placeholder="Paste a Google Doc template link">
+              <p class="notice" id="drive-template-problem" hidden></p>
             </div>
             <div class="field"><label for="drive-prefix">Prefix</label><input id="drive-prefix" maxlength="80"></div>
             <div class="field"><label for="drive-suffix">Suffix</label><input id="drive-suffix" maxlength="80"></div>
           </div>
           <p class="muted" id="drive-name-preview"></p>
-          <label class="field check"><input type="checkbox" id="drive-share-student"> Share with the student as editor</label>
+          <label class="field check"><input type="checkbox" id="drive-share-student" checked> Share with the student as editor</label>
           <label class="field check"><input type="checkbox" id="drive-share-parent"> Share with the parent as viewer</label>
           <div class="toolbar"><button type="button" class="button secondary" id="check-drive-folders" disabled>Check selected</button><button type="button" class="button" id="update-drive-folders" disabled>Create or update selected</button></div>
           <div id="drive-folder-results"></div>`;
+        document.getElementById('connect-drive').addEventListener('click', function() {
+          connectDriveAccount().then(function() {
+            showSuccess('Google Drive connected. Folders and documents you create are owned by this account.');
+            return loadDriveSettings();
+          }).catch(showError);
+        });
         document.getElementById('save-drive-root').addEventListener('click', saveDriveRootFromForm);
         document.getElementById('check-drive-folders').addEventListener('click', function() { runDriveFolderJob(true); });
         document.getElementById('update-drive-folders').addEventListener('click', function() { runDriveFolderJob(false); });
         ['drive-prefix', 'drive-suffix'].forEach(function(id) {
           document.getElementById(id).addEventListener('input', updateDriveNamePreview);
         });
-        callServer('getCohortDriveSettings', state.cohortId).then(function(settings) {
+        applyDriveConnection();
+        loadDriveSettings();
+      }
+
+      function applyDriveConnection() {
+        const label = document.getElementById('drive-connect-label');
+        const button = document.getElementById('connect-drive');
+        if (!label) return;
+        if (window.eeUseEmulators) {
+          label.textContent = 'Local demo saves links only';
+          return;
+        }
+        if (state.driveAccessToken) {
+          label.textContent = 'Connected';
+          if (button) button.textContent = 'Reconnect Google Drive';
+        } else {
+          label.textContent = 'Not connected';
+          if (button) button.textContent = 'Connect Google Drive';
+        }
+      }
+
+      function connectDriveAccount() {
+        if (window.eeUseEmulators) {
+          return Promise.reject(new Error('The local demo cannot connect Google Drive. On the deployed hub, Connect Google Drive uses your own Google account.'));
+        }
+        if (!window.eeConnectDrive) return Promise.reject(new Error('Google Drive is not available in this session.'));
+        return window.eeConnectDrive().then(function(token) {
+          const signedIn = window.eeUser && window.eeUser.email ? String(window.eeUser.email).toLowerCase() : '';
+          const expected = state.user && state.user.email ? String(state.user.email).toLowerCase() : '';
+          if (expected && signedIn && signedIn !== expected) throw new Error('Connect the Google account you are signed in with.');
+          if (!token) throw new Error('Google did not return a Drive connection. Allow Drive access for the account you are signed in with.');
+          state.driveAccessToken = token;
+          applyDriveConnection();
+          return token;
+        }).catch(function(error) {
+          const message = error && error.message ? error.message : String(error);
+          if (/popup-closed|cancelled-popup|popup-blocked/i.test(message)) {
+            throw new Error('The Google Drive window was closed before access was granted.');
+          }
+          throw error instanceof Error ? error : new Error(message);
+        });
+      }
+
+      function ensureDriveToken() {
+        if (state.driveAccessToken) return Promise.resolve(state.driveAccessToken);
+        return connectDriveAccount();
+      }
+
+      function loadDriveSettings() {
+        const request = state.driveAccessToken ? { accessToken: state.driveAccessToken } : {};
+        return callServer('getCohortDriveSettings', state.cohortId, request).then(function(settings) {
           state.driveSettings = settings;
           applyDriveFolderSettings(settings);
           updateSelectedCount();
-        }).catch(showError);
+          return settings;
+        }).catch(function(error) {
+          if (driveConnectionExpired(error)) {
+            state.driveAccessToken = '';
+            applyDriveConnection();
+          }
+          showError(error);
+        });
+      }
+
+      function driveConnectionExpired(error) {
+        const message = error && error.message ? error.message : String(error || '');
+        return message.indexOf('Connect Google Drive again') === 0;
       }
 
       function applyDriveFolderSettings(settings) {
@@ -5016,14 +5091,23 @@
         const url = document.getElementById('drive-root-url');
         const label = document.getElementById('drive-root-label');
         const problem = document.getElementById('drive-root-problem');
+        const template = document.getElementById('drive-template-url');
+        const templateLabel = document.getElementById('drive-template-label');
+        const templateProblem = document.getElementById('drive-template-problem');
         if (!prefix || !settings) return;
         prefix.value = settings.prefix || '';
         suffix.value = settings.suffix || '';
         if (url) url.value = settings.rootUrl || settings.rootFolderId || '';
-        if (label) label.textContent = settings.rootName ? settings.rootName : 'No folder selected';
+        if (label) label.textContent = settings.rootName ? settings.rootName : (settings.rootFolderId ? 'Folder linked' : 'No folder selected');
         if (problem) {
           problem.hidden = !settings.rootProblem;
           problem.textContent = settings.rootProblem || '';
+        }
+        if (template) template.value = settings.templateUrl || settings.templateId || '';
+        if (templateLabel) templateLabel.textContent = settings.templateName ? settings.templateName : (settings.templateId ? 'Template linked' : 'No template yet');
+        if (templateProblem) {
+          templateProblem.hidden = !settings.templateProblem;
+          templateProblem.textContent = settings.templateProblem || '';
         }
         updateDriveNamePreview();
       }
@@ -5035,8 +5119,10 @@
           rootFolderId: (url && url.value.trim()) || saved.rootFolderId || '',
           prefix: document.getElementById('drive-prefix') ? document.getElementById('drive-prefix').value : '',
           suffix: document.getElementById('drive-suffix') ? document.getElementById('drive-suffix').value : '',
+          templateId: document.getElementById('drive-template-url') ? document.getElementById('drive-template-url').value : '',
           shareStudent: !!(document.getElementById('drive-share-student') && document.getElementById('drive-share-student').checked),
-          shareParent: !!(document.getElementById('drive-share-parent') && document.getElementById('drive-share-parent').checked)
+          shareParent: !!(document.getElementById('drive-share-parent') && document.getElementById('drive-share-parent').checked),
+          accessToken: state.driveAccessToken || ''
         };
       }
 
@@ -5055,51 +5141,68 @@
       }
 
       function saveDriveRootFromForm() {
-        const form = readDriveFolderForm();
-        if (!form.rootFolderId) {
-          showError(new Error('Paste a Google Drive folder link.'));
-          return;
-        }
-        const button = document.getElementById('save-drive-root');
-        if (button) button.disabled = true;
-        runMutation('saveCohortDriveSettings', [state.cohortId, form], { key: 'drive-settings:' + state.cohortId }).then(function(settings) {
-          state.driveSettings = settings;
-          applyDriveFolderSettings(settings);
-          if (button) button.disabled = false;
-          showSuccess('Cohort folder saved.');
+        const prepare = state.driveAccessToken || window.eeUseEmulators ? Promise.resolve() : connectDriveAccount();
+        prepare.then(function() {
+          const form = readDriveFolderForm();
+          if (!form.rootFolderId) throw new Error('Paste a Google Drive folder link.');
+          const button = document.getElementById('save-drive-root');
+          if (button) button.disabled = true;
+          return runMutation('saveCohortDriveSettings', [state.cohortId, form], { key: 'drive-settings:' + state.cohortId }).then(function(settings) {
+            state.driveSettings = settings;
+            applyDriveFolderSettings(settings);
+            if (button) button.disabled = false;
+            showSuccess(form.templateId ? 'Cohort folder and EE template saved.' : 'Cohort folder saved.');
+          });
         }).catch(function(error) {
+          const button = document.getElementById('save-drive-root');
           if (button) button.disabled = false;
+          if (driveConnectionExpired(error)) {
+            state.driveAccessToken = '';
+            applyDriveConnection();
+          }
           showError(error);
         });
       }
 
       function runDriveFolderJob(dryRun) {
         if (!state.selectedMemberIds.length || state.driveBusy) return;
-        const form = readDriveFolderForm();
-        if (!form.rootFolderId) {
-          showError(new Error('Choose a cohort folder or paste its link.'));
-          return;
-        }
         const cohortId = state.cohortId;
         const ids = state.selectedMemberIds.slice();
         const results = [];
-        state.driveBusy = true;
-        updateSelectedCount();
+        ensureDriveToken().then(function() {
+          const form = readDriveFolderForm();
+          if (!form.rootFolderId) throw new Error('Choose a cohort folder or paste its link.');
+          state.driveBusy = true;
+          updateSelectedCount();
+          step(0, form);
+        }).catch(function(error) {
+          if (driveConnectionExpired(error)) {
+            state.driveAccessToken = '';
+            applyDriveConnection();
+          }
+          showError(error);
+        });
         function finish(error) {
           state.driveBusy = false;
           updateSelectedCount();
           const resultsNode = document.getElementById('drive-folder-results');
           if (resultsNode && state.cohortId === cohortId) resultsNode.innerHTML = renderDriveFolderResults(results);
           const problemCount = results.filter(function(student) {
-            return student.status === 'error' || student.status === 'ambiguous' || (student.shares || []).some(function(share) { return share.status === 'failed'; });
+            return student.status === 'error' || student.status === 'ambiguous' || (student.doc && student.doc.status === 'error') || (student.shares || []).some(function(share) { return share.status === 'failed'; });
           }).length;
           const countLabel = results.length + ' student' + (results.length === 1 ? '' : 's');
-          if (error) showError(error);
+          if (error) {
+            if (driveConnectionExpired(error)) {
+              state.driveAccessToken = '';
+              applyDriveConnection();
+            }
+            showError(error);
+          }
           else if (problemCount) showSuccess((dryRun ? 'Checked ' : 'Updated ') + countLabel + '. ' + problemCount + ' need attention.');
           else if (!dryRun) showSuccess('Drive folders updated for ' + countLabel + '.');
           else showSuccess('Checked ' + countLabel + '.');
         }
-        function step(offset) {
+        function step(offset, form) {
           if (state.cohortId !== cohortId || !document.getElementById('drive-folder-panel')) {
             state.driveBusy = false;
             return;
@@ -5109,6 +5212,7 @@
             if (!dryRun) refreshAdminSectionSilently();
             return;
           }
+          form = form || readDriveFolderForm();
           const batch = ids.slice(offset, offset + 8);
           const resultsNode = document.getElementById('drive-folder-results');
           if (resultsNode) {
@@ -5121,10 +5225,9 @@
               state.driveSettings = result.settings;
               applyDriveFolderSettings(result.settings);
             }
-            step(offset + batch.length);
+            step(offset + batch.length, form);
           }).catch(function(error) { finish(error); });
         }
-        step(0);
       }
 
       function renderDriveFolderResults(students) {
@@ -5132,11 +5235,15 @@
         return '<ul class="drive-results">' + students.map(function(student) {
           const url = safeUrl(student.url);
           const shares = (student.shares || []).map(driveShareLabel).filter(Boolean).join(' · ');
+          const docUrl = safeUrl(student.doc && student.doc.url);
+          const docLine = student.doc && student.doc.message ? student.doc.message : '';
           return '<li><strong>' + escapeHtml(student.displayName || student.studentId) + '</strong> · ' + escapeHtml(driveStatusLabel(student.status)) +
             (student.folderName ? ' · ' + escapeHtml(student.folderName) : '') +
             (student.message ? '<div class="muted">' + escapeHtml(student.message) + '</div>' : '') +
+            (docLine ? '<div class="muted">' + escapeHtml(docLine) + '</div>' : '') +
             (shares ? '<div class="muted">' + escapeHtml(shares) + '</div>' : '') +
             (url ? '<div><a href="' + escapeHtml(url) + '" target="_blank" rel="noopener noreferrer">Open folder</a></div>' : '') +
+            (docUrl ? '<div><a href="' + escapeHtml(docUrl) + '" target="_blank" rel="noopener noreferrer">Open EE document</a></div>' : '') +
             '</li>';
         }).join('') + '</ul>';
       }
@@ -5161,7 +5268,7 @@
       }
 
       function driveShareLabel(share) {
-        const who = share.who === 'parent' ? 'Parent' : 'Student';
+        const who = share.who === 'parent' ? 'Parent' : (share.who === 'parent document' ? 'Parent document' : (share.who === 'student document' ? 'Student document' : 'Student'));
         if (share.status === 'shared') return who + ' shared';
         if (share.status === 'already') return who + ' already had access';
         if (share.status === 'updated') return who + ' access updated';

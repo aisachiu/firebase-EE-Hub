@@ -39,6 +39,7 @@ export const APP_TABLES: Record<string, TableDef> = {
       { name: 'DriveRootFolderId', type: 'text', editable: false, table: false, form: false },
       { name: 'FolderPrefix', type: 'text', editable: false, table: false, form: false },
       { name: 'FolderSuffix', type: 'text', editable: false, table: false, form: false },
+      { name: 'EEDocTemplateId', type: 'text', editable: false, table: false, form: false },
     ],
   },
   milestoneTemplates: {
