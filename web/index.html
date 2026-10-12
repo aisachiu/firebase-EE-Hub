@@ -518,6 +518,53 @@
         .plan-layout { grid-template-columns: 1fr; }
         .plan-side { position: static; max-height: none; overflow: visible; }
       }
+      .journey-hero { margin: 0 0 14px; background: white; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+      .journey-hero [hidden] { display: none !important; }
+      .journey-hero-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 12px; background: #f8fafb; border-bottom: 1px solid var(--line); }
+      .journey-hero-bar h2 { margin: 0; font-size: 14px; }
+      .journey-hero-toggle { border: 1px solid var(--line); border-radius: 4px; padding: 5px 10px; background: white; color: var(--ink); font-size: 12px; font-weight: 700; }
+      .journey-hero-toggle:hover, .journey-hero-toggle:focus-visible { background: #f4f7f8; }
+      .journey-hero-full { display: flex; gap: 6px; padding: 10px; overflow-x: auto; }
+      .phase-card { --phase-bg: #eef3f6; --phase-fg: var(--ink); position: relative; flex: var(--span, 1) 1 0; min-width: max(132px, calc(var(--span, 1) * 68px)); padding: 8px 6px 12px; border-radius: 8px; background: var(--phase-bg); color: var(--phase-fg); }
+      .phase-card.tone-0 { --phase-bg: #e6f4ea; --phase-fg: #1e7e34; }
+      .phase-card.tone-1 { --phase-bg: #e1f5fe; --phase-fg: #0277bd; }
+      .phase-card.tone-2 { --phase-bg: #f3e5f5; --phase-fg: #6a1b9a; }
+      .phase-card.tone-3 { --phase-bg: #fff3e0; --phase-fg: #e65100; }
+      .phase-card.tone-4 { --phase-bg: #ffebee; --phase-fg: #c62828; }
+      .phase-card.here { box-shadow: inset 0 0 0 2px var(--phase-fg); }
+      .phase-title { display: block; width: 100%; border: 0; padding: 0; background: transparent; color: var(--phase-fg); font-size: 11px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; text-align: center; }
+      .phase-title:hover, .phase-title:focus-visible { text-decoration: underline; }
+      .phase-range { min-height: 16px; margin: 3px 0 0; color: #4b5563; font-size: 11px; text-align: center; }
+      .phase-body { position: relative; margin-top: 8px; }
+      .phase-line { position: absolute; z-index: 0; top: 39px; left: 0; right: -6px; height: 4px; border-radius: 2px; background: #90a4ae; }
+      .phase-card:last-child .phase-line { right: 12px; }
+      .phase-card:first-child .phase-line { left: 12px; }
+      .ms-row { display: flex; justify-content: space-around; gap: 2px; margin: 0; padding: 0; list-style: none; position: relative; z-index: 1; }
+      .ms-row li { flex: 1 1 0; min-width: 0; }
+      .ms-hit { display: flex; flex-direction: column; align-items: center; width: 100%; border: 0; padding: 0; background: transparent; color: inherit; text-align: center; }
+      .ms-hit:hover .ms-label, .ms-hit:focus-visible .ms-label { text-decoration: underline; }
+      .ms-date { display: flex; align-items: flex-end; justify-content: center; height: 30px; font-size: 11px; font-weight: 700; line-height: 1.15; }
+      .ms-mark-wrap { display: grid; place-items: center; height: 22px; }
+      .ms-dot, .ms-star { box-shadow: 0 0 0 3px var(--phase-bg); }
+      .ms-dot { width: 16px; height: 16px; border: 3px solid currentColor; border-radius: 50%; background: white; }
+      .ms-dot.done { background: currentColor; }
+      .ms-dot.here, .ms-star.here { box-shadow: 0 0 0 3px var(--phase-bg), 0 0 0 6px var(--phase-fg); }
+      .ms-star { width: 20px; height: 20px; fill: white; stroke: currentColor; stroke-width: 1.6px; }
+      .ms-star.done { fill: currentColor; }
+      .ms-label { margin-top: 8px; color: #333; font-size: 10px; line-height: 1.3; }
+      .journey-hero-compact { padding: 14px 12px 12px; }
+      .compact-path { display: flex; position: relative; overflow-x: auto; margin: 0; padding: 0; list-style: none; }
+      .compact-path::before { content: ''; position: absolute; left: 8%; right: 8%; top: 5px; height: 2px; background: #d5e0e8; }
+      .compact-phase { position: relative; z-index: 1; flex: 1 0 auto; min-width: 88px; }
+      .compact-phase button { display: grid; justify-items: center; gap: 6px; width: 100%; border: 0; padding: 0 6px; background: transparent; color: inherit; font-weight: inherit; }
+      .compact-phase.done { color: #0d7a5f; }
+      .compact-phase.here { color: var(--ink); font-weight: 700; }
+      .compact-marks { display: flex; gap: 4px; align-items: center; min-height: 16px; }
+      .cmark { width: 12px; height: 12px; border: 2px solid #c5d3de; border-radius: 50%; background: white; }
+      .cmark.done { border-color: var(--green); background: var(--green); }
+      .cmark.here { border-color: var(--ink); background: var(--ink); box-shadow: 0 0 0 3px rgba(0, 76, 128, .16); }
+      .compact-label { font-size: 12px; line-height: 1.15; text-align: center; }
+      .student-home .hero { margin-bottom: 14px; }
     </style>
   </head>
   <body>
@@ -539,6 +586,7 @@
         assignmentStudentIds: [],
         importRecords: null,
         journeyOpen: false,
+        journeyHeroExpanded: true,
         journeyFilters: { phaseId: 'all', showSystem: true, showStudent: true },
         editingTodo: '',
         journeySync: {},
@@ -1008,6 +1056,7 @@
 
       function paintStudentPage(home) {
         const main = document.getElementById('main');
+        main.classList.add('student-home');
         const next = nextIncomplete(home);
         const returned = (home.actionItems || []).filter(function(item) { return item.returnedComment && item.Status !== 'Completed'; })[0];
         const templates = home.templates || [];
@@ -1026,6 +1075,7 @@
         ];
         main.innerHTML = `${staffStudentBar(home)}
           <div class="page-head"><div><h1>${escapeHtml(pageName)}'s EE</h1>${home.cohort ? `<p class="muted">Cohort ${escapeHtml(home.cohort)}</p>` : ''}</div></div>
+          ${renderJourneyHero(journeyOverview(home))}
           ${hero}
           ${renderUnreadNotices(home.unreadTickets)}
           ${returned ? `<div class="notice">Returned: ${escapeHtml(returned.Title)}. ${escapeHtml(returned.returnedComment)}</div>` : ''}
@@ -1041,11 +1091,133 @@
             return `<article class="doc-card"><h3>${escapeHtml(link[0])}</h3><p class="muted">${url ? 'Shared with your supervisor.' : 'Not created yet.'}</p>${url ? `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">Open</a>` : ''}</article>`;
           }).join('')}</div>
           <section class="section-gap" id="my-activity" aria-label="${home.staffView ? 'Student activity' : 'Your activity'}"></section>`;
+        applyJourneyHero(main);
+        bindJourneyHero(main);
         bindFormButtons(main);
         bindStaffStudentChrome();
         bindUnreadNotices(main, false);
         paintTabDot('help', home.unreadTicketCount, 'Help');
         paintStudentActivity(home);
+      }
+
+      function journeyOverview(home) {
+        const current = nextIncomplete(home);
+        const currentId = current && current.template ? current.template.milestoneId : '';
+        const items = home.actionItems || [];
+        return (home.phases || []).map(function(phase, index) {
+          const milestones = (home.templates || []).filter(function(template) {
+            return template.phase === phase.phaseId;
+          }).map(function(template) {
+            const item = items.filter(function(entry) {
+              return entry.CreatorType === 'System' && entry.TemplateId === template.milestoneId;
+            })[0] || null;
+            const done = !!(item && item.Status === 'Completed');
+            return {
+              id: template.milestoneId,
+              title: template.title || template.milestoneId,
+              type: template.type || '',
+              due: item && item.DueDate ? String(item.DueDate).slice(0, 10) : '',
+              done: done,
+              here: template.milestoneId === currentId && !done
+            };
+          }).sort(function(left, right) {
+            const due = dueSortKey(left.due).localeCompare(dueSortKey(right.due));
+            if (due) return due;
+            return textCompare(left.title, right.title);
+          });
+          const doneCount = milestones.filter(function(milestone) { return milestone.done; }).length;
+          return {
+            id: phase.phaseId,
+            title: phase.phaseTitle || phase.phaseId,
+            index: index,
+            milestones: milestones,
+            doneCount: doneCount,
+            here: milestones.some(function(milestone) { return milestone.here; }),
+            complete: milestones.length > 0 && doneCount === milestones.length
+          };
+        });
+      }
+
+      function phaseRangeLabel(dates) {
+        const keys = (dates || []).filter(function(value) { return /^\d{4}-\d{2}-\d{2}$/.test(value); }).sort();
+        if (!keys.length) return '';
+        const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        function part(key) {
+          const bits = key.split('-');
+          return { year: bits[0], month: months[Number(bits[1]) - 1] };
+        }
+        const start = part(keys[0]);
+        const end = part(keys[keys.length - 1]);
+        if (start.year === end.year && start.month === end.month) return start.month + ' ' + start.year;
+        if (start.year === end.year) return start.month + ' – ' + end.month + ' ' + start.year;
+        return start.month + ' ' + start.year + ' – ' + end.month + ' ' + end.year;
+      }
+
+      function journeyDayLabel(value) {
+        const full = shortDate(value);
+        return full ? full.replace(/\s+\d{4}$/, '') : '';
+      }
+
+      function milestoneMark(milestone) {
+        const stateClass = milestone.done ? 'done' : (milestone.here ? 'here' : '');
+        const star = milestone.type === 'form' || milestone.type === 'upload';
+        if (star) {
+          return `<svg class="ms-star ${stateClass}" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 17.27 18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>`;
+        }
+        return `<span class="ms-dot ${stateClass}" aria-hidden="true"></span>`;
+      }
+
+      function renderJourneyHero(phases) {
+        const full = phases.length ? phases.map(function(phase) {
+          const range = phaseRangeLabel(phase.milestones.map(function(milestone) { return milestone.due; }));
+          const marks = phase.milestones.length ? phase.milestones.map(function(milestone) {
+            const status = milestone.done ? 'Done' : (milestone.here ? 'Current step' : 'Not done yet');
+            const when = milestone.due ? shortDate(milestone.due) : '';
+            const label = milestone.title + (when ? ', ' + when : '') + ', ' + status + '. Open this phase in the journey panel.';
+            return `<li><button type="button" class="ms-hit" data-open-phase="${escapeHtml(phase.id)}" aria-label="${escapeHtml(label)}"><span class="ms-date">${escapeHtml(journeyDayLabel(milestone.due))}</span><span class="ms-mark-wrap">${milestoneMark(milestone)}</span><span class="ms-label">${escapeHtml(milestone.title)}</span></button></li>`;
+          }).join('') : '<li class="muted">No milestones</li>';
+          const tone = phase.index % 5;
+          return `<section class="phase-card tone-${tone}${phase.here ? ' here' : ''}${phase.complete ? ' done' : ''}" style="--span:${Math.max(phase.milestones.length, 1)}"><button type="button" class="phase-title" data-open-phase="${escapeHtml(phase.id)}">${escapeHtml((phase.index + 1) + ' · ' + phase.title)}</button><p class="phase-range">${escapeHtml(range)}</p><div class="phase-body"><div class="phase-line" aria-hidden="true"></div><ol class="ms-row">${marks}</ol></div></section>`;
+        }).join('') : '<p class="muted">Official milestones appear after a cohort is assigned.</p>';
+        const compact = phases.length ? `<ol class="compact-path">${phases.map(function(phase) {
+          const dots = phase.milestones.map(function(milestone) {
+            const stateClass = milestone.done ? 'done' : (milestone.here ? 'here' : '');
+            return `<i class="cmark ${stateClass}" title="${escapeHtml(milestone.title + (milestone.done ? ' · Done' : (milestone.here ? ' · Current' : '')))}"></i>`;
+          }).join('');
+          const summary = phase.title + ', ' + phase.doneCount + ' of ' + phase.milestones.length + ' done. Open this phase in the journey panel.';
+          return `<li class="compact-phase${phase.complete ? ' done' : ''}${phase.here ? ' here' : ''}"><button type="button" data-open-phase="${escapeHtml(phase.id)}" aria-label="${escapeHtml(summary)}"><span class="compact-marks">${dots}</span><span class="compact-label">${escapeHtml(phase.title)}</span></button></li>`;
+        }).join('')}</ol>` : '';
+        return `<section class="journey-hero" aria-label="Journey overview"><div class="journey-hero-bar"><h2>Journey</h2><button type="button" class="journey-hero-toggle" data-journey-hero-toggle aria-expanded="true">Collapse</button></div><div class="journey-hero-full" data-journey-full>${full}</div><div class="journey-hero-compact" data-journey-compact hidden>${compact}</div></section>`;
+      }
+
+      function applyJourneyHero(main) {
+        const expanded = state.journeyHeroExpanded !== false;
+        const full = main.querySelector('[data-journey-full]');
+        const compact = main.querySelector('[data-journey-compact]');
+        const toggle = main.querySelector('[data-journey-hero-toggle]');
+        if (full) full.hidden = !expanded;
+        if (compact) compact.hidden = expanded;
+        if (toggle) {
+          toggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+          toggle.textContent = expanded ? 'Collapse' : 'Expand';
+        }
+      }
+
+      function bindJourneyHero(main) {
+        const toggle = main.querySelector('[data-journey-hero-toggle]');
+        if (toggle) toggle.addEventListener('click', function() {
+          state.journeyHeroExpanded = state.journeyHeroExpanded === false;
+          applyJourneyHero(main);
+        });
+        main.querySelectorAll('[data-open-phase]').forEach(function(button) {
+          button.addEventListener('click', function() {
+            const phaseId = button.dataset.openPhase;
+            state.journeyFilters.phaseId = state.journeyFilters.phaseId === phaseId ? 'all' : phaseId;
+            setJourneyOpen(true);
+            const home = activeJourneyRecord();
+            if (home && document.getElementById('journey-body')) paintStudentJourney(home);
+          });
+        });
       }
 
       function paintStudentActivity(home) {
