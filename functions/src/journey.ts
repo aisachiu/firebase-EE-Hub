@@ -60,6 +60,7 @@ function summarize(student: any, items: any[], templates: any[], returned: Recor
   let latest = '';
   const waiting: { taskId: string; title: string; templateId: string; type: string }[] = [];
   const segments: string[] = [];
+  const dues: string[] = [];
   let currentPhase = templates.length ? templates[0].phase : '';
   let priorComplete = true;
   templates.forEach((template) => {
@@ -72,6 +73,7 @@ function summarize(student: any, items: any[], templates: any[], returned: Recor
     if (overdue) behind += 1;
     const segment = status === 'Completed' ? 'd' : (status === 'In Progress' ? 'p' : (overdue ? 'l' : 'o'));
     segments.push(segment);
+    dues.push(item && item.due ? String(item.due).slice(0, 10) : '');
     const canAct = view !== 'staff' && item && status !== 'Completed' && priorComplete && canCompleteMilestone(user, student.email, template.mOwner, template.type, student) && (template.type === 'approval' || template.type === 'meeting' || template.mOwner === 'supervisor' || template.mOwner === 'coordinator');
     if (canAct) waiting.push({ taskId: item.taskId, title: template.title, templateId: template.milestoneId, type: template.type });
     if (item && returned[item.taskId] && status !== 'Completed') returnedCount += 1;
@@ -101,6 +103,7 @@ function summarize(student: any, items: any[], templates: any[], returned: Recor
     phaseId: currentPhase,
     latestTitle: latest,
     segments: segments.join(''),
+    dues,
     returned: returnedCount,
     waiting: waiting.slice(0, 3),
     urgency: waiting.length * 100 + behind + returnedCount,
