@@ -579,7 +579,12 @@
       .student-list button.name { border: 0; padding: 0; background: none; color: var(--ink); font-weight: 700; font-size: 15px; text-align: left; }
       .student-list button.name:hover, .student-list button.name:focus-visible { text-decoration: underline; }
       .list-student-meta, .list-latest { margin-top: 3px; font-size: 12px; }
-      .list-journey { min-width: 440px; }
+      .journey-col-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+      .list-journey-toggle { margin: -2px 0; letter-spacing: 0; text-transform: none; white-space: nowrap; }
+      .list-journey.is-expanded { min-width: 440px; }
+      .list-journey .compact-path { overflow: visible; }
+      .list-journey .compact-phase-body { display: grid; justify-items: center; gap: 6px; width: 100%; padding: 0 6px; }
+      .list-journey .cmark { cursor: default; }
       .list-phases { display: flex; align-items: stretch; gap: 4px; margin: 0; padding: 1px 0; list-style: none; }
       .list-journey .phase-card { min-width: max(92px, calc(var(--span, 1) * 42px)); padding: 6px 4px 8px; border-radius: 6px; }
       .list-journey .phase-title { display: block; overflow: hidden; font-size: 10px; line-height: 1.2; white-space: nowrap; text-overflow: ellipsis; cursor: default; }
@@ -641,6 +646,10 @@
         staffLayout: (function() {
           try { return window.localStorage.getItem('ee-hub-staff-layout') === 'list' ? 'list' : 'tile'; }
           catch (error) { return 'tile'; }
+        })(),
+        staffJourneyExpanded: (function() {
+          try { return window.localStorage.getItem('ee-hub-staff-journey') === 'expanded'; }
+          catch (error) { return false; }
         })(),
         staffTrack: 'all',
         staffMine: false,
@@ -2098,6 +2107,12 @@
         catch (error) { /* the choice still applies for this visit */ }
       }
 
+      function rememberStaffJourneyExpanded(expanded) {
+        state.staffJourneyExpanded = !!expanded;
+        try { window.localStorage.setItem('ee-hub-staff-journey', state.staffJourneyExpanded ? 'expanded' : 'collapsed'); }
+        catch (error) { /* the choice still applies for this visit */ }
+      }
+
       function staffIdentityMarkup(student) {
         const details = escapeHtml(student.subject || 'No subject yet') + (student.hrm ? ' · ' + escapeHtml(student.hrm) : '') + (student.surname ? ' · ' + escapeHtml(student.surname) : '');
         return `<button type="button" class="name" data-open-student="${escapeHtml(student.email)}">${escapeHtml(student.displayName)}</button><div class="muted list-student-meta">${details}</div>`;
@@ -2180,6 +2195,18 @@
           }).join('; ');
           return phase.title + (phase.here ? ' (current phase)' : '') + ': ' + bits;
         }).join('. ');
+        if (state.staffJourneyExpanded !== true) {
+          const compact = `<ol class="compact-path">${phases.map(function(phase) {
+            const dots = phase.milestones.map(function(milestone) {
+              const stateClass = milestone.done ? 'done' : (milestone.here ? 'here' : '');
+              const when = milestone.due ? shortDate(milestone.due) : '';
+              const tip = milestone.title + (when ? ' · ' + when : '') + ' · ' + listMilestoneStatus(milestone);
+              return `<i class="cmark ${stateClass}" data-tip="${escapeHtml(tip)}"></i>`;
+            }).join('');
+            return `<li class="compact-phase${phase.complete ? ' done' : ''}${phase.here ? ' here' : ''}"><div class="compact-phase-body"><span class="compact-marks">${dots}</span><span class="compact-label">${escapeHtml(phase.title)}</span></div></li>`;
+          }).join('')}</ol>`;
+          return `<div class="list-journey is-collapsed" role="img" aria-label="${escapeHtml(summary)}">${compact}</div>`;
+        }
         const cards = phases.map(function(phase) {
           const range = phaseRangeLabel(phase.milestones.map(function(milestone) { return milestone.due; }));
           const tone = phase.index % 5;
@@ -2194,7 +2221,7 @@
           }).join('');
           return `<li class="phase-card tone-${tone}${phase.here ? ' here' : ''}${phase.complete ? ' done' : ''}" style="--span:${Math.max(phase.milestones.length, 1)}"><span class="phase-title" data-tip="${escapeHtml(phaseTip)}">${escapeHtml((phase.index + 1) + ' · ' + phase.title)}</span><p class="phase-range">${escapeHtml(range)}</p><div class="phase-body"><div class="phase-line" aria-hidden="true"></div><ol class="ms-row">${marks}</ol></div></li>`;
         }).join('');
-        return `<div class="list-journey" role="img" aria-label="${escapeHtml(summary)}"><ol class="list-phases">${cards}</ol></div>`;
+        return `<div class="list-journey is-expanded" role="img" aria-label="${escapeHtml(summary)}"><ol class="list-phases">${cards}</ol></div>`;
       }
 
       function renderStaffStudentTiles(students, phaseName) {
@@ -2211,7 +2238,8 @@
         const rows = students.map(function(student) {
           return `<tr><td>${staffIdentityMarkup(student)}</td><td>${staffStatusMarkup(student)}</td><td>${renderListJourney(home, student)}</td></tr>`;
         }).join('');
-        return `<div class="table-wrap student-list"><table><thead><tr><th class="student-col" scope="col">Student</th><th class="status-col" scope="col">Status</th><th scope="col">Journey progress</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+        const expanded = state.staffJourneyExpanded === true;
+        return `<div class="table-wrap student-list"><table><thead><tr><th class="student-col" scope="col">Student</th><th class="status-col" scope="col">Status</th><th class="journey-col" scope="col"><span class="journey-col-head"><span>Journey progress</span><button type="button" class="journey-hero-toggle list-journey-toggle" data-list-journey-toggle aria-expanded="${expanded ? 'true' : 'false'}">${expanded ? 'Collapse' : 'Expand'}</button></span></th></tr></thead><tbody>${rows}</tbody></table></div>`;
       }
 
       let listJourneyTipBound = false;
@@ -2374,6 +2402,13 @@
             const again = document.querySelector('[data-staff-layout="' + button.dataset.staffLayout + '"]');
             if (again) again.focus();
           });
+        });
+        const journeyToggle = main.querySelector('[data-list-journey-toggle]');
+        if (journeyToggle) journeyToggle.addEventListener('click', function() {
+          rememberStaffJourneyExpanded(state.staffJourneyExpanded !== true);
+          repaintFilters();
+          const again = document.querySelector('[data-list-journey-toggle]');
+          if (again) again.focus();
         });
         bindListJourneyTips(main);
         main.querySelectorAll('[data-open-student]').forEach(function(button) {
