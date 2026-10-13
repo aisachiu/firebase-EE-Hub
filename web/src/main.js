@@ -1,5 +1,5 @@
 import { initializeApp } from 'firebase/app';
-import { connectAuthEmulator, getAuth, GoogleAuthProvider, onAuthStateChanged, signInWithEmailAndPassword, signInWithPopup, signOut } from 'firebase/auth';
+import { connectAuthEmulator, getAuth, GoogleAuthProvider, onAuthStateChanged, signInWithCredential, signInWithPopup, signOut } from 'firebase/auth';
 import { connectFunctionsEmulator, getFunctions, httpsCallable } from 'firebase/functions';
 
 const config = {
@@ -18,7 +18,12 @@ if (useEmulators) {
   connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true });
   connectFunctionsEmulator(functions, '127.0.0.1', 5001);
   window.eeSignInDemo = function(email) {
-    return signInWithEmailAndPassword(auth, email, 'ee-hub-demo');
+    const credential = GoogleAuthProvider.credential(JSON.stringify({
+      sub: email,
+      email: email,
+      email_verified: true,
+    }));
+    return signInWithCredential(auth, credential);
   };
 }
 

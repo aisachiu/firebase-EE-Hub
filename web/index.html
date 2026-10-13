@@ -586,9 +586,10 @@
       .list-journey .phase-title:hover, .list-journey .phase-title:focus-visible { text-decoration: none; }
       .list-journey .phase-range { min-height: 13px; margin-top: 1px; overflow: hidden; font-size: 10px; white-space: nowrap; text-overflow: ellipsis; }
       .list-journey .phase-body { margin-top: 4px; }
-      .list-journey .phase-line { top: 20px; left: 8px; right: 8px; height: 2px; }
-      .list-journey .phase-card:first-child .phase-line { left: 8px; }
-      .list-journey .phase-card:last-child .phase-line { right: 8px; }
+      .list-journey .phase-line { top: 20px; left: 0; right: -4px; height: 2px; }
+      .list-journey .phase-card:first-child .phase-line { left: 12px; }
+      .list-journey .phase-card:last-child .phase-line { right: 12px; }
+      .list-journey .ms-label { display: block; max-width: 100%; margin-top: 4px; overflow: hidden; font-size: 9px; line-height: 1.2; white-space: nowrap; text-overflow: ellipsis; }
       .list-journey .ms-row { align-items: flex-start; }
       .list-journey .ms-row li { min-width: 34px; }
       .list-journey .list-mark { display: flex; flex-direction: column; align-items: center; width: 100%; min-width: 0; }
@@ -884,6 +885,7 @@
       }
 
       function renderShell() {
+        hideListJourneyTip();
         advanceScene();
         const student = state.user.role === 'student';
         if (!student && state.messageDesks[state.actingAs]) {
@@ -2188,7 +2190,7 @@
           const marks = phase.milestones.map(function(milestone) {
             const when = milestone.due ? shortDate(milestone.due) : '';
             const tip = milestone.title + (when ? ' · ' + when : '') + ' · ' + listMilestoneStatus(milestone);
-            return `<li><span class="list-mark" data-tip="${escapeHtml(tip)}"><span class="ms-date">${escapeHtml(journeyDayLabel(milestone.due))}</span><span class="ms-mark-wrap">${milestoneMark(milestone)}</span></span></li>`;
+            return `<li><span class="list-mark" data-tip="${escapeHtml(tip)}"><span class="ms-date">${escapeHtml(journeyDayLabel(milestone.due))}</span><span class="ms-mark-wrap">${milestoneMark(milestone)}</span><span class="ms-label">${escapeHtml(milestone.title)}</span></span></li>`;
           }).join('');
           return `<li class="phase-card tone-${tone}${phase.here ? ' here' : ''}${phase.complete ? ' done' : ''}" style="--span:${Math.max(phase.milestones.length, 1)}"><span class="phase-title" data-tip="${escapeHtml(phaseTip)}">${escapeHtml((phase.index + 1) + ' · ' + phase.title)}</span><p class="phase-range">${escapeHtml(range)}</p><div class="phase-body"><div class="phase-line" aria-hidden="true"></div><ol class="ms-row">${marks}</ol></div></li>`;
         }).join('');

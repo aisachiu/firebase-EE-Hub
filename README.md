@@ -22,7 +22,7 @@ npm run seed
 npm run dev
 ```
 
-Open http://127.0.0.1:5173. On the emulator, use a demo account:
+Open http://127.0.0.1:5173. On the emulator, use a demo account. The buttons sign in through the Auth emulator with a Google credential, because the hub only accepts Google sign-in:
 
 | Account | Email |
 | --- | --- |
@@ -30,7 +30,7 @@ Open http://127.0.0.1:5173. On the emulator, use a demo account:
 | Supervisor | supervisor@vsa.example.edu |
 | Coordinator | coordinator@vsa.example.edu |
 
-The emulator password for those buttons is `ee-hub-demo`. Google sign-in is the production path: the signed-in email must match a staff or student record.
+The Auth emulator still stores `ee-hub-demo` as the password for those accounts. Google sign-in is the production path: the signed-in email must match a staff or student record.
 
 `npm test` checks phase cycles, milestone permissions, form answers, and ticket routing. `npm run schema` checks field names and that each table has its key. The audit log stays append-only, with no key.
 
