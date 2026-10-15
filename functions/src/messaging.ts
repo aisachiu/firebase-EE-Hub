@@ -1,9 +1,9 @@
 import { listTodoTemplatesFor } from './actions';
 import { HubUser, normalizeStaffView } from './permissions';
-import { findPlacement, readPhases, readStaffTables, staffMayAddStudentTodo, staffStudentContext, StaffTables } from './roster';
+import { findPlacement, readPhases, readRoster, readStaffTables, staffMayAddStudentTodo, staffMayViewPlacement, staffStudentContext, StaffTables } from './roster';
 import { COLLECTIONS } from './schema';
 import { App, audited, deny, requireStaff, requireUser } from './session';
-import { assigneeForRoute, DEFAULT_TICKET_CATEGORIES, routeLabel, staffCanSeeTicket, studentCanSeeTicket, ticketAuthorEmail, ticketChip, ticketFromRecord, TicketShape } from './ticketsPure';
+import { assigneeForRoute, compareRecentActivity, DEFAULT_TICKET_CATEGORIES, isStaffNote, routeLabel, staffCanSeeTicket, staffNotesForRoster, staffNotesForStudent, studentCanSeeTicket, ticketAuthorEmail, ticketChip, ticketFromRecord, TicketShape } from './ticketsPure';
 import { Doc, HubError, normalizeEmail, nowIso, text, textHash, toBoolean, uuid } from './util';
 
 const TICKET_STATUSES = ['Open', 'In Progress', 'Resolved', 'Closed'];
@@ -100,6 +100,38 @@ function withShareControls(tickets: any[], user: HubUser) {
   });
 }
 
+async function staffDisplayNames(app: App): Promise<Record<string, string>> {
+  const names: Record<string, string> = {};
+  const staff = await app.store.list(COLLECTIONS.staffUsers);
+  staff.forEach((row) => {
+    const email = normalizeEmail(row.EMAIL);
+    if (email) names[email] = text(row.DisplayName) || email;
+  });
+  return names;
+}
+
+function applyAuthorNames(ticket: any, names: Record<string, string>) {
+  const authorEmail = normalizeEmail(ticket.authorEmail || ticket.assignee);
+  ticket.authorName = names[authorEmail] || authorEmail || 'Staff';
+  (ticket.messages || []).forEach((message: any) => {
+    const email = normalizeEmail(message.authorEmail);
+    if (message.authorRole === 'student') message.authorName = ticket.displayName || email || 'Student';
+    else message.authorName = names[email] || email || 'Staff';
+  });
+}
+
+async function staffMayContributeToNote(app: App, user: HubUser, ticket: TicketShape, viewAs: unknown): Promise<boolean> {
+  if (user.role !== 'staff' || !isStaffNote(ticket)) return false;
+  const cohortId = text(ticket.cohort);
+  if (!cohortId) return false;
+  try {
+    const roster = (await readRoster(app, cohortId)).find((student) => student.email === ticket.studentId);
+    return staffMayViewPlacement(user, normalizeStaffView(user, viewAs), roster);
+  } catch {
+    return false;
+  }
+}
+
 function sortTickets<T extends { lastUpdated?: string }>(tickets: T[], unreadKey: string) {
   return tickets.sort((left: any, right: any) => {
     if (!!left[unreadKey] !== !!right[unreadKey]) return left[unreadKey] ? -1 : 1;
@@ -157,8 +189,9 @@ async function requireTicketActor(app: App, user: HubUser, ticket: TicketShape, 
   }
   const view = normalizeStaffView(user, viewAs);
   const placement = await findPlacement(app, ticket.studentId);
-  if (!staffCanSeeTicket(user, view, ticket, placement)) return deny(app, user, 'VIEW_TICKET', 'This message is not in your queue.');
-  return view;
+  if (staffCanSeeTicket(user, view, ticket, placement) || ticketAuthorEmail(ticket) === user.email) return view;
+  if (await staffMayContributeToNote(app, user, ticket, viewAs)) return view;
+  return deny(app, user, 'VIEW_TICKET', 'This message is not in your queue.');
 }
 
 async function assertTicketActor(app: App, user: HubUser, ticket: TicketShape, viewAs: unknown) {
@@ -168,9 +201,9 @@ async function assertTicketActor(app: App, user: HubUser, ticket: TicketShape, v
   }
   const view = normalizeStaffView(user, viewAs);
   const placement = await findPlacement(app, ticket.studentId);
-  if (!staffCanSeeTicket(user, view, ticket, placement) && ticketAuthorEmail(ticket) !== user.email) {
-    throw new HubError('You cannot update this message.');
-  }
+  if (staffCanSeeTicket(user, view, ticket, placement) || ticketAuthorEmail(ticket) === user.email) return;
+  if (await staffMayContributeToNote(app, user, ticket, viewAs)) return;
+  throw new HubError('You cannot update this message.');
 }
 
 function publicCategories(categories: Awaited<ReturnType<typeof readTicketCategories>>) {
@@ -267,12 +300,17 @@ export async function replyTicket(app: App, ticketId: unknown, body: unknown, la
     assertFresh(current, lastUpdated);
     const now = nowIso();
     let status = ticket.status;
-    if (user.role === 'staff' && status === 'Open') status = 'In Progress';
+    if (user.role === 'staff' && status === 'Open' && !isStaffNote(ticket)) status = 'In Progress';
     current.Status = status;
     current.LastUpdated = now;
     current.LastActor = user.email;
-    current.StudentUnread = user.role === 'staff';
-    current.StaffUnread = user.role === 'student';
+    if (isStaffNote(ticket) && !ticket.shared) {
+      current.StudentUnread = false;
+      current.StaffUnread = false;
+    } else {
+      current.StudentUnread = user.role === 'staff';
+      current.StaffUnread = user.role === 'student';
+    }
     await app.store.set(COLLECTIONS.tickets, ticket.ticketId || '', current);
     const messageId = uuid();
     await app.store.addMessage(ticket.ticketId || '', messageId, {
@@ -333,10 +371,12 @@ export async function markTicketRead(app: App, ticketId: unknown, lastUpdated: u
 }
 
 async function prepareStaffTickets(app: App, user: HubUser, tickets: TicketShape[]) {
+  const names = await staffDisplayNames(app);
   const attached = withShareControls(await attachMessages(app, tickets, true), user);
   for (const ticket of attached) {
     const placement = await findPlacement(app, ticket.studentId);
     ticket.displayName = placement ? placement.displayName : ticket.studentId;
+    applyAuthorNames(ticket, names);
   }
   return attached;
 }
@@ -420,23 +460,26 @@ export async function setMessageShared(app: App, ticketId: unknown, shared: unkn
 }
 
 async function presentNotes(app: App, tickets: TicketShape[], user: HubUser, placements?: Record<string, any>) {
+  const names = await staffDisplayNames(app);
   const notes = withShareControls(await attachMessages(app, tickets, true), user).map((ticket) => {
     const placement = placements ? placements[ticket.studentId] : null;
     ticket.displayName = placement ? placement.displayName : ticket.studentId;
+    applyAuthorNames(ticket, names);
     return ticket;
   });
-  return notes.sort((left, right) => text(right.lastUpdated).localeCompare(text(left.lastUpdated)));
+  return notes.sort(compareRecentActivity);
 }
 
-export async function createStaffNote(app: App, studentEmail: unknown, cohortId: unknown, textBody: unknown, viewAs: unknown) {
+export async function createStaffNote(app: App, studentEmail: unknown, cohortId: unknown, titleText: unknown, textBody: unknown, viewAs: unknown) {
   const user = await requireStaff(app, 'NOTE_CREATE');
+  const title = text(titleText).replace(/\s+/g, ' ');
   const body = text(textBody);
+  if (!title) throw new HubError('Add a title.');
+  if (title.length > 90) throw new HubError('Titles must be 90 characters or fewer.');
   if (!body) throw new HubError('Write a note before saving.');
   if (body.length > 2000) throw new HubError('Notes must be 2,000 characters or fewer.');
   const context = await staffStudentContext(app, user, text(studentEmail), text(cohortId), 'NOTE_CREATE', viewAs);
   if (!staffMayAddStudentTodo(user, context)) return deny(app, user, 'NOTE_CREATE', 'You cannot take notes for this student.');
-  let title = body.replace(/\s+/g, ' ');
-  if (title.length > 90) title = title.slice(0, 90);
   const route = context.view === 'coordinator' ? 'coordinator' : 'supervisor';
   const now = nowIso();
   const ticketId = uuid();
@@ -456,7 +499,7 @@ export async function createStaffNote(app: App, studentEmail: unknown, cohortId:
     StaffUnread: false,
     Shared: false,
   };
-  return audited(app, user, 'NOTE_CREATE', { ...ticketAudit(record), bodyHash: textHash(body) }, async () => {
+  return audited(app, user, 'NOTE_CREATE', { ...ticketAudit(record), title, bodyHash: textHash(body) }, async () => {
     await app.store.set(COLLECTIONS.tickets, ticketId, record);
     const messageId = uuid();
     await app.store.addMessage(ticketId, messageId, {
@@ -494,11 +537,12 @@ export async function getStaffNotesHub(app: App, viewAs: unknown) {
   if (!user.permissions?.isSupervisor && !user.permissions?.canAdmin) return deny(app, user, 'VIEW_NOTES', 'Supervisors and coordinators keep notes.');
   const view = normalizeStaffView(user, viewAs);
   const tables = await readStaffTables(app);
-  const authored = (await readAllTickets(app)).filter((ticket) => ticketAuthorEmail(ticket) === user.email);
+  const students = noteStudents(user, view, tables);
+  const visible = staffNotesForRoster(await readAllTickets(app), students.map((student) => student.email));
   return {
     viewAs: view,
-    notes: await presentNotes(app, authored, user, tables.byEmail),
-    students: noteStudents(user, view, tables),
+    notes: await presentNotes(app, visible, user, tables.byEmail),
+    students,
     templates: await listTodoTemplatesFor(app, user.email),
     phases: await readPhases(app),
   };
@@ -508,7 +552,7 @@ export async function getStaffStudentPanel(app: App, studentEmail: unknown, coho
   const user = await requireStaff(app, 'VIEW_STUDENT_NOTES');
   const context = await staffStudentContext(app, user, text(studentEmail), text(cohortId), 'VIEW_STUDENT_NOTES', viewAs);
   const placements: Record<string, any> = { [context.email]: context.roster };
-  const notes = (await readAllTickets(app)).filter((ticket) => ticket.studentId === context.email && ticketAuthorEmail(ticket) === user.email);
+  const notes = staffNotesForStudent(await readAllTickets(app), context.email);
   return {
     canWrite: staffMayAddStudentTodo(user, context),
     studentEmail: context.email,

@@ -136,8 +136,11 @@ function activitySummary(action: string, unpacked: { payload: any; reason: strin
     return taskTitle || status || 'Task status';
   }
   if (action === 'FORM_SUBMIT' || action === 'FORM_DRAFT') return milestoneTitle || text(payload.milestoneId) || 'Form';
-  if (action === 'NOTE_CREATE') return 'Private note';
-  if (action === 'TICKET_SHARE') return payload.shared ? 'Shared message' : 'Private note';
+  if (action === 'NOTE_CREATE') return text(payload.title) || 'Private note';
+  if (action === 'TICKET_SHARE') {
+    if (text(payload.category) === 'Note') return payload.shared ? 'Visible for student' : 'Hidden from student';
+    return payload.shared ? 'Shared message' : 'Private note';
+  }
   if (action.indexOf('TICKET_') === 0) return text(payload.category) || 'Message';
   if (action === 'APPLY_TODO_TEMPLATE' || action === 'SAVE_TODO_TEMPLATE' || action === 'DELETE_TODO_TEMPLATE') return text(payload.title) || 'Template task';
   return milestoneTitle || taskTitle || '';
@@ -156,6 +159,7 @@ function activityDetails(unpacked: { payload: any; reason: string }, taskTitle: 
   add('Placed beside', lookups.tasks[text(payload.targetTaskId)] || '');
   if (text(payload.position)) add('Placement', text(payload.position) === 'before' ? 'Before that task' : 'After that task');
   add('Status', payload.status);
+  add('Title', payload.title);
   add('Category', payload.category);
   add('Sent to', activityRouteLabel(payload.route));
   add('Phase', payload.phaseId || payload.phase);

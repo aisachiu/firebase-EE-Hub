@@ -81,7 +81,7 @@ export async function dispatch(app: App, method: string, args: unknown[]): Promi
     case 'getStaffTicketBadge': return getStaffTicketBadge(app, args[0]);
     case 'getStaffNotesHub': return getStaffNotesHub(app, args[0]);
     case 'getStaffStudentPanel': return getStaffStudentPanel(app, args[0], args[1], args[2]);
-    case 'createStaffNote': return createStaffNote(app, args[0], args[1], args[2], args[3]);
+    case 'createStaffNote': return createStaffNote(app, args[0], args[1], args[2], args[3], args[4]);
     case 'listFormMilestones': return listFormMilestones(app);
     case 'getFormDesigner': return getFormDesigner(app, args[0]);
     case 'saveFormDraft': return saveFormDraft(app, args[0], args[1]);

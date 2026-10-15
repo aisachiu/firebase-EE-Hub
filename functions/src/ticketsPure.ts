@@ -48,6 +48,33 @@ export function ticketAuthorEmail(ticket: TicketShape): string {
   return normalizeEmail(ticket.studentId);
 }
 
+export function isStaffNote(ticket: { category?: string }): boolean {
+  return text(ticket.category) === 'Note';
+}
+
+export function compareRecentActivity(
+  left: { lastUpdated?: string; createdAt?: string },
+  right: { lastUpdated?: string; createdAt?: string },
+): number {
+  const byUpdate = text(right.lastUpdated).localeCompare(text(left.lastUpdated));
+  if (byUpdate) return byUpdate;
+  return text(right.createdAt).localeCompare(text(left.createdAt));
+}
+
+export function staffNotesForStudent(tickets: TicketShape[], studentEmail: string): TicketShape[] {
+  const wanted = normalizeEmail(studentEmail);
+  return tickets.filter((ticket) => ticket.studentId === wanted && isStaffNote(ticket)).sort(compareRecentActivity);
+}
+
+export function staffNotesForRoster(tickets: TicketShape[], studentEmails: string[]): TicketShape[] {
+  const allowed: Record<string, boolean> = {};
+  studentEmails.forEach((email) => {
+    const wanted = normalizeEmail(email);
+    if (wanted) allowed[wanted] = true;
+  });
+  return tickets.filter((ticket) => isStaffNote(ticket) && allowed[ticket.studentId]).sort(compareRecentActivity);
+}
+
 export function studentCanSeeTicket(email: string, ticket: TicketShape): boolean {
   const wanted = normalizeEmail(email);
   if (ticket.studentId !== wanted) return false;
