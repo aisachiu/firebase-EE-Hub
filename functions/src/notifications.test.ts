@@ -6,8 +6,10 @@ import {
   deleteNotificationRule,
   executeSweep,
   listNotificationDesk,
+  previewNotificationRule,
   saveNotificationOverlay,
   saveNotificationRule,
+  sendNotificationRule,
 } from './notifications';
 import {
   audienceLabel,
@@ -516,4 +518,108 @@ test('coordinator-only mail stays on the log and off the student activity', asyn
   assert.equal(desk.sends[0].status, 'sent');
   assert.equal(desk.sends[0].audienceLabel, 'Coordinator only');
   assert.equal(store.audits.filter((row) => row.Action === 'NOTIFICATION_EMAIL').length, 0);
+});
+
+test('preview and send emails only the messages a coordinator selects', async () => {
+  const store = memoryStore();
+  await seedDesk(store);
+  const task = {
+    TemplateId: 'm2',
+    DueDate: '2026-10-20',
+    Status: 'Pending',
+    CreatorType: 'System',
+    Title: 'Research question',
+  };
+  await store.set(COLLECTIONS.studentActionItems, 'task-1', {
+    ...task, TaskId: 'task-1', StudentId: student.email,
+  });
+  await store.set(COLLECTIONS.studentActionItems, 'task-2', {
+    ...task, TaskId: 'task-2', StudentId: 'other@vsa.example.edu',
+  });
+  await store.set(COLLECTIONS.notificationRules, 'rule-1', {
+    ruleId: 'rule-1',
+    cohortId: '2026',
+    milestoneId: 'm2',
+    when: 'before',
+    days: 5,
+    audience: 'owner',
+    enabled: true,
+    note: 'Upload the question.',
+  });
+  await store.set(COLLECTIONS.notificationRules, 'rule-other', {
+    ruleId: 'rule-other',
+    cohortId: '2026',
+    milestoneId: 'm3',
+    when: 'on',
+    days: 0,
+    audience: 'coordinator',
+    enabled: true,
+    note: '',
+  });
+  const now = new Date('2026-10-15T04:00:00.000Z');
+  await assert.rejects(
+    previewNotificationRule(appFor(store, supervisor.email), 'cohort', 'rule-1', now),
+    /Access denied/,
+  );
+  const preview = await previewNotificationRule(appFor(store, coordinator.email), 'cohort', 'rule-1', now);
+  assert.equal(preview.enabled, true);
+  assert.equal(preview.today, '2026-10-15');
+  assert.deepEqual(preview.messages.map((message) => message.studentId).sort(), ['other@vsa.example.edu', student.email]);
+  assert.equal(preview.messages[0].subject.includes('Research question'), true);
+  assert.equal(preview.messages[0].body.includes('Upload the question.'), true);
+  const jamie = preview.messages.find((message) => message.studentId === student.email);
+  assert.ok(jamie);
+
+  const sentTo: string[] = [];
+  const result = await sendNotificationRule(appFor(store, coordinator.email), {
+    kind: 'cohort',
+    ruleId: 'rule-1',
+    sendIds: [jamie.sendId, 'rule-other-send'],
+  }, {
+    now,
+    mailer: { async send(mail) { sentTo.push(...mail.to); } },
+  });
+  assert.deepEqual(sentTo, [student.email]);
+  assert.equal(result.sent, 1);
+  assert.equal(result.skipped, 1);
+  assert.equal(store.audits.filter((row) => row.Action === 'NOTIFICATION_EMAIL' && row.User === student.email).length, 1);
+  assert.equal(store.audits.filter((row) => row.Action === 'NOTIFICATION_EMAIL' && row.User === 'other@vsa.example.edu').length, 0);
+
+  const after = await previewNotificationRule(appFor(store, coordinator.email), 'cohort', 'rule-1', now);
+  assert.equal(after.messages.some((message) => message.studentId === student.email), false);
+  assert.equal(after.messages.some((message) => message.studentId === 'other@vsa.example.edu'), true);
+  assert.equal(after.skipped.some((group) => group.reason === 'Already sent for this trigger day.' && group.students.includes('Jamie Wong')), true);
+
+  await store.set(COLLECTIONS.notificationRules, 'rule-1', {
+    ...(await store.get(COLLECTIONS.notificationRules, 'rule-1')),
+    enabled: false,
+  });
+  const off = await previewNotificationRule(appFor(store, coordinator.email), 'cohort', 'rule-1', now);
+  assert.equal(off.enabled, false);
+  assert.equal(off.messages.some((message) => message.studentId === 'other@vsa.example.edu'), true);
+  await assert.rejects(
+    sendNotificationRule(appFor(store, coordinator.email), {
+      kind: 'cohort',
+      ruleId: 'rule-1',
+      sendIds: [off.messages[0].sendId],
+    }, { now, mailer: { async send() { sentTo.push('should-not'); } } }),
+    /Turn this reminder on/,
+  );
+  const previous = process.env.EE_NOTIFICATIONS_DRY_RUN;
+  process.env.EE_NOTIFICATIONS_DRY_RUN = 'true';
+  await store.set(COLLECTIONS.notificationRules, 'rule-1', {
+    ...(await store.get(COLLECTIONS.notificationRules, 'rule-1')),
+    enabled: true,
+  });
+  await assert.rejects(
+    sendNotificationRule(appFor(store, coordinator.email), {
+      kind: 'cohort',
+      ruleId: 'rule-1',
+      sendIds: [off.messages[0].sendId],
+    }, { now, mailer: { async send() { sentTo.push('should-not'); } } }),
+    /Dry run is on/,
+  );
+  if (previous === undefined) delete process.env.EE_NOTIFICATIONS_DRY_RUN;
+  else process.env.EE_NOTIFICATIONS_DRY_RUN = previous;
+  assert.deepEqual(sentTo, [student.email]);
 });

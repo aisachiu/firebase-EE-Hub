@@ -43,10 +43,12 @@ import {
   deleteNotificationOverlay,
   deleteNotificationRule,
   listNotificationDesk,
+  previewNotificationRule,
   previewNotificationSweep,
   runNotificationSweep,
   saveNotificationOverlay,
   saveNotificationRule,
+  sendNotificationRule,
   sendNotificationTest,
   setNotificationOverlayEnabled,
   setNotificationRuleEnabled,
@@ -113,7 +115,9 @@ export async function dispatch(app: App, method: string, args: unknown[]): Promi
     case 'deleteNotificationOverlay': return deleteNotificationOverlay(app, args[0]);
     case 'setNotificationOverlayEnabled': return setNotificationOverlayEnabled(app, args[0], args[1]);
     case 'previewNotificationSweep': return previewNotificationSweep(app, args[0]);
+    case 'previewNotificationRule': return previewNotificationRule(app, args[0], args[1]);
     case 'runNotificationSweep': return runNotificationSweep(app, args[0]);
+    case 'sendNotificationRule': return sendNotificationRule(app, args[0]);
     case 'sendNotificationTest': return sendNotificationTest(app, args[0], args[1]);
     default: throw new HubError('Unknown EE Hub request.');
   }

@@ -433,14 +433,14 @@ async function blockedSendIds(app: App, today: string, now: Date): Promise<Set<s
   return blocked;
 }
 
-async function buildPlan(app: App, cohortId: string, now: Date): Promise<SweepPlan> {
+async function sweepInputs(app: App, cohortId: string, now: Date) {
   const today = localToday(now, app.timeZone);
   const cohorts = await listCohorts(app, true);
   const active = cohorts.filter((cohort) => cohort.status.toLowerCase() !== 'inactive');
   const chosen = cohortId ? cohorts.filter((cohort) => cohort.id === cohortId) : active;
   if (cohortId && !chosen.length) throw new HubError('Cohort not found.');
   const cohortIds = chosen.map((cohort) => cohort.id);
-  const [tasks, students, templates, staff, rules, blocked] = await Promise.all([
+  const [tasks, students, templates, staff, rules, blockedSendIdsForToday] = await Promise.all([
     loadTasks(app),
     loadStudents(app, cohortIds),
     loadTemplates(app),
@@ -449,15 +449,19 @@ async function buildPlan(app: App, cohortId: string, now: Date): Promise<SweepPl
     blockedSendIds(app, today, now),
   ]);
   const cohortSet = new Set(cohortIds);
-  return planSweep({
+  return {
     today,
     tasks,
     students,
     templates,
     staff,
     rules: rules.filter((rule) => cohortSet.has(rule.cohortId)),
-    blockedSendIds: blocked,
-  });
+    blockedSendIds: blockedSendIdsForToday,
+  };
+}
+
+async function buildPlan(app: App, cohortId: string, now: Date): Promise<SweepPlan> {
+  return planSweep(await sweepInputs(app, cohortId, now));
 }
 
 function localToday(now: Date, timeZone: string): string {
@@ -656,6 +660,112 @@ export async function executeSweep(app: App, options: { now?: Date; dryRun?: boo
     statuses.set(send.sendId, outcome);
   }
   return summaryFrom(plan, false, statuses);
+}
+
+const RULE_PREVIEW_LIMIT = 200;
+
+function ruleKindOf(value: unknown): NotifyKind | '' {
+  const kind = text(value);
+  if (kind === 'overlay' || kind === 'cohort') return kind;
+  return '';
+}
+
+async function requireNotificationRule(app: App, ruleKind: unknown, ruleId: unknown): Promise<SweepRule> {
+  const kind = ruleKindOf(ruleKind);
+  if (!kind) throw new HubError('Choose a cohort rule or a supervisor reminder.');
+  const id = text(ruleId);
+  const collection = kind === 'overlay' ? COLLECTIONS.notificationOverlays : COLLECTIONS.notificationRules;
+  const existing = await app.store.get(collection, id);
+  if (!existing) throw new HubError('That reminder no longer exists. Refresh and try again.');
+  const rule = ruleFromDoc(existing, kind);
+  if (!rule) throw new HubError('That reminder could not be read.');
+  return rule;
+}
+
+function groupSkips(skips: SweepPlan['skipped'], names: Map<string, string>) {
+  const groups = new Map<string, string[]>();
+  skips.forEach((skip) => {
+    const name = names.get(skip.studentId) || skip.studentId || 'Student';
+    const list = groups.get(skip.reason) || [];
+    if (!list.includes(name)) list.push(name);
+    groups.set(skip.reason, list);
+  });
+  return Array.from(groups.entries()).map(([reason, students]) => ({ reason, students }));
+}
+
+export async function previewNotificationRule(app: App, ruleKind: unknown, ruleId: unknown, now = new Date()) {
+  const user = await requireStaff(app, 'PREVIEW_NOTIFICATION_RULE');
+  if (!notificationPowers(user).runSweep) return deny(app, user, 'PREVIEW_NOTIFICATION_RULE', 'Coordinators preview and send a reminder.');
+  const rule = await requireNotificationRule(app, ruleKind, ruleId);
+  const input = await sweepInputs(app, rule.cohortId, now);
+  const plan = planSweep({ ...input, rules: [{ ...rule, enabled: true }] });
+  const names = new Map(input.students.map((student) => [student.email, student.displayName || student.email]));
+  const template = input.templates.find((item) => item.milestoneId === rule.milestoneId);
+  const messages = plan.sends.slice(0, RULE_PREVIEW_LIMIT).map((send) => ({
+    sendId: send.sendId,
+    studentId: send.studentId,
+    studentName: send.studentName,
+    dueDate: send.dueDate,
+    recipients: send.recipients,
+    subject: send.subject,
+    body: send.body,
+  }));
+  return {
+    ruleId: rule.ruleId,
+    kind: rule.kind,
+    cohortId: rule.cohortId,
+    milestoneTitle: template?.title || rule.milestoneId,
+    timing: timingLabel(rule.when, rule.days),
+    audience: audienceLabel(rule.audience, template?.mOwner || ''),
+    enabled: rule.enabled,
+    today: plan.today,
+    truncated: plan.sends.length > messages.length,
+    gmailConfigured: gmailConfigured(),
+    dryRun: toBoolean(process.env.EE_NOTIFICATIONS_DRY_RUN),
+    messages,
+    skipped: groupSkips(plan.skipped, names),
+  };
+}
+
+export async function sendNotificationRule(app: App, raw: unknown, options: { now?: Date; mailer?: Mailer | null } = {}) {
+  const user = await requireStaff(app, 'SEND_NOTIFICATION_RULE');
+  if (!notificationPowers(user).runSweep) return deny(app, user, 'SEND_NOTIFICATION_RULE', 'Coordinators preview and send a reminder.');
+  const input = asInput(raw) as Doc;
+  const requested = Array.isArray(input.sendIds) ? input.sendIds.map((id: unknown) => text(id)).filter(Boolean) : [];
+  if (!requested.length) throw new HubError('Choose at least one message.');
+  if (requested.length > RULE_PREVIEW_LIMIT) throw new HubError('Choose 200 messages or fewer.');
+  if (toBoolean(process.env.EE_NOTIFICATIONS_DRY_RUN)) throw new HubError('Dry run is on. Nothing is emailed.');
+  const rule = await requireNotificationRule(app, input.kind || input.ruleKind, input.ruleId);
+  if (!rule.enabled) throw new HubError('Turn this reminder on before sending.');
+  const now = options.now || new Date();
+  return audited(app, user, 'SEND_NOTIFICATION_RULE', { ruleId: rule.ruleId, kind: rule.kind, sendIds: requested }, async () => {
+    const sweep = await sweepInputs(app, rule.cohortId, now);
+    const plan = planSweep({ ...sweep, rules: [rule] });
+    const wanted = new Set(requested);
+    const chosen = plan.sends.filter((send) => wanted.has(send.sendId));
+    const mailer = options.mailer === undefined ? await createGmailMailer() : options.mailer;
+    if (!mailer) throw new HubError('Gmail is not configured. Set EE_GMAIL_SENDER and EE_GMAIL_SERVICE_ACCOUNT_JSON.');
+    const items: Array<{ sendId: string; studentName: string; subject: string; status: string; error: string }> = [];
+    for (const send of chosen) {
+      const claim = await claimSend(app, send, now);
+      if (claim === 'skip') {
+        items.push({ sendId: send.sendId, studentName: send.studentName, subject: send.subject, status: 'skipped', error: 'Already sent for this trigger day.' });
+        continue;
+      }
+      const outcome = await deliverSend(app, mailer, send);
+      items.push({ sendId: send.sendId, studentName: send.studentName, subject: send.subject, status: outcome.status, error: outcome.error });
+    }
+    const chosenIds = new Set(chosen.map((send) => send.sendId));
+    requested.filter((id) => !chosenIds.has(id)).forEach((sendId) => {
+      items.push({ sendId, studentName: '', subject: '', status: 'skipped', error: 'That message is not due for this reminder.' });
+    });
+    return {
+      sent: items.filter((item) => item.status === 'sent').length,
+      failed: items.filter((item) => item.status === 'failed').length,
+      skipped: items.filter((item) => item.status === 'skipped').length,
+      items,
+    };
+  });
 }
 
 export async function previewNotificationSweep(app: App, cohortId: unknown): Promise<SweepSummary> {
