@@ -1294,12 +1294,12 @@
         const host = document.getElementById('my-activity');
         const copy = home.staffView ? {
           heading: 'Activity',
-          lede: 'Actions ' + (home.displayName || 'this student') + ' took in the EE Hub.',
-          empty: 'Nothing here yet. Actions this student takes will show up in this list.'
+          lede: 'Actions ' + (home.displayName || 'this student') + ' took in the EE Hub, plus email reminders sent to them.',
+          empty: 'Nothing here yet. Actions this student takes, and email reminders sent to them, will show up in this list.'
         } : {
           heading: 'Your activity',
-          lede: 'Actions you took in the EE Hub.',
-          empty: 'Nothing here yet. Signing in, forms, to-dos, and messages you send will show up in this list.'
+          lede: 'Actions you took in the EE Hub, plus email reminders sent to you.',
+          empty: 'Nothing here yet. Signing in, forms, to-dos, messages, and email reminders sent to you will show up in this list.'
         };
         const cached = state.activityFeed;
         if (cached && cached.email === home.email) {
@@ -1751,6 +1751,7 @@
         ['form', 'Forms'],
         ['task', 'Tasks'],
         ['question', 'Messages'],
+        ['email', 'Emails'],
         ['other', 'Other']
       ];
 
@@ -6050,9 +6051,29 @@
           </div>
           ${noticeSectionMarkup('rule', editRules, editOverlays, actor, canSend)}
           ${noticeSectionMarkup('overlay', editRules, editOverlays, actor, canSend)}
+          ${noticeLogMarkup()}
           <div id="notice-preview-result"></div>
         </div>`;
         bindEmailDesk(target, back);
+      }
+
+      function noticeStatusLabel(status) {
+        if (status === 'sent') return 'Sent';
+        if (status === 'failed') return 'Failed';
+        if (status === 'dry-run') return 'Dry run';
+        if (status === 'test') return 'Test';
+        if (status === 'sending') return 'Sending';
+        return status || 'Sent';
+      }
+
+      function noticeLogMarkup() {
+        const rows = (state.noticeDesk && state.noticeDesk.sends) || [];
+        const body = rows.length ? `<div class="table-wrap"><table class="notify-table"><thead><tr><th>When</th><th>Student</th><th>Milestone</th><th>To</th><th>Status</th></tr></thead><tbody>${rows.map(function(row) {
+          const who = row.ruleKind === 'overlay' ? 'Supervisor reminder' : 'Cohort rule';
+          const detail = [who, row.timing, row.audienceLabel, row.subject].filter(Boolean).join(' · ');
+          return `<tr><td>${escapeHtml(formatActivityWhen(row.sentAt))}</td><td>${escapeHtml(row.studentName || row.studentId || '—')}</td><td><strong>${escapeHtml(row.milestoneTitle || row.milestoneId)}</strong><div class="notify-meta">${escapeHtml(detail)}</div>${row.error ? `<div class="notify-meta">${escapeHtml(row.error)}</div>` : ''}</td><td>${escapeHtml((row.recipients || []).join(', ') || '—')}</td><td>${escapeHtml(noticeStatusLabel(row.status))}</td></tr>`;
+        }).join('')}</tbody></table></div>` : '<div class="empty">No reminders have been emailed for this filter.</div>';
+        return `<section class="notify-card" aria-labelledby="notice-log-heading"><div class="toolbar"><h2 id="notice-log-heading">Email log</h2></div><p class="muted">Coordinators see every reminder for this cohort. A supervisor sees mail from their own reminders. A sent reminder also appears on the student’s activity.</p>${body}</section>`;
       }
 
       function noticeSectionMarkup(kind, editRules, editOverlays, actor, canSend) {

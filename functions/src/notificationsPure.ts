@@ -66,6 +66,7 @@ export interface PlannedSend {
   days: number;
   audience: NotifyAudience;
   mOwner: string;
+  supervisorId: string;
   recipients: string[];
   note: string;
   subject: string;
@@ -155,6 +156,20 @@ export function triggerDay(dueDate: string, when: NotifyWhen, days: number): str
 
 export function sendKey(ruleKind: string, ruleId: string, taskId: string, triggerDayValue: string): string {
   return `${ruleKind}_${ruleId}_${taskId}_${triggerDayValue}`.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 700);
+}
+
+export function newlyEmailedStudent(studentId: string, before: string[], after: string[]): boolean {
+  const student = normalizeEmail(studentId);
+  if (!student) return false;
+  const prior = new Set(before.map((email) => normalizeEmail(email)));
+  const delivered = new Set(after.map((email) => normalizeEmail(email)));
+  return delivered.has(student) && !prior.has(student);
+}
+
+export function sendVisibleTo(powers: { editRules: boolean; editOwnOverlays: boolean }, email: string, send: { ruleKind: string; supervisorId?: string }): boolean {
+  if (text(send.ruleKind) !== 'overlay') return true;
+  if (powers.editRules || !powers.editOwnOverlays) return true;
+  return normalizeEmail(send.supervisorId) === normalizeEmail(email);
 }
 
 export function sendIsBlocked(existing: SendLogState | null, now: Date): boolean {
@@ -337,6 +352,7 @@ export function planSweep(input: {
           days: rule.days,
           audience: rule.audience,
           mOwner: template.mOwner,
+          supervisorId: rule.kind === 'overlay' ? normalizeEmail(rule.supervisorId) : '',
           recipients,
           note: rule.note,
           subject: message.subject,

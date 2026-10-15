@@ -13,9 +13,11 @@ import {
   NotifyKind,
   NotifyWhen,
   PlannedSend,
+  newlyEmailedStudent,
   planSweep,
   requireEnabledFlag,
   sendIsBlocked,
+  sendVisibleTo,
   SweepPlan,
   SweepRule,
   SweepStaff,
@@ -26,7 +28,7 @@ import {
 } from './notificationsPure';
 import { listCohorts, placementFromMember, requireCohort } from './roster';
 import { COLLECTIONS } from './schema';
-import { App, audited, deny, requireStaff } from './session';
+import { App, audit, audited, deny, requireStaff } from './session';
 import { clockParts, Doc, HubError, normalizeEmail, nowIso, serializeDateOnly, text, toBoolean, uuid } from './util';
 
 const ITEM_LIMIT = 200;
@@ -234,6 +236,7 @@ export async function listNotificationDesk(app: App, cohortId: unknown, mileston
     rules: rules.filter((rule) => rule.kind === 'cohort'),
     overlays: rules.filter((rule) => rule.kind === 'overlay'),
     students,
+    sends: await loadSendLog(app, user.email, powers, selectedCohort, milestoneFilter, templateMap),
     gmail: {
       configured: gmailConfigured(),
       sender: gmailSender(),
@@ -511,6 +514,8 @@ async function claimSend(app: App, send: PlannedSend, now: Date): Promise<'send'
   });
 }
 
+const SEND_LOG_LIMIT = 120;
+
 function sendLog(send: PlannedSend, extra: Doc): Doc {
   return {
     sendId: send.sendId,
@@ -520,7 +525,12 @@ function sendLog(send: PlannedSend, extra: Doc): Doc {
     triggerDay: send.triggerDay,
     cohortId: send.cohortId,
     milestoneId: send.milestoneId,
+    milestoneTitle: send.milestoneTitle,
     studentId: send.studentId,
+    studentName: send.studentName,
+    supervisorId: send.supervisorId || '',
+    when: send.when,
+    days: send.days,
     recipients: send.recipients,
     audience: send.audience,
     subject: send.subject,
@@ -528,9 +538,69 @@ function sendLog(send: PlannedSend, extra: Doc): Doc {
   };
 }
 
+async function loadSendLog(app: App, email: string, powers: { editRules: boolean; editOwnOverlays: boolean }, cohortId: string, milestoneId: string, templates: Map<string, SweepTemplate>) {
+  const rows = await app.store.list(COLLECTIONS.notificationSends);
+  return rows
+    .map((row) => presentSend(row, templates))
+    .filter((row) => row.sendId && (!cohortId || row.cohortId === cohortId))
+    .filter((row) => !milestoneId || row.milestoneId === milestoneId)
+    .filter((row) => sendVisibleTo(powers, email, row))
+    .sort((left, right) => text(right.sentAt).localeCompare(text(left.sentAt)))
+    .slice(0, SEND_LOG_LIMIT);
+}
+
+function presentSend(row: Doc, templates: Map<string, SweepTemplate>) {
+  const when = text(row.when).toLowerCase();
+  const timing = when === 'before' || when === 'on' || when === 'after'
+    ? timingLabel(when, when === 'on' ? 0 : Number(row.days) || 0)
+    : '';
+  const milestoneId = text(row.milestoneId);
+  const audience = text(row.audience).toLowerCase();
+  const mOwner = templates.get(milestoneId)?.mOwner || '';
+  return {
+    sendId: text(row.sendId),
+    ruleId: text(row.ruleId),
+    ruleKind: text(row.ruleKind) || 'cohort',
+    cohortId: text(row.cohortId),
+    milestoneId,
+    milestoneTitle: text(row.milestoneTitle) || templates.get(milestoneId)?.title || milestoneId,
+    studentId: normalizeEmail(row.studentId),
+    studentName: text(row.studentName) || normalizeEmail(row.studentId) || 'Sample student',
+    supervisorId: normalizeEmail(row.supervisorId),
+    recipients: Array.isArray(row.recipients) ? row.recipients.map((item: unknown) => normalizeEmail(item)).filter(Boolean) : [],
+    subject: text(row.subject),
+    status: text(row.status) || 'sent',
+    error: text(row.error),
+    sentAt: text(row.sentAt),
+    timing,
+    audienceLabel: audience === 'owner' || audience === 'coordinator' ? audienceLabel(audience, mOwner) : '',
+  };
+}
+
+async function recordStudentEmail(app: App, send: PlannedSend, before: string[], after: string[]): Promise<void> {
+  if (!newlyEmailedStudent(send.studentId, before, after)) return;
+  try {
+    await audit(app, 'NOTIFICATION_EMAIL', {
+      studentId: send.studentId,
+      milestoneId: send.milestoneId,
+      taskId: send.taskId,
+      cohort: send.cohortId,
+      recipients: send.recipients,
+      subject: send.subject,
+      audience: send.audience,
+      timing: timingLabel(send.when, send.days),
+      ruleKind: send.ruleKind,
+      note: send.note,
+    }, send.studentId);
+  } catch (error) {
+    console.error('Unable to record notification activity', error);
+  }
+}
+
 async function deliverSend(app: App, mailer: Mailer, send: PlannedSend): Promise<{ status: string; error: string }> {
   const existing = await app.store.get(COLLECTIONS.notificationSends, send.sendId);
-  const delivered = new Set<string>(Array.isArray(existing?.delivered) ? existing.delivered.map((email: unknown) => normalizeEmail(email)) : []);
+  const before = Array.isArray(existing?.delivered) ? existing.delivered.map((email: unknown) => normalizeEmail(email)).filter(Boolean) : [];
+  const delivered = new Set<string>(before);
   const errors: string[] = [];
   for (const recipient of send.recipients) {
     if (delivered.has(recipient)) continue;
@@ -544,12 +614,14 @@ async function deliverSend(app: App, mailer: Mailer, send: PlannedSend): Promise
   }
   const error = errors.join(' ').slice(0, 500);
   const status = delivered.size === send.recipients.length && !error ? 'sent' : 'failed';
+  const deliveredList = Array.from(delivered);
   await app.store.set(COLLECTIONS.notificationSends, send.sendId, sendLog(send, {
     status,
-    delivered: Array.from(delivered),
+    delivered: deliveredList,
     error,
     sentAt: nowIso(),
   }));
+  await recordStudentEmail(app, send, before, deliveredList);
   return { status, error };
 }
 
@@ -662,6 +734,29 @@ export async function sendNotificationTest(app: App, ruleKind: unknown, ruleId: 
   return audited(app, user, 'TEST_NOTIFICATION', { ruleId: id, kind }, async () => {
     const mailer = await createGmailMailer();
     await mailer.send({ to: [user.email], subject: message.subject, body: message.body });
+    const sendId = `test_${uuid().replace(/-/g, '')}`;
+    await app.store.set(COLLECTIONS.notificationSends, sendId, {
+      sendId,
+      ruleId: id,
+      ruleKind: kind,
+      taskId: '',
+      triggerDay: localToday(new Date(), app.timeZone),
+      cohortId: rule.cohortId,
+      milestoneId: rule.milestoneId,
+      milestoneTitle: template.title,
+      studentId: '',
+      studentName: 'Sample student',
+      supervisorId: kind === 'overlay' ? normalizeEmail(existing.supervisorId) : '',
+      when: rule.when,
+      days: rule.days,
+      recipients: [user.email],
+      delivered: [user.email],
+      audience: rule.audience,
+      subject: message.subject,
+      status: 'test',
+      error: '',
+      sentAt: nowIso(),
+    });
     return { sent: true, to: user.email };
   });
 }
