@@ -1,8 +1,10 @@
 import { initializeApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
+import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { dispatch } from './dispatch';
 import { verifiedGoogleEmail } from './identity';
+import { runScheduledNotifications } from './notifications';
 import { App } from './session';
 import { Store } from './store';
 import { HubError, text } from './util';
@@ -36,4 +38,21 @@ export const eeHub = onCall({ region: 'asia-east2', cors: true, invoker: 'public
     console.error(method, message);
     throw new HttpsError(code, message);
   }
+});
+
+const timeZone = process.env.EE_TIMEZONE || 'Asia/Hong_Kong';
+
+export const notificationSweep = onSchedule({
+  schedule: '15 7 * * *',
+  timeZone,
+  region: 'asia-east2',
+  timeoutSeconds: 300,
+  memory: '512MiB',
+}, async () => {
+  const app: App = {
+    store,
+    email: 'notifications@ee-hub',
+    timeZone,
+  };
+  await runScheduledNotifications(app);
 });

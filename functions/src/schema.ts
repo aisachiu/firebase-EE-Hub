@@ -296,6 +296,9 @@ export const COLLECTIONS: Record<string, string> = {
   todoTemplates: 'todoTemplates',
   quotations: 'quotations',
   formResponses: 'formResponses',
+  notificationRules: 'notificationRules',
+  notificationOverlays: 'notificationOverlays',
+  notificationSends: 'notificationSends',
 };
 
 export function tableConfig(entity: string): TableDef {
