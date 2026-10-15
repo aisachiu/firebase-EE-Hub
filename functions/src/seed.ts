@@ -92,6 +92,36 @@ async function seed() {
   const anchor = parseActionDate('2026-12-15');
   if (!anchor) throw new Error('Seed anchor date is invalid.');
   const now = new Date().toISOString();
+  await store.set(COLLECTIONS.notificationRules, 'rule-seed-m2', {
+    ruleId: 'rule-seed-m2',
+    cohortId: '2026',
+    milestoneId: 'm2',
+    when: 'before',
+    days: 7,
+    audience: 'owner',
+    enabled: true,
+    note: 'Upload the research question before this date.',
+    createdBy: COORDINATOR,
+    updatedBy: COORDINATOR,
+    createdAt: now,
+    updatedAt: now,
+  });
+  await store.set(COLLECTIONS.notificationOverlays, 'overlay-seed-m3', {
+    overlayId: 'overlay-seed-m3',
+    cohortId: '2026',
+    milestoneId: 'm3',
+    supervisorId: SUPERVISOR,
+    studentId: '',
+    when: 'before',
+    days: 2,
+    audience: 'owner',
+    enabled: true,
+    note: 'A short extra nudge before supervisor approval is due.',
+    createdBy: SUPERVISOR,
+    updatedBy: SUPERVISOR,
+    createdAt: now,
+    updatedAt: now,
+  });
   for (const milestone of milestones) {
     const taskId = `ACT_SEED_${milestone.milestoneId.toUpperCase()}`;
     await store.set(COLLECTIONS.studentActionItems, taskId, {
