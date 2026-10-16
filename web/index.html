@@ -647,6 +647,7 @@
       .doc-stat.streak { background: #fff8e1; border-color: #ffe0b2; }
       .doc-stat.streak b, .doc-stat.streak span { color: #e65100; }
       .doc-hint { margin: 0 0 12px; font-size: 12px; }
+      .sheet-choices { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 4px 16px; }
       .heatmap-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 8px 0; }
       .heatmap-head strong { font-size: 12px; }
       .heatmap-legend { display: flex; align-items: center; gap: 3px; color: var(--muted); font-size: 10px; }
@@ -4236,7 +4237,7 @@
       }
 
       const adminSections = [
-        ['cohorts', 'Cohorts'], ['driveAccount', 'Google Drive'], ['cohortMembers', 'Students in cohorts'], ['pathway', 'Phases & milestones'],
+        ['cohorts', 'Cohorts'], ['driveAccount', 'Google Drive'], ['sheetSync', 'Sheets'], ['cohortMembers', 'Students in cohorts'], ['pathway', 'Phases & milestones'],
         ['emailNotifications', 'Email notifications'],
         ['assignments', 'Assignments'],
         ['studentUsers', 'Student users'], ['staffUsers', 'Staff users'], ['subjects', 'Subjects'], ['formDesigner', 'Milestone forms'],
@@ -4282,6 +4283,10 @@
           renderDriveAccount(target);
           return;
         }
+        if (state.adminEntity === 'sheetSync') {
+          renderSheetSync(target);
+          return;
+        }
         if (state.adminEntity === 'formDesigner') {
           renderFormDesigner(target);
           return;
@@ -4317,7 +4322,7 @@
       }
 
       function refreshAdminSectionSilently() {
-        if (state.adminEntity === 'pathway' || state.adminEntity === 'emailNotifications' || state.adminEntity === 'driveAccount') return;
+        if (state.adminEntity === 'pathway' || state.adminEntity === 'emailNotifications' || state.adminEntity === 'driveAccount' || state.adminEntity === 'sheetSync') return;
         if (state.adminEntity === 'cohortMembers') {
           callServer('getCohortMembersForAdmin', state.cohortId).then(renderAdminData).catch(showError);
           return;
@@ -5675,6 +5680,101 @@
         if (checkDrive) checkDrive.disabled = driveDisabled;
         if (updateDrive) updateDrive.disabled = driveDisabled;
         updateDriveNamePreview();
+      }
+
+      function renderSheetSync(target) {
+        target.innerHTML = `<section class="editor"><h2>Sheets</h2>${loadingLine('Loading collections...')}</section>`;
+        callServer('listSheetCollections').then(function(result) {
+          const records = result.collections.filter(function(item) { return item.group === 'records'; });
+          const operational = result.collections.filter(function(item) { return item.group === 'operational'; });
+          const choice = function(item) {
+            return `<label class="check-option"><input type="checkbox" data-sheet-entity="${escapeHtml(item.id)}" ${item.recommended ? 'checked' : ''}><span>${escapeHtml(item.label)} <span class="muted">${escapeHtml(item.sheet)} · ${escapeHtml(String(item.count))}${item.exportOnly ? ' · export only' : ''}</span></span></label>`;
+          };
+          target.innerHTML = `<section class="editor">
+            <h2>Sheets</h2>
+            <p class="doc-hint">Export the collections you choose into a Google Sheet, edit it, then ingest it back. The sheet is created in the Google account assigned for Drive${result.driveActor ? ` (${escapeHtml(result.driveActor)})` : ''}. Phases, milestones, cohorts, and student lists start selected. A missing tab is left unchanged. Rows you delete in a selected tab are removed from the hub after you preview and confirm. Audit logs can be exported and are not written back. Email logs and word-count samples stay in the hub.</p>
+            <div class="toolbar"><button class="button secondary" id="sheet-recommended" type="button">Records to edit</button><button class="button secondary" id="sheet-all" type="button">All collections</button><button class="button secondary" id="sheet-none" type="button">Clear</button></div>
+            <h3>Records</h3>
+            <div class="sheet-choices">${records.map(choice).join('')}</div>
+            <h3>Operational records</h3>
+            <p class="doc-hint">Replacing these removes live tasks, messages, or answers that are not in the sheet.</p>
+            <div class="sheet-choices">${operational.map(choice).join('')}</div>
+            <div class="toolbar"><button class="button" id="sheet-export" type="button">Export selected</button></div>
+            <p id="sheet-export-result"></p>
+            <label class="field" for="sheet-url">Spreadsheet link</label>
+            <input id="sheet-url" placeholder="https://docs.google.com/spreadsheets/d/...">
+            <label class="check-option"><input type="checkbox" id="sheet-confirm"><span>Remove hub rows that are not in the selected tabs</span></label>
+            <div class="toolbar"><button class="button secondary" id="sheet-preview" type="button">Preview ingest</button><button class="button" id="sheet-apply" type="button" disabled>Ingest into the hub</button></div>
+            <div id="sheet-preview-result"></div>
+          </section>`;
+          const boxes = function() { return Array.from(target.querySelectorAll('[data-sheet-entity]')); };
+          const selected = function() { return boxes().filter(function(box) { return box.checked; }).map(function(box) { return box.getAttribute('data-sheet-entity'); }); };
+          const clearPreview = function() {
+            const apply = document.getElementById('sheet-apply');
+            if (apply) apply.disabled = true;
+            const preview = document.getElementById('sheet-preview-result');
+            if (preview) preview.innerHTML = '';
+          };
+          document.getElementById('sheet-recommended').addEventListener('click', function() {
+            boxes().forEach(function(box) {
+              const item = result.collections.find(function(entry) { return entry.id === box.getAttribute('data-sheet-entity'); });
+              box.checked = !!(item && item.recommended);
+            });
+            clearPreview();
+          });
+          document.getElementById('sheet-all').addEventListener('click', function() {
+            boxes().forEach(function(box) { box.checked = true; });
+            clearPreview();
+          });
+          document.getElementById('sheet-none').addEventListener('click', function() {
+            boxes().forEach(function(box) { box.checked = false; });
+            clearPreview();
+          });
+          boxes().forEach(function(box) { box.addEventListener('change', clearPreview); });
+          document.getElementById('sheet-url').addEventListener('input', clearPreview);
+          document.getElementById('sheet-export').addEventListener('click', function() {
+            const entities = selected();
+            if (!entities.length) { showError(new Error('Choose at least one collection.')); return; }
+            callServer('exportSheetCollections', entities).then(function(exported) {
+              const url = safeUrl(exported.url);
+              const share = exported.shared ? 'You can edit it.' : `It is owned by ${exported.owner}. ${exported.shareProblem || 'Sharing did not complete.'}`;
+              document.getElementById('sheet-export-result').innerHTML = url
+                ? `<a href="${escapeHtml(url)}" target="_blank" rel="noopener">${escapeHtml(exported.title || 'Open spreadsheet')}</a> <span class="muted">${escapeHtml(share)}</span>`
+                : `<span class="muted">${escapeHtml(share)}</span>`;
+              if (url) document.getElementById('sheet-url').value = url;
+            }).catch(showError);
+          });
+          document.getElementById('sheet-preview').addEventListener('click', function() {
+            const entities = selected().filter(function(id) {
+              const item = result.collections.find(function(entry) { return entry.id === id; });
+              return item && !item.exportOnly;
+            });
+            const source = document.getElementById('sheet-url').value;
+            if (!entities.length) { showError(new Error('Choose at least one collection to ingest.')); return; }
+            callServer('previewSheetIngest', { url: source }, entities).then(function(preview) {
+              const rows = preview.tables.map(function(table) {
+                return `<tr><td>${escapeHtml(table.label)}</td><td>${escapeHtml(String(table.incoming))}</td><td>${escapeHtml(String(table.existing))}</td><td>${escapeHtml(String(table.removing))}</td></tr>`;
+              }).join('');
+              const warnings = (preview.warnings || []).map(function(warning) { return `<li>${escapeHtml(warning)}</li>`; }).join('');
+              document.getElementById('sheet-preview-result').innerHTML = `<div class="table-wrap"><table class="data"><thead><tr><th>Collection</th><th>Rows in the sheet</th><th>Rows in the hub</th><th>Rows removed</th></tr></thead><tbody>${rows}</tbody></table></div>${warnings ? `<ul>${warnings}</ul>` : ''}`;
+              document.getElementById('sheet-apply').disabled = false;
+            }).catch(showError);
+          });
+          document.getElementById('sheet-apply').addEventListener('click', function() {
+            const entities = selected().filter(function(id) {
+              const item = result.collections.find(function(entry) { return entry.id === id; });
+              return item && !item.exportOnly;
+            });
+            const source = document.getElementById('sheet-url').value;
+            if (document.getElementById('sheet-confirm').checked !== true) { showError(new Error('Confirm that rows missing from the selected tabs will be removed from the hub.')); return; }
+            callServer('applySheetIngest', { url: source }, entities, true).then(function(preview) {
+              const labels = preview.tables.map(function(table) { return table.label; }).join(', ');
+              document.getElementById('sheet-apply').disabled = true;
+              showSuccess(`Updated ${labels} from the spreadsheet.`);
+              renderSheetSync(target);
+            }).catch(showError);
+          });
+        }).catch(showError);
       }
 
       function renderDriveAccount(target) {

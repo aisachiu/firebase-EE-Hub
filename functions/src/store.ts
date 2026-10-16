@@ -85,6 +85,10 @@ export class Store {
     await this.messages(ticketId).doc(messageId).set(cleanDoc(data));
   }
 
+  async removeMessage(ticketId: string, messageId: string): Promise<void> {
+    await this.messages(ticketId).doc(messageId).delete();
+  }
+
   async addAudit(entry: Doc): Promise<void> {
     await this.col(COLLECTIONS.auditLogs).add(cleanDoc(entry));
   }
