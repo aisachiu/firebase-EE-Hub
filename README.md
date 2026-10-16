@@ -77,7 +77,9 @@ VITE_FIREBASE_APP_ID=
 
 Do not set `VITE_USE_EMULATORS` for that build.
 
-3. Create `functions/.env` with `EE_TIMEZONE=Asia/Hong_Kong`. Student Drive folders are not created by a service account. An Admin or Coordinator connects Google Drive in the cohort roster, and that Google account owns the folders and the copied EE documents. Enable the Google Drive API on the Firebase project, and keep the Google sign-in OAuth client internal to the school Workspace so the Drive scope can be granted without a public verification review. The local demo can save a folder link and a template link; it cannot create Drive files. Email reminders use the same file; see Email notifications below.
+3. Create `functions/.env` with `EE_TIMEZONE=Asia/Hong_Kong`. Student Drive folders are not created by a service account. An Admin or Coordinator connects Google Drive in the cohort roster, and that Google account owns the folders and the copied EE documents. Enable the Google Drive API on the Firebase project, and keep the Google sign-in OAuth client internal to the school Workspace so the Drive scopes can be granted without a public verification review. The local demo can save a folder link and a template link; it cannot create Drive files. Email reminders use the same file; see Email notifications below.
+
+The student page shows an EE folder card and an EE document card with word-count changes and an edit heatmap. That read uses the Google account of the person who has the page open (`https://www.googleapis.com/auth/drive.readonly`), not a service account and not the coordinator account that created the folder. The function checks that the Drive token belongs to the signed-in user, then reads only the EE document already saved on that student. If this person cannot open the document, the page says so. The access token is not stored. Daily word totals are kept in `docWordLogs` so a later visit can show the change. Add `https://www.googleapis.com/auth/drive.readonly` on the same internal OAuth client. A supervisor sees the heatmap when their own Google account can open that student's document. The local demo cannot read a Google Doc.
 
 4. From this repo:
 

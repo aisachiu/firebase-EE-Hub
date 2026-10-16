@@ -327,13 +327,12 @@
       main.plan-wide { max-width: none; padding-inline: clamp(12px, 2vw, 28px); }
       @container (max-width: 760px) {
         .tiles, .steps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-        .doc-grid { grid-template-columns: 1fr; }
       }
       .hero { display: flex; justify-content: space-between; gap: 16px; align-items: center; flex-wrap: wrap; padding: 14px 16px; color: white; background: var(--ink); border-left: 5px solid var(--gold); }
       .hero p { margin: 0; color: #d5e4ef; }
       .hero h2 { margin: 2px 0 4px; color: white; }
       .tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-top: 10px; }
-      .tile, .scard, .strip, .doc-card { padding: 10px 12px; background: white; border: 1px solid var(--line); }
+      .tile, .scard, .strip { padding: 10px 12px; background: white; border: 1px solid var(--line); }
       .tile .val { font-size: 20px; font-weight: 700; color: var(--ink); }
       .steps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; list-style: none; margin: 8px 0 0; padding: 0; }
       .steps .step { text-align: center; color: var(--muted); font-size: 12px; font-weight: 700; }
@@ -351,7 +350,6 @@
       .form-dialog { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: 12px; background: rgba(0, 30, 50, .45); }
       .form-dialog[hidden] { display: none; }
       .form-panel { width: min(720px, 100%); max-height: calc(100vh - 24px); overflow: auto; padding: 14px; background: white; border-top: 4px solid var(--gold); }
-      .doc-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
       .milestone-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 8px 0; border-top: 1px solid var(--line); }
       .activity-panel { max-width: 860px; }
       .activity-slider { margin: 4px 0 10px; }
@@ -385,7 +383,7 @@
       .activity-detail div { display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: 8px; }
       .activity-detail dt { margin: 0; color: var(--muted); font-size: 12px; font-weight: 700; }
       .activity-detail dd { margin: 0; }
-      @media (max-width: 800px) { .tiles, .steps, .doc-grid { grid-template-columns: 1fr 1fr; } .topbar { flex-wrap: wrap; } .resource-editor-layout { grid-template-columns: 1fr; } .resource-preview { position: static; } }
+      @media (max-width: 800px) { .tiles, .steps { grid-template-columns: 1fr 1fr; } .topbar { flex-wrap: wrap; } .resource-editor-layout { grid-template-columns: 1fr; } .resource-preview { position: static; } }
       @media (max-width: 700px) {
         .topbar { align-items: flex-start; padding: 14px 16px; }
         .shell { padding: 16px 14px 36px; }
@@ -629,6 +627,56 @@
       .notify-mail { margin: 8px 0 0; padding: 8px 10px; white-space: pre-wrap; background: var(--surface); border: 1px solid var(--line); font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
       .list-journey-tip { position: fixed; z-index: 80; max-width: min(280px, calc(100vw - 16px)); padding: 5px 8px; border-radius: 4px; background: #263746; color: white; font-size: 11px; line-height: 1.35; pointer-events: none; box-shadow: 0 2px 8px rgba(0, 30, 50, .22); }
       .list-journey-tip[hidden] { display: none !important; }
+      .docs-layout { display: flex; align-items: stretch; gap: 12px; }
+      .folder-card { flex: 0 0 168px; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 14px; background: white; border: 1px solid var(--line); border-radius: 8px; }
+      .folder-card svg { width: 36px; height: 36px; fill: #fbbc04; }
+      .folder-card h3, .doc-head h3 { margin: 0; font-size: 15px; }
+      .folder-card p { margin: 0; }
+      .folder-card a, .doc-head a { color: var(--green); font-weight: 700; }
+      .folder-links { list-style: none; margin: 8px 0 0; padding: 8px 0 0; border-top: 1px solid var(--line); display: grid; gap: 4px; width: 100%; font-size: 13px; }
+      .doc-dashboard { flex: 1; min-width: 0; padding: 14px 16px 16px; background: white; border: 1px solid var(--line); border-radius: 8px; }
+      .doc-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 14px; }
+      .doc-head h3 { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--ink); }
+      .doc-head h3 span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .doc-head svg { flex: none; width: 18px; height: 18px; fill: #1a73e8; }
+      .doc-stats { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; margin: 0 0 8px; }
+      .doc-stat { padding: 10px 6px; text-align: center; background: #f8f9fa; border: 1px solid #e9ecef; border-radius: 6px; }
+      .doc-stat b { display: block; color: var(--ink); font-size: 18px; line-height: 1.2; }
+      .doc-stat b.compact { font-size: 14px; }
+      .doc-stat span { display: block; margin-top: 4px; color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+      .doc-stat.streak { background: #fff8e1; border-color: #ffe0b2; }
+      .doc-stat.streak b, .doc-stat.streak span { color: #e65100; }
+      .doc-hint { margin: 0 0 12px; font-size: 12px; }
+      .doc-connect { margin-top: 8px; }
+      .heatmap-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 8px 0; }
+      .heatmap-head strong { font-size: 12px; }
+      .heatmap-legend { display: flex; align-items: center; gap: 3px; color: var(--muted); font-size: 10px; }
+      .heatmap-legend i { width: 10px; height: 10px; border-radius: 2px; }
+      .heatmap-months { display: grid; grid-template-columns: repeat(var(--weeks), minmax(0, 1fr)); column-gap: 3px; height: 14px; margin: 0 0 4px 20px; color: var(--muted); font-size: 10px; }
+      .heatmap-months span { white-space: nowrap; }
+      .heatmap-plot { display: grid; grid-template-columns: 14px minmax(0, 1fr); column-gap: 6px; align-items: stretch; }
+      .heatmap-days { position: relative; color: var(--muted); font-size: 9px; line-height: 1; }
+      .heatmap-days span { position: absolute; right: 0; transform: translateY(-40%); }
+      .heatmap-days span:nth-child(1) { top: calc(100% * .5 / 7); }
+      .heatmap-days span:nth-child(2) { top: calc(100% * 2.5 / 7); }
+      .heatmap-days span:nth-child(3) { top: calc(100% * 4.5 / 7); }
+      .heatmap-grid { display: grid; grid-template-rows: repeat(7, auto); grid-template-columns: repeat(var(--weeks), minmax(0, 1fr)); grid-auto-flow: column; gap: 3px; }
+      .heatmap-grid .heat-cell { width: 100%; aspect-ratio: 1; }
+      .heat-cell { display: block; border-radius: 2px; background: #ebedf0; }
+      .heat-cell.lvl-1 { background: #c6e48b; }
+      .heat-cell.lvl-2 { background: #7bc96f; }
+      .heat-cell.lvl-3 { background: #239a3b; }
+      .heat-cell.lvl-4 { background: #196127; }
+      .heat-cell.is-future { background: transparent; }
+      @container (max-width: 860px) {
+        .docs-layout { flex-direction: column; }
+        .folder-card { flex-basis: auto; }
+        .doc-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      }
+      @container (max-width: 520px) {
+        .doc-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .doc-head { align-items: flex-start; flex-direction: column; }
+      }
     </style>
   </head>
   <body>
@@ -648,6 +696,9 @@
         selectedMemberIds: [],
         driveBusy: false,
         driveAccessToken: '',
+        driveReadToken: '',
+        essayDriveSource: '',
+        essayAnalytics: null,
         driveSettingsLoaded: false,
         assignmentStudentIds: [],
         importRecords: null,
@@ -1149,12 +1200,6 @@
         const done = (home.actionItems || []).filter(function(item) { return item.CreatorType === 'System' && item.Status === 'Completed'; }).length;
         const pageName = home.displayName || 'Student';
         const hero = next ? `<section class="hero"><div><p class="eyebrow">${home.staffView ? 'Next step' : 'Your next step'}</p><h2>${escapeHtml(next.template.title)}</h2><p>${escapeHtml(next.template.description || 'Complete this milestone before the due date.')}</p></div><div>${next.item && next.item.DueDate ? `<div class="chip">${escapeHtml(String(next.item.DueDate).slice(0, 10))}</div>` : ''}${formButton(home, next)}</div></section>` : '<section class="hero"><div><p class="eyebrow">All caught up</p><h2>No action needed right now</h2><p>Open Journey to see what is coming.</p></div></section>';
-        const links = [
-          ['Drive folder', home.links && home.links.folder],
-          ['Extended Essay', home.links && home.links.doc],
-          ['RPPF', home.links && home.links.rppf],
-          ['Poster', home.links && home.links.poster]
-        ];
         main.innerHTML = `${staffStudentBar(home)}
           <div class="page-head"><div><h1>${escapeHtml(pageName)}'s EE</h1>${home.cohort ? `<p class="muted">Cohort ${escapeHtml(home.cohort)}</p>` : ''}</div></div>
           ${renderJourneyHero(journeyOverview(home))}
@@ -1168,10 +1213,7 @@
             <div class="tile"><div class="muted">Anchor</div><div class="val" style="font-size:16px">${escapeHtml(home.anchor || '—')}</div></div>
           </div>
           <h2 class="section-gap">${home.staffView ? 'Documents' : 'My documents'}</h2>
-          <div class="doc-grid">${links.map(function(link) {
-            const url = safeUrl(link[1]);
-            return `<article class="doc-card"><h3>${escapeHtml(link[0])}</h3><p class="muted">${url ? 'Shared with your supervisor.' : 'Not created yet.'}</p>${url ? `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">Open</a>` : ''}</article>`;
-          }).join('')}</div>
+          <div class="docs-layout">${renderFolderCard(home)}${renderEssayCard(home)}</div>
           <section class="section-gap" id="my-activity" aria-label="${home.staffView ? 'Student activity' : 'Your activity'}"></section>`;
         applyJourneyHero(main);
         bindJourneyHero(main);
@@ -1179,7 +1221,181 @@
         bindStaffStudentChrome();
         bindUnreadNotices(main, false);
         paintTabDot('help', home.unreadTicketCount, 'Help');
+        paintEssayAnalytics(home);
         paintStudentActivity(home);
+      }
+
+      function renderFolderCard(home) {
+        const links = home.links || {};
+        const folder = safeUrl(links.folder);
+        const extras = [['RPPF', links.rppf], ['Poster', links.poster]].map(function(entry) {
+          const url = safeUrl(entry[1]);
+          return `<li>${url ? `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(entry[0])}</a>` : `<span class="muted">${escapeHtml(entry[0])} not created yet</span>`}</li>`;
+        }).join('');
+        return `<article class="folder-card"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg><h3>Drive folder</h3><p class="muted">${folder ? 'Shared with your supervisor.' : 'Not created yet.'}</p>${folder ? `<a href="${escapeHtml(folder)}" target="_blank" rel="noopener noreferrer">Open folder</a>` : ''}<ul class="folder-links">${extras}</ul></article>`;
+      }
+
+      function renderEssayCard(home) {
+        const url = safeUrl(home.links && home.links.doc);
+        return `<article class="doc-dashboard"><div class="doc-head"><h3><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg><span id="essay-doc-title">Extended Essay</span></h3>${url ? `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">Open in Google Docs</a>` : ''}</div><div id="essay-stats">${url ? '<p class="muted">Reading the Google Doc…</p>' : '<p class="muted">Not created yet.</p>'}</div></article>`;
+      }
+
+      function essayAnalyticsKey(home) {
+        return (home.email || '') + '|' + ((home.links && home.links.doc) || '');
+      }
+
+      function essayDriveAuth() {
+        if (state.driveAccessToken) return { token: state.driveAccessToken, source: 'write' };
+        if (state.driveReadToken) return { token: state.driveReadToken, source: 'read' };
+        return { token: '', source: '' };
+      }
+
+      function clearEssayDriveToken() {
+        if (state.essayDriveSource === 'write') state.driveAccessToken = '';
+        else state.driveReadToken = '';
+        state.essayDriveSource = '';
+        state.essayAnalytics = null;
+      }
+
+      function essayDrivePrompt(message) {
+        const copy = message || 'Connect Google Drive to read this document. The hub uses your Google account, and only a document you can already open is included.';
+        return `<p class="muted">${escapeHtml(copy)}</p><button type="button" class="button secondary doc-connect" id="connect-essay-drive">Connect Google Drive</button>`;
+      }
+
+      function bindEssayDriveConnect(home) {
+        const button = document.getElementById('connect-essay-drive');
+        if (!button) return;
+        button.addEventListener('click', function() {
+          button.disabled = true;
+          connectEssayDrive().then(function() {
+            paintEssayAnalytics(home);
+          }).catch(function(error) {
+            const host = document.getElementById('essay-stats');
+            if (!host) return;
+            host.innerHTML = '<p class="notice error">' + escapeHtml(error && error.message ? error.message : error) + '</p>' + essayDrivePrompt('');
+            bindEssayDriveConnect(home);
+          });
+        });
+      }
+
+      function paintEssayAnalytics(home) {
+        const host = document.getElementById('essay-stats');
+        if (!host) return;
+        const url = safeUrl(home.links && home.links.doc);
+        if (!url) return;
+        if (window.eeUseEmulators) {
+          host.innerHTML = '<p class="muted">The local demo cannot read a Google Doc. On the deployed hub, word count and edit history use the Google account you are signed in with.</p>';
+          return;
+        }
+        const auth = essayDriveAuth();
+        if (!auth.token) {
+          host.innerHTML = essayDrivePrompt('');
+          bindEssayDriveConnect(home);
+          return;
+        }
+        const key = essayAnalyticsKey(home);
+        const cached = state.essayAnalytics;
+        if (cached && cached.key === key && cached.stats && cached.stats.ok && Date.now() - cached.at < 600000) {
+          host.innerHTML = renderEssayStats(cached.stats);
+          const cachedTitle = document.getElementById('essay-doc-title');
+          if (cachedTitle && cached.stats.title) cachedTitle.textContent = cached.stats.title;
+          return;
+        }
+        state.essayDriveSource = auth.source;
+        const request = home.staffView
+          ? callServer('getStudentEssayAnalytics', home.email, home.cohort || '', home.viewAs || state.actingAs || '', { accessToken: auth.token })
+          : callServer('getMyEssayAnalytics', { accessToken: auth.token });
+        request.then(function(stats) {
+          if (host.isConnected === false) return;
+          if (stats && stats.reason === 'auth') {
+            clearEssayDriveToken();
+            host.innerHTML = essayDrivePrompt(stats.message);
+            bindEssayDriveConnect(home);
+            return;
+          }
+          if (stats && stats.ok) state.essayAnalytics = { key: key, at: Date.now(), stats: stats };
+          host.innerHTML = renderEssayStats(stats || {});
+          const title = document.getElementById('essay-doc-title');
+          if (title && stats && stats.title) title.textContent = stats.title;
+        }).catch(function(error) {
+          if (host.isConnected === false || isStale(error)) return;
+          const message = error && error.message ? error.message : String(error);
+          if (/Connect Google Drive|Allow Google Drive/i.test(message)) {
+            clearEssayDriveToken();
+            host.innerHTML = essayDrivePrompt(message);
+            bindEssayDriveConnect(home);
+            return;
+          }
+          host.innerHTML = '<p class="notice error">' + escapeHtml(message) + '</p>';
+        });
+      }
+
+      function formatCount(value) {
+        if (value === null || value === undefined || value === '') return '—';
+        const number = Number(value);
+        if (!isFinite(number)) return '—';
+        return Math.round(number).toLocaleString('en-US');
+      }
+
+      function formatWordDelta(value) {
+        if (value === null || value === undefined || value === '') return '—';
+        const number = Math.round(Number(value));
+        if (!isFinite(number)) return '—';
+        if (number > 0) return '+' + number.toLocaleString('en-US');
+        return number.toLocaleString('en-US');
+      }
+
+      function formatLastEdit(value) {
+        const date = new Date(value || '');
+        if (isNaN(date.getTime())) return '—';
+        const minutes = Math.round((Date.now() - date.getTime()) / 60000);
+        if (minutes < 2) return 'Just now';
+        if (minutes < 60) return minutes + ' min ago';
+        const hours = Math.round(minutes / 60);
+        if (hours < 24) return hours === 1 ? '1 hour ago' : hours + ' hours ago';
+        const days = Math.round(hours / 24);
+        if (days === 1) return 'Yesterday';
+        if (days < 14) return days + ' days ago';
+        return shortDate(value) || '—';
+      }
+
+      function renderEssayStats(stats) {
+        if (!stats || !stats.ok) {
+          if (stats && stats.reason === 'missing') return '<p class="muted">Not created yet.</p>';
+          if (stats && stats.reason === 'auth') return essayDrivePrompt(stats.message);
+          return '<p class="notice error">' + escapeHtml((stats && stats.message) || 'The EE Hub could not read this document.') + '</p>';
+        }
+        const lastEdit = formatLastEdit(stats.lastEdit);
+        const streak = stats.streak === null || stats.streak === undefined
+          ? '—'
+          : (Number(stats.streak) === 1 ? '1 day' : formatCount(stats.streak) + (Number(stats.streak) ? ' days' : ''));
+        const streakClass = Number(stats.streak) > 0 ? ' streak' : '';
+        const hint = stats.wordsHint ? `<p class="muted doc-hint">${escapeHtml(stats.wordsHint)}</p>` : '';
+        const days = stats.days || [];
+        const weeks = days.length ? Math.ceil(days.length / 7) : 0;
+        const months = (stats.months || []).map(function(month) {
+          return `<span style="grid-column:${Number(month.column) + 1}">${escapeHtml(month.label || '')}</span>`;
+        }).join('');
+        const cells = days.map(function(day) {
+          const level = day.future ? '' : ' lvl-' + (Number(day.level) || 0);
+          const title = day.future ? '' : (day.date + ': ' + (Number(day.count) ? Number(day.count) + (Number(day.count) === 1 ? ' edit' : ' edits') : 'No edits'));
+          return `<i class="heat-cell${day.future ? ' is-future' : ''}${level}"${title ? ` title="${escapeHtml(title)}"` : ''}></i>`;
+        }).join('');
+        const range = (stats.months || []).map(function(month) { return month.label; }).filter(Boolean);
+        const heatmapLabel = 'Edit activity' + (range.length ? ' from ' + range[0] + (range.length > 1 ? ' to ' + range[range.length - 1] : '') : '') + '. Darker green means more edits.';
+        const historyNote = stats.revisionsLoaded ? '' : '<p class="muted doc-hint">Edit history is not available for this document yet.</p>';
+        return `<div class="doc-stats">
+            <div class="doc-stat"><b>${formatCount(stats.wordCount)}</b><span>Current words</span></div>
+            <div class="doc-stat" title="Change since about one day ago"><b>${formatWordDelta(stats.wordsDay)}</b><span>Words, last day</span></div>
+            <div class="doc-stat" title="Change since about one week ago"><b>${formatWordDelta(stats.wordsWeek)}</b><span>Words, last week</span></div>
+            <div class="doc-stat${streakClass}" title="Days in a row with at least one edit"><b>${streak === '0 days' ? '0' : escapeHtml(streak)}</b><span>Edit streak</span></div>
+            <div class="doc-stat" title="Google Drive does not report how often a document was opened."><b>${formatCount(stats.opens)}</b><span>Times opened</span></div>
+            <div class="doc-stat" title="${escapeHtml(stats.lastEdit ? formatActivityWhen(stats.lastEdit) : '')}"><b class="${lastEdit.length > 12 ? 'compact' : ''}">${escapeHtml(lastEdit)}</b><span>Last edit</span></div>
+          </div>
+          ${hint}
+          <div class="heatmap-head"><strong>Edit activity</strong><div class="heatmap-legend" aria-hidden="true"><span>Less</span><i class="heat-cell"></i><i class="heat-cell lvl-1"></i><i class="heat-cell lvl-2"></i><i class="heat-cell lvl-3"></i><i class="heat-cell lvl-4"></i><span>More</span></div></div>
+          ${weeks ? `<div class="heatmap" style="--weeks:${weeks}" role="img" aria-label="${escapeHtml(heatmapLabel)}"><div class="heatmap-months">${months}</div><div class="heatmap-plot"><div class="heatmap-days" aria-hidden="true"><span>M</span><span>W</span><span>F</span></div><div class="heatmap-grid">${cells}</div></div></div>` : ''}
+          ${historyNote}`;
       }
 
       function journeyOverview(home) {
@@ -5582,25 +5798,48 @@
         }
       }
 
+      function acceptedDriveToken(token) {
+        const signedIn = window.eeUser && window.eeUser.email ? String(window.eeUser.email).toLowerCase() : '';
+        const expected = state.user && state.user.email ? String(state.user.email).toLowerCase() : '';
+        if (expected && signedIn && signedIn !== expected) throw new Error('Connect the Google account you are signed in with.');
+        if (!token) throw new Error('Google did not return a Drive connection. Allow Drive access for the account you are signed in with.');
+        return token;
+      }
+
+      function drivePopupError(error) {
+        const message = error && error.message ? error.message : String(error);
+        if (/popup-closed|cancelled-popup|popup-blocked/i.test(message)) {
+          return new Error('The Google Drive window was closed before access was granted.');
+        }
+        return error instanceof Error ? error : new Error(message);
+      }
+
       function connectDriveAccount() {
         if (window.eeUseEmulators) {
           return Promise.reject(new Error('The local demo cannot connect Google Drive. On the deployed hub, Connect Google Drive uses your own Google account.'));
         }
         if (!window.eeConnectDrive) return Promise.reject(new Error('Google Drive is not available in this session.'));
         return window.eeConnectDrive().then(function(token) {
-          const signedIn = window.eeUser && window.eeUser.email ? String(window.eeUser.email).toLowerCase() : '';
-          const expected = state.user && state.user.email ? String(state.user.email).toLowerCase() : '';
-          if (expected && signedIn && signedIn !== expected) throw new Error('Connect the Google account you are signed in with.');
-          if (!token) throw new Error('Google did not return a Drive connection. Allow Drive access for the account you are signed in with.');
-          state.driveAccessToken = token;
+          state.driveAccessToken = acceptedDriveToken(token);
           applyDriveConnection();
-          return token;
+          return state.driveAccessToken;
         }).catch(function(error) {
-          const message = error && error.message ? error.message : String(error);
-          if (/popup-closed|cancelled-popup|popup-blocked/i.test(message)) {
-            throw new Error('The Google Drive window was closed before access was granted.');
-          }
-          throw error instanceof Error ? error : new Error(message);
+          throw drivePopupError(error);
+        });
+      }
+
+      function connectEssayDrive() {
+        if (window.eeUseEmulators) {
+          return Promise.reject(new Error('The local demo cannot read a Google Doc. On the deployed hub, document stats use the Google account you are signed in with.'));
+        }
+        if (!window.eeConnectDriveRead) return Promise.reject(new Error('Google Drive is not available in this session.'));
+        return window.eeConnectDriveRead().then(function(token) {
+          state.driveReadToken = acceptedDriveToken(token);
+          state.essayDriveSource = 'read';
+          state.essayAnalytics = null;
+          return state.driveReadToken;
+        }).catch(function(error) {
+          throw drivePopupError(error);
         });
       }
 

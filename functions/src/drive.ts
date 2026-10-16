@@ -8,8 +8,8 @@ const BATCH_LIMIT = 8;
 export const DRIVE_FOLDER_MIME = 'application/vnd.google-apps.folder';
 export const DRIVE_DOCUMENT_MIME = 'application/vnd.google-apps.document';
 
-const RECONNECT = 'Connect Google Drive again. The previous connection expired.';
-const WRONG_ACCOUNT = 'Connect the Google Drive account you are signed in with.';
+export const RECONNECT = 'Connect Google Drive again. The previous connection expired.';
+export const WRONG_ACCOUNT = 'Connect the Google Drive account you are signed in with.';
 
 export interface DriveFile {
   id: string;
@@ -303,7 +303,7 @@ export async function assertDriveAccount(drive: DriveClient, email: string): Pro
   if (!owner || owner !== normalizeEmail(email)) throw new HubError(WRONG_ACCOUNT);
 }
 
-function readAccessToken(source: unknown): string {
+export function readAccessToken(source: unknown): string {
   if (!source || typeof source !== 'object') return '';
   const value = (source as Doc).accessToken;
   if (value === undefined || value === null || value === '') return '';
