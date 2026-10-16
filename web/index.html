@@ -237,10 +237,17 @@
       .next-steps strong { color: var(--ink); }
       .next-steps span { color: var(--muted); font-size: 12px; }
       .note-list { display: grid; gap: 8px; }
-      .note-card { display: grid; gap: 4px; padding: 10px 12px; background: white; border: 1px solid var(--line); border-left: 3px solid var(--ink); }
+      .note-card { display: grid; gap: 8px; padding: 10px 12px; background: white; border: 1px solid var(--line); border-left: 3px solid var(--ink); }
+      .note-head { display: grid; gap: 2px; }
+      .note-head strong { overflow-wrap: anywhere; }
       .note-card p, .note-thread p { margin: 0; white-space: pre-wrap; }
+      .note-meta { margin: 0; color: var(--muted); font-size: 12px; }
       .note-thread { display: grid; gap: 6px; }
-      .note-thread p + p { padding-top: 6px; border-top: 1px solid var(--line); }
+      .note-entry { display: grid; gap: 2px; }
+      .note-entry + .note-entry { padding-top: 6px; border-top: 1px solid var(--line); }
+      .note-reply { display: grid; gap: 6px; }
+      .note-reply textarea { width: 100%; min-height: 58px; padding: 7px 9px; border: 1px solid var(--line); border-radius: 3px; font: inherit; resize: vertical; }
+      .note-reply .button { justify-self: start; }
       .share-check { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; font-weight: 700; }
       .share-check input { width: 16px; height: 16px; accent-color: var(--green); }
       .notes-panel { position: fixed; top: 0; left: 0; z-index: 24; height: 100vh; width: 36px; overflow: hidden; background: var(--ink); transition: width .2s ease; }
@@ -924,7 +931,7 @@
         const permissions = state.user.permissions || {};
         const staffJourney = !student && state.section === 'students' && !!state.staffStudentHome;
         const showJourney = student || staffJourney;
-        const showNotes = staffJourney && !!state.staffStudentHome.canWriteTodos;
+        const showNotes = staffJourney;
         const tabs = student
           ? [['home', 'My EE'], ['resources', 'Resources'], ['help', 'Help']]
           : [['students', 'My Students'], ['resources', 'Resources']];
@@ -2735,6 +2742,7 @@
           return ticket.route === 'coordinator' ? 'EE Coordinator' : 'Supervisor';
         }
         if (message.authorEmail === state.user.email) return 'You';
+        if (message.authorName) return message.authorName;
         if (message.authorRole === 'student') return ticket.displayName || 'Student';
         return 'Staff';
       }
@@ -2746,8 +2754,13 @@
       }
 
       function shareControl(ticket) {
-        if (!ticket.canShare) return '';
-        return `<label class="share-check"><input type="checkbox" data-share="${escapeHtml(ticket.ticketId)}" ${ticket.shared ? 'checked' : ''} aria-label="Shared"> Shared</label>`;
+        const note = ticket.category === 'Note';
+        const label = note ? 'Visible for student' : 'Shared';
+        if (!ticket.canShare) {
+          if (!note || !state.user || state.user.role !== 'staff') return '';
+          return `<label class="share-check" title="Only the author can change this"><input type="checkbox" data-share="${escapeHtml(ticket.ticketId)}" ${ticket.shared ? 'checked' : ''} disabled aria-label="${escapeHtml(label)}"> ${escapeHtml(label)}</label>`;
+        }
+        return `<label class="share-check"><input type="checkbox" data-share="${escapeHtml(ticket.ticketId)}" ${ticket.shared ? 'checked' : ''} aria-label="${escapeHtml(label)}"> ${escapeHtml(label)}</label>`;
       }
 
       function messageMarkup(message, ticket) {
@@ -2820,7 +2833,7 @@
 
       function mergeIntoTicket(local, incoming) {
         if (ticketStampNewer(local.lastUpdated, incoming.lastUpdated)) return;
-        ['status', 'shared', 'kind', 'lastUpdated', 'studentUnread', 'staffUnread', 'route', 'routeLabel', 'displayName', 'title', 'category', 'canShare', 'authorEmail', 'assignee'].forEach(function(key) {
+        ['status', 'shared', 'kind', 'lastUpdated', 'studentUnread', 'staffUnread', 'route', 'routeLabel', 'displayName', 'title', 'category', 'canShare', 'authorEmail', 'authorName', 'assignee'].forEach(function(key) {
           if (incoming[key] !== undefined) local[key] = incoming[key];
         });
         const incomingMessages = incoming.messages || [];
@@ -2939,11 +2952,35 @@
         });
       }
 
+      function noteAuthorLabel(message, note) {
+        if (message.authorName) return message.authorName;
+        if (message.authorEmail && state.user && message.authorEmail === state.user.email) return state.user.displayName || 'You';
+        if (message.authorRole === 'student') return (note && note.displayName) || 'Student';
+        return message.authorEmail || 'Staff';
+      }
+
+      function noteEntryHtml(message, note) {
+        const when = String(message.createdAt || '').replace('T', ' ').slice(0, 16);
+        return `<div class="note-entry" data-message="${escapeHtml(message.messageId)}"><p class="note-meta"><strong>${escapeHtml(noteAuthorLabel(message, note))}</strong>${when ? ' · ' + escapeHtml(when) : ''}</p><p>${escapeHtml(message.body || '')}</p></div>`;
+      }
+
       function noteMessagesHtml(note) {
-        const messages = note.messages && note.messages.length ? note.messages : [{ messageId: '', body: note.title || '' }];
-        return messages.map(function(message) {
-          return `<p data-message="${escapeHtml(message.messageId)}">${escapeHtml(message.body || '')}</p>`;
-        }).join('');
+        const messages = note.messages && note.messages.length ? note.messages : [{ messageId: '', body: '', authorName: note.authorName || '' }];
+        return messages.map(function(message) { return noteEntryHtml(message, note); }).join('');
+      }
+
+      function noteSortKey(note) {
+        return String((note && (note.activityAt || note.lastUpdated || note.createdAt)) || '');
+      }
+
+      function notesNewestFirst(notes) {
+        return (notes || []).slice().sort(function(left, right) {
+          return noteSortKey(right).localeCompare(noteSortKey(left));
+        });
+      }
+
+      function noteIsPending(note) {
+        return String(note && note.ticketId || '').indexOf('pending-') === 0;
       }
 
       function syncNoteListDom(notes) {
@@ -2956,13 +2993,13 @@
         });
         const empty = list.querySelector('.empty');
         if (notes.length && empty) empty.remove();
-        notes.forEach(function(note) {
+        notesNewestFirst(notes).forEach(function(note) {
           const id = String(note.ticketId).replace(/"/g, '');
           let card = list.querySelector('.note-card[data-ticket="' + id + '"]');
           if (!card) {
             list.insertAdjacentHTML('beforeend', renderNoteCard(note));
             card = list.querySelector('.note-card[data-ticket="' + id + '"]');
-            if (card) bindShareList(card, [note]);
+            if (card) bindNoteCard(card, note);
             return;
           }
           const thread = card.querySelector('.note-thread');
@@ -2974,19 +3011,23 @@
             if (current !== nextIds) thread.innerHTML = noteMessagesHtml(note);
           }
           card.dataset.updated = note.lastUpdated || '';
+          if (note.activityAt) card.dataset.activity = note.activityAt;
+          else delete card.dataset.activity;
+          const title = card.querySelector('[data-note-title]');
+          if (title) title.textContent = note.title || 'Note';
+          const author = card.querySelector('[data-note-author]');
+          if (author) author.textContent = note.authorName || '';
           const who = card.querySelector('[data-note-who]');
-          if (who) who.textContent = note.displayName ? note.displayName + ' · ' : '';
-          const kind = card.querySelector('[data-note-kind]');
-          if (kind) kind.textContent = note.shared ? 'Message' : 'Note';
+          if (who) who.textContent = note.displayName ? ' · ' + note.displayName : '';
           const box = card.querySelector('[data-share]');
           if (box) box.checked = !!note.shared;
         });
-        notes.forEach(function(note) {
+        notesNewestFirst(notes).forEach(function(note) {
           const id = String(note.ticketId).replace(/"/g, '');
           const card = list.querySelector('.note-card[data-ticket="' + id + '"]');
           if (card) list.appendChild(card);
         });
-        if (!notes.length) list.innerHTML = '<div class="empty">Open a student to take a note. Notes you save appear here.</div>';
+        if (!notes.length) list.innerHTML = '<div class="empty">Notes for your students appear here.</div>';
       }
 
       function refreshStaffNotes(button) {
@@ -3454,19 +3495,20 @@
         const notes = panel.notes || [];
         const templates = panel.templates || [];
         const canWrite = !!panel.canWrite;
-        target.innerHTML = `${canWrite ? '<div class="add-todo" id="student-note-composer"><button type="button" class="add-todo-open" aria-expanded="false">+ Add note</button><form class="add-todo-form"><input maxlength="2000" placeholder="Note" aria-label="New note"><button class="button" type="submit">Save</button></form></div>' : ''}
-          <div class="note-list">${notes.length ? notes.map(renderNoteCard).join('') : '<div class="empty">No notes for this student yet.</div>'}</div>
+        const ordered = notesNewestFirst(notes);
+        target.innerHTML = `${canWrite ? '<div class="add-todo" id="student-note-composer"><button type="button" class="add-todo-open" aria-expanded="false">+ Add note</button><form class="add-todo-form stack"><input maxlength="90" placeholder="Title" aria-label="Note title" required><textarea maxlength="2000" placeholder="Note" aria-label="New note" required></textarea><button class="button" type="submit">Save</button></form></div>' : ''}
+          <div class="note-list">${ordered.length ? ordered.map(renderNoteCard).join('') : '<div class="empty">No notes for this student yet.</div>'}</div>
           <h2>Template tasks</h2>
           <div class="note-list">${templates.length ? templates.map(function(template) {
             return `<article class="note-card"><div class="template-row"><div><strong>${escapeHtml(template.title)}</strong><p class="muted">${escapeHtml(template.description || phaseLabel(template.phaseId, panel.phases))}</p></div>${canWrite ? `<button type="button" class="button" data-apply-template="${escapeHtml(template.templateId)}">Add</button>` : ''}</div></article>`;
           }).join('') : '<div class="empty">Save template tasks from the Notes tab.</div>'}</div>`;
-        bindNoteComposer(target.querySelector('#student-note-composer'), function(text) {
-          return callServer('createStaffNote', home.email, home.cohort || state.cohortId, text, state.actingAs).then(function() {
+        bindStackedNoteComposer(target.querySelector('#student-note-composer'), function(title, text) {
+          return callServer('createStaffNote', home.email, home.cohort || state.cohortId, title, text, state.actingAs).then(function() {
             showSuccess('Note saved.');
             mountNotesPanel();
           });
         });
-        bindShareList(target, notes, function() { mountNotesPanel(); });
+        bindNoteList(target.querySelector('.note-list'), ordered);
         target.querySelectorAll('[data-apply-template]').forEach(function(button) {
           button.addEventListener('click', function() {
             button.disabled = true;
@@ -3489,8 +3531,155 @@
       }
 
       function renderNoteCard(note) {
-        const who = note.displayName ? escapeHtml(note.displayName) + ' · ' : '';
-        return `<article class="note-card" data-ticket="${escapeHtml(note.ticketId)}" data-updated="${escapeHtml(note.lastUpdated || '')}"><div class="note-thread">${noteMessagesHtml(note)}</div><div class="template-row"><span class="muted"><span data-note-who>${who}</span><span data-note-kind>${note.shared ? 'Message' : 'Note'}</span></span>${shareControl(note)}</div></article>`;
+        const pending = noteIsPending(note);
+        const student = note.displayName ? ' · ' + escapeHtml(note.displayName) : '';
+        return `<article class="note-card" data-ticket="${escapeHtml(note.ticketId)}" data-updated="${escapeHtml(note.lastUpdated || '')}"${note.activityAt ? ` data-activity="${escapeHtml(note.activityAt)}"` : ''}><header class="note-head"><strong data-note-title>${escapeHtml(note.title || 'Note')}</strong><p class="note-meta"><span data-note-author>${escapeHtml(note.authorName || '')}</span><span data-note-who>${student}</span></p></header><div class="note-thread">${noteMessagesHtml(note)}</div><form class="note-reply" data-note-reply><textarea maxlength="2000" placeholder="Write a reply" aria-label="Reply"${pending ? ' disabled' : ''}></textarea><button class="button" type="submit"${pending ? ' disabled' : ''}>Reply</button></form><div class="template-row">${shareControl(note)}</div></article>`;
+      }
+
+      function reorderNoteCards(list) {
+        if (!list) return;
+        const cards = Array.prototype.slice.call(list.querySelectorAll(':scope > .note-card[data-ticket]'));
+        cards.sort(function(left, right) {
+          const leftKey = left.dataset.activity || left.dataset.updated || '';
+          const rightKey = right.dataset.activity || right.dataset.updated || '';
+          return String(rightKey).localeCompare(String(leftKey));
+        });
+        cards.forEach(function(item) { list.appendChild(item); });
+      }
+
+      function moveNoteToFront(note, card) {
+        if (state.notesHub && state.notesHub.notes) {
+          const notes = state.notesHub.notes;
+          const index = notes.indexOf(note);
+          if (index > 0) {
+            notes.splice(index, 1);
+            notes.unshift(note);
+          }
+        }
+        const list = card && card.parentElement;
+        if (list && list.firstElementChild !== card) list.insertBefore(card, list.firstElementChild);
+      }
+
+      function sendNoteReply(note, card, body) {
+        const message = {
+          messageId: 'pending-' + Date.now(),
+          authorRole: 'staff',
+          authorEmail: state.user.email,
+          authorName: state.user.displayName || state.user.email,
+          body: body,
+          createdAt: new Date().toISOString()
+        };
+        note.messages = (note.messages || []).concat([message]);
+        note.activityAt = message.createdAt;
+        const thread = card.querySelector('.note-thread');
+        if (thread) thread.insertAdjacentHTML('beforeend', noteEntryHtml(message, note));
+        const field = card.querySelector('[data-note-reply] textarea');
+        const submit = card.querySelector('[data-note-reply] button');
+        if (field) field.value = '';
+        if (submit) submit.disabled = true;
+        card.dataset.activity = message.createdAt;
+        moveNoteToFront(note, card);
+        markSync(card, 'pending');
+        const viewAs = state.actingAs;
+        enqueueTicket(note.ticketId, function() {
+          return dispatchServer('replyTicket', [note.ticketId, body, note.lastUpdated, viewAs]);
+        }).then(function(result) {
+          note.lastUpdated = result.lastUpdated || note.lastUpdated;
+          note.activityAt = note.lastUpdated;
+          card.dataset.updated = note.lastUpdated || '';
+          card.dataset.activity = note.lastUpdated || '';
+          if (submit) submit.disabled = noteIsPending(note);
+          markSync(card, 'confirmed');
+        }).catch(function(error) {
+          note.messages = (note.messages || []).filter(function(item) { return item.messageId !== message.messageId; });
+          delete note.activityAt;
+          const entry = card.querySelector('[data-message="' + message.messageId + '"]');
+          if (entry) entry.remove();
+          if (field && !field.value) field.value = body;
+          delete card.dataset.activity;
+          if (submit) submit.disabled = noteIsPending(note);
+          reorderNoteCards(card.parentElement);
+          markSync(card, 'rejected');
+          showError(error);
+        });
+      }
+
+      function bindNoteReply(card, note) {
+        if (!card || card.dataset.replyBound === 'true') return;
+        const form = card.querySelector('[data-note-reply]');
+        if (!form) return;
+        card.dataset.replyBound = 'true';
+        form.addEventListener('submit', function(event) {
+          event.preventDefault();
+          if (noteIsPending(note)) return;
+          const field = form.querySelector('textarea');
+          const body = field ? field.value.trim() : '';
+          if (!body) return;
+          if (body.length > 2000) {
+            showError(new Error('Replies must be 2,000 characters or fewer.'));
+            return;
+          }
+          sendNoteReply(note, card, body);
+        });
+      }
+
+      function bindNoteCard(card, note) {
+        bindShareList(card, [note]);
+        bindNoteReply(card, note);
+      }
+
+      function bindNoteList(list, notes) {
+        if (!list) return;
+        const byId = {};
+        (notes || []).forEach(function(note) { byId[note.ticketId] = note; });
+        list.querySelectorAll('.note-card[data-ticket]').forEach(function(card) {
+          const note = byId[card.dataset.ticket];
+          if (note) bindNoteCard(card, note);
+        });
+      }
+
+      function bindStackedNoteComposer(box, onSave) {
+        if (!box) return;
+        const open = box.querySelector('.add-todo-open');
+        const form = box.querySelector('.add-todo-form');
+        const titleInput = form.querySelector('input');
+        const textArea = form.querySelector('textarea');
+        open.addEventListener('click', function() {
+          box.classList.add('is-open');
+          open.setAttribute('aria-expanded', 'true');
+          titleInput.focus();
+        });
+        form.addEventListener('submit', function(event) {
+          event.preventDefault();
+          const title = titleInput.value.trim();
+          const text = textArea.value.trim();
+          if (!title) {
+            showError(new Error('Add a title.'));
+            return;
+          }
+          if (title.length > 90) {
+            showError(new Error('Titles must be 90 characters or fewer.'));
+            return;
+          }
+          if (!text) {
+            showError(new Error('Write a note before saving.'));
+            return;
+          }
+          if (text.length > 2000) {
+            showError(new Error('Notes must be 2,000 characters or fewer.'));
+            return;
+          }
+          const submit = form.querySelector('button');
+          submit.disabled = true;
+          Promise.resolve(onSave(title, text, box)).then(function() {
+            titleInput.value = '';
+            textArea.value = '';
+            submit.disabled = false;
+          }).catch(function(error) {
+            submit.disabled = false;
+            showError(error);
+          });
+        });
       }
 
       function bindNoteComposer(box, onSave) {
@@ -3548,12 +3737,12 @@
         const templates = hub.templates || [];
         const phases = hub.phases || [];
         const students = hub.students || [];
-        main.innerHTML = `<div class="page-head"><div><p class="eyebrow">Supervisor</p><h1>Notes</h1><p class="lede">Private notes stay with you. Shared notes become messages the student can see.</p></div><div class="page-actions"><button type="button" class="button secondary" id="refresh-notes">Refresh</button></div></div>
+        main.innerHTML = `<div class="page-head"><div><p class="eyebrow">Supervisor</p><h1>Notes</h1><p class="lede">Staff notes are visible to every staff member who can open the student. Tick Visible for student when the student should see the thread.</p></div><div class="page-actions"><button type="button" class="button secondary" id="refresh-notes">Refresh</button></div></div>
           <nav class="subnav" aria-label="Notes sections">
             <button type="button" data-notes-pane="notes" aria-current="${pane === 'notes' ? 'page' : 'false'}">Notes</button>
             <button type="button" data-notes-pane="templates" aria-current="${pane === 'templates' ? 'page' : 'false'}">Template Tasks</button>
           </nav>
-          ${pane === 'templates' ? renderTemplateTasks(templates, phases) : `${renderNoteComposer(students)}<div class="note-list">${notes.length ? notes.map(renderNoteCard).join('') : `<div class="empty">${noteListEmpty(hub, students)}</div>`}</div>`}`;
+          ${pane === 'templates' ? renderTemplateTasks(templates, phases) : `${renderNoteComposer(students)}<div class="note-list">${notes.length ? notesNewestFirst(notes).map(renderNoteCard).join('') : `<div class="empty">${noteListEmpty(hub, students)}</div>`}</div>`}`;
         document.getElementById('refresh-notes').addEventListener('click', function(event) { refreshStaffNotes(event.currentTarget); });
         main.querySelectorAll('[data-notes-pane]').forEach(function(button) {
           button.addEventListener('click', function() {
@@ -3563,14 +3752,14 @@
         });
         if (pane === 'notes') {
           bindStaffNoteComposer(main, students);
-          bindShareList(main, notes, function() { renderStaffNotes(); });
+          bindNoteList(main.querySelector('.note-list'), notes);
         } else bindTemplateTasks(main, phases);
       }
 
       function noteListEmpty(hub, students) {
-        if (students.length) return 'Notes you save appear here.';
+        if (students.length) return 'Notes for your students appear here.';
         if (hub.viewAs === 'supervisor') return 'No students are assigned to you yet.';
-        return 'Open a student to take a note. Notes you save appear here.';
+        return 'Open a student to take a note. Notes for your students appear here.';
       }
 
       function renderNoteComposer(students) {
@@ -3582,7 +3771,7 @@
           const label = student.displayName + (student.subject ? ' · ' + student.subject : '') + (manyCohorts ? ' · ' + student.cohortId : '');
           return `<option value="${escapeHtml(student.email)}" data-cohort="${escapeHtml(student.cohortId)}">${escapeHtml(label)}</option>`;
         }).join('');
-        return `<div class="add-todo" id="note-composer"><button type="button" class="add-todo-open" aria-expanded="false">+ Add note</button><form class="add-todo-form stack"><select aria-label="Student" required><option value="">Choose a student</option>${options}</select><textarea maxlength="2000" placeholder="Note" aria-label="Note" required></textarea><button class="button" type="submit">Save</button></form></div>`;
+        return `<div class="add-todo" id="note-composer"><button type="button" class="add-todo-open" aria-expanded="false">+ Add note</button><form class="add-todo-form stack"><select aria-label="Student" required><option value="">Choose a student</option>${options}</select><input maxlength="90" placeholder="Title" aria-label="Note title" required><textarea maxlength="2000" placeholder="Note" aria-label="Note" required></textarea><button class="button" type="submit">Save</button></form></div>`;
       }
 
       function bindStaffNoteComposer(main, students) {
@@ -3591,6 +3780,7 @@
         const open = box.querySelector('.add-todo-open');
         const form = box.querySelector('form');
         const select = form.querySelector('select');
+        const titleInput = form.querySelector('input');
         const textArea = form.querySelector('textarea');
         open.addEventListener('click', function() {
           box.classList.add('is-open');
@@ -3602,12 +3792,24 @@
           const email = select.value;
           const option = select.options[select.selectedIndex];
           const cohortId = option ? option.getAttribute('data-cohort') || '' : '';
+          const title = titleInput.value.trim();
           const text = textArea.value.trim();
           if (!email || !cohortId) {
             showError(new Error('Choose a student.'));
             return;
           }
-          if (!text) return;
+          if (!title) {
+            showError(new Error('Add a title.'));
+            return;
+          }
+          if (title.length > 90) {
+            showError(new Error('Titles must be 90 characters or fewer.'));
+            return;
+          }
+          if (!text) {
+            showError(new Error('Write a note before saving.'));
+            return;
+          }
           if (text.length > 2000) {
             showError(new Error('Notes must be 2,000 characters or fewer.'));
             return;
@@ -3618,10 +3820,13 @@
           const list = main.querySelector('.note-list');
           if (!list) return;
           submit.disabled = true;
+          const authorName = state.user.displayName || state.user.email;
           const note = {
             ticketId: 'pending-' + Date.now(),
-            title: text.replace(/\s+/g, ' ').slice(0, 90),
+            title: title,
+            authorName: authorName,
             displayName: student.displayName,
+            category: 'Note',
             shared: false,
             canShare: true,
             kind: 'note',
@@ -3631,10 +3836,12 @@
               messageId: 'pending-body-' + Date.now(),
               authorRole: 'staff',
               authorEmail: state.user.email,
+              authorName: authorName,
               body: text,
               createdAt: new Date().toISOString()
             }],
-            lastUpdated: ''
+            lastUpdated: '',
+            activityAt: new Date().toISOString()
           };
           const hub = state.notesHub;
           if (hub) hub.notes = [note].concat(hub.notes || []);
@@ -3644,31 +3851,42 @@
           const card = list.querySelector('.note-card');
           const share = card ? card.querySelector('[data-share]') : null;
           if (share) share.disabled = true;
-          if (card) markSync(card, 'pending');
+          if (card) {
+            bindNoteReply(card, note);
+            markSync(card, 'pending');
+          }
+          titleInput.value = '';
           textArea.value = '';
           select.value = '';
           box.classList.remove('is-open');
           open.setAttribute('aria-expanded', 'false');
           const scene = state.scene;
           const actingAs = state.actingAs;
-          dispatchServer('createStaffNote', [student.email, student.cohortId, text, actingAs]).then(function(result) {
+          dispatchServer('createStaffNote', [student.email, student.cohortId, title, text, actingAs]).then(function(result) {
             note.ticketId = result.ticketId;
             note.lastUpdated = result.lastUpdated || '';
+            note.activityAt = note.lastUpdated;
             submit.disabled = false;
             if (!sameScene(scene) || state.section !== 'notes' || !card || !card.isConnected) return;
             card.dataset.ticket = note.ticketId;
             card.dataset.updated = note.lastUpdated;
+            card.dataset.activity = note.lastUpdated;
             if (share) {
               share.dataset.share = note.ticketId;
               share.disabled = false;
             }
+            const replyField = card.querySelector('[data-note-reply] textarea');
+            const replyButton = card.querySelector('[data-note-reply] button');
+            if (replyField) replyField.disabled = false;
+            if (replyButton) replyButton.disabled = false;
             bindShareList(card, [note]);
             markSync(card, 'confirmed');
           }).catch(function(error) {
             if (hub && hub.notes) hub.notes = hub.notes.filter(function(item) { return item !== note; });
             if (card && card.isConnected) card.remove();
-            if (list.isConnected && !list.querySelector('.note-card')) list.innerHTML = '<div class="empty">Notes you save appear here.</div>';
+            if (list.isConnected && !list.querySelector('.note-card')) list.innerHTML = '<div class="empty">Notes for your students appear here.</div>';
             submit.disabled = false;
+            if (!titleInput.value) titleInput.value = title;
             if (!textArea.value) textArea.value = text;
             if (!select.value) select.value = email;
             box.classList.add('is-open');

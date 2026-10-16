@@ -124,6 +124,14 @@ export async function readStaffTables(app: App): Promise<StaffTables> {
   return { activeCohorts, byEmail, byCohort };
 }
 
+export function staffMayViewPlacement(user: HubUser, view: string, roster: { supervisorId?: string } | null | undefined): boolean {
+  if (!user || user.role !== 'staff' || !roster) return false;
+  if (view === 'supervisor' && roster.supervisorId && normalizeEmail(roster.supervisorId) !== user.email && !user.permissions?.canAdmin) {
+    return false;
+  }
+  return true;
+}
+
 export async function staffStudentContext(app: App, user: HubUser, studentEmail: string, cohortId: string, operation: string, viewAs?: unknown) {
   const email = normalizeEmail(studentEmail);
   await requireCohort(app, cohortId);
@@ -133,7 +141,7 @@ export async function staffStudentContext(app: App, user: HubUser, studentEmail:
     ? (user.permissions?.canAdmin ? 'coordinator' : (user.permissions?.isSupervisor ? 'supervisor' : 'staff'))
     : viewAs;
   const view = normalizeStaffView(user, requested);
-  if (view === 'supervisor' && roster.supervisorId && roster.supervisorId !== user.email && !user.permissions?.canAdmin) {
+  if (!staffMayViewPlacement(user, view, roster)) {
     return deny(app, user, operation, 'This student is assigned to another supervisor.');
   }
   return { email, roster, view };
