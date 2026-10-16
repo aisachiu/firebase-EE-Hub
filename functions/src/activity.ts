@@ -20,6 +20,7 @@ const ACTIVITY_TITLES: Record<string, string> = {
   SAVE_TODO_TEMPLATE: 'Saved a template task',
   DELETE_TODO_TEMPLATE: 'Removed a template task',
   APPLY_TODO_TEMPLATE: 'Added a template task to a student',
+  SAVE_DRIVE_ACCOUNT: 'Assigned the Google account used for Drive',
   SAVE_COHORT_DRIVE_SETTINGS: 'Saved cohort Drive settings',
   CHECK_COHORT_DRIVE_FOLDERS: 'Checked student Drive folders',
   SYNC_COHORT_DRIVE_FOLDERS: 'Updated student Drive folders',
@@ -146,6 +147,7 @@ function activitySummary(action: string, unpacked: { payload: any; reason: strin
   }
   if (action.indexOf('TICKET_') === 0) return text(payload.category) || 'Message';
   if (action === 'APPLY_TODO_TEMPLATE' || action === 'SAVE_TODO_TEMPLATE' || action === 'DELETE_TODO_TEMPLATE') return text(payload.title) || 'Template task';
+  if (action === 'SAVE_DRIVE_ACCOUNT') return text(payload.actorEmail);
   return milestoneTitle || taskTitle || '';
 }
 

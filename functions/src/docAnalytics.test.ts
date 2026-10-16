@@ -31,12 +31,19 @@ const otherEmail = 'other@vsa.example.edu';
 const coordinatorEmail = 'coordinator@vsa.example.edu';
 const FILE_ID = 'essayDocId123456';
 const DOC_URL = `https://docs.google.com/document/d/${FILE_ID}/edit`;
-const TOKEN = 'ya29.signed-in-user-drive-token';
+const ACTOR = 'coordinator@vsa.example.edu';
 const NOW = new Date('2026-10-16T12:00:00.000Z');
+const DRIVE_KEY = {
+  driveJson: JSON.stringify({
+    client_email: 'ee-drive@project.iam.gserviceaccount.com',
+    private_key: '-----BEGIN PRIVATE KEY-----\\nABC\\n-----END PRIVATE KEY-----',
+  }),
+};
 
 class MemoryStore {
   docs: Record<string, Record<string, Doc>> = {};
   members: Record<string, Record<string, Doc>> = {};
+  meta: Record<string, Doc> = {};
 
   async list(name: string): Promise<Doc[]> {
     return Object.values(this.docs[name] || {}).map((row) => ({ ...row }));
@@ -66,6 +73,14 @@ class MemoryStore {
   }
 
   async addAudit(): Promise<void> {}
+
+  async getMeta(id: string): Promise<Doc | null> {
+    return this.meta[id] ? { ...this.meta[id] } : null;
+  }
+
+  async setMeta(id: string, data: Doc): Promise<void> {
+    this.meta[id] = { ...data };
+  }
 }
 
 function appFor(store: MemoryStore, email: string): App {
@@ -125,7 +140,7 @@ function driveFor(email: string, file: {
     async aboutEmail() { return email; },
     async getFile(fileId) {
       reads.push(fileId);
-      if (file.missing) throw new HubError('You do not have access to this document.');
+      if (file.missing) throw new HubError('The Google account assigned for Drive cannot open this document.');
       return {
         id: fileId,
         name: file.name || 'Extended Essay',
@@ -202,26 +217,34 @@ test('word deltas use the nearest earlier sample and keep the first reading of a
   assert.equal(overflow[overflow.length - 1].d, '2026-10-16');
 });
 
-test('a student read uses their own Drive token and the saved document, then stores the word sample', async () => {
+function assigned(drive: EssayDrive, extra: { now?: Date; actorEmail?: string } = {}) {
+  return {
+    now: extra.now || NOW,
+    keyConfigured: true,
+    actorEmail: extra.actorEmail || ACTOR,
+    driveForActor() { return Promise.resolve(drive); },
+  };
+}
+
+test('a student read uses the assigned Drive account and the saved document, then stores the word sample', async () => {
   const store = new MemoryStore();
   await seed(store);
-  const opened = driveFor(studentEmail, {
+  const opened = driveFor(ACTOR, {
     name: 'Jamie Wong EE',
     text: 'one two three four',
     revisions: ['2026-10-16T01:00:00.000Z', '2026-10-16T02:00:00.000Z', '2026-10-15T03:00:00.000Z', 'not-a-date'],
   });
-  let seenToken = '';
+  let seenActor = '';
   const stats = await getMyEssayAnalytics(appFor(store, studentEmail), {
-    accessToken: TOKEN,
-    fileId: 'evil-file-id-should-not-be-used',
-  }, {
     now: NOW,
-    driveForToken(token) {
-      seenToken = token;
+    keyConfigured: true,
+    actorEmail: ACTOR,
+    driveForActor(actorEmail) {
+      seenActor = actorEmail;
       return Promise.resolve(opened.drive);
     },
   });
-  assert.equal(seenToken, TOKEN);
+  assert.equal(seenActor, ACTOR);
   assert.deepEqual(opened.reads, [FILE_ID]);
   assert.equal(stats.ok, true);
   assert.equal(stats.wordCount, 4);
@@ -237,94 +260,110 @@ test('a student read uses their own Drive token and the saved document, then sto
   const saved = await store.get('docWordLogs', FILE_ID);
   const samples = JSON.parse(String(saved && saved.SamplesJson));
   assert.equal(samples[0].w, 4);
-  assert.equal(JSON.stringify(saved).includes(TOKEN), false);
-  assert.equal(JSON.stringify(stats).includes('evil-file'), false);
+  assert.equal(JSON.stringify(saved).includes('PRIVATE KEY'), false);
 
   opened.drive.exportPlainText = async () => 'one two three four five six';
-  const later = await getMyEssayAnalytics(appFor(store, studentEmail), { accessToken: TOKEN }, {
-    now: new Date('2026-10-16T13:00:00.000Z'),
-    driveForToken() { return Promise.resolve(opened.drive); },
-  });
+  const later = await getMyEssayAnalytics(appFor(store, studentEmail), assigned(opened.drive, { now: new Date('2026-10-16T13:00:00.000Z') }));
   assert.equal(later.wordCount, 6);
   const reread = JSON.parse(String((await store.get('docWordLogs', FILE_ID))?.SamplesJson));
   assert.equal(reread.length, 1);
   assert.equal(reread[0].w, 4);
 });
 
-test('missing documents, missing tokens, and the wrong Google account do not read a file', async () => {
+test('essay stats follow the account saved by an admin', async () => {
+  const store = new MemoryStore();
+  await seed(store);
+  await store.setMeta('driveAccount', { actorEmail: ACTOR, updatedBy: coordinatorEmail, updatedAt: '2026-10-16T00:00:00.000Z' });
+  const opened = driveFor(ACTOR, { text: 'from the assigned account' });
+  let seenActor = '';
+  const stats = await getMyEssayAnalytics(appFor(store, studentEmail), {
+    now: NOW,
+    keySource: DRIVE_KEY,
+    driveForActor(actorEmail) {
+      seenActor = actorEmail;
+      return Promise.resolve(opened.drive);
+    },
+  });
+  assert.equal(seenActor, ACTOR);
+  assert.equal(stats.ok, true);
+  assert.equal(stats.wordCount, 4);
+  assert.deepEqual(opened.reads, [FILE_ID]);
+});
+
+test('missing documents, a missing Drive account, and the wrong Google account do not read a file', async () => {
   const store = new MemoryStore();
   await seed(store, '');
   let calls = 0;
-  const missing = await getMyEssayAnalytics(appFor(store, studentEmail), { accessToken: TOKEN }, {
-    driveForToken() { calls += 1; return Promise.resolve(driveFor(studentEmail, {}).drive); },
-  });
+  const missing = await getMyEssayAnalytics(appFor(store, studentEmail), assigned(driveFor(ACTOR, {}).drive));
   assert.deepEqual(missing, { ok: false, reason: 'missing' });
-  assert.equal(calls, 0);
 
   await seed(store);
-  const needsDrive = await getMyEssayAnalytics(appFor(store, studentEmail), {}, {
-    driveForToken() { calls += 1; return Promise.resolve(driveFor(studentEmail, {}).drive); },
+  const needsAccount = await getMyEssayAnalytics(appFor(store, studentEmail), {
+    keySource: {},
+    driveForActor() { calls += 1; return Promise.resolve(driveFor(ACTOR, {}).drive); },
   });
-  assert.equal(needsDrive.ok, false);
-  assert.equal(needsDrive.reason, 'auth');
-  assert.match(needsDrive.message || '', /your Google account/);
+  assert.equal(needsAccount.ok, false);
+  assert.equal(needsAccount.reason, 'config');
+  assert.match(needsAccount.message || '', /assigns the Google account/);
   assert.equal(calls, 0);
 
-  const wrong = await getMyEssayAnalytics(appFor(store, studentEmail), { accessToken: TOKEN }, {
-    driveForToken() { return Promise.resolve(driveFor(otherEmail, {}).drive); },
+  const noKey = await getMyEssayAnalytics(appFor(store, studentEmail), {
+    keyConfigured: false,
+    actorEmail: ACTOR,
+    driveForActor() { calls += 1; return Promise.resolve(driveFor(ACTOR, {}).drive); },
+  });
+  assert.equal(noKey.reason, 'config');
+  assert.match(noKey.message || '', /configured for the assigned account/);
+  assert.equal(calls, 0);
+
+  const wrong = await getMyEssayAnalytics(appFor(store, studentEmail), {
+    keyConfigured: true,
+    actorEmail: ACTOR,
+    driveForActor() { return Promise.resolve(driveFor(otherEmail, {}).drive); },
   });
   assert.equal(wrong.reason, 'auth');
   assert.equal(wrong.message, WRONG_ACCOUNT);
 });
 
-test('staff read the same saved document with their own Drive account', async () => {
+test('staff read the saved document through the assigned Drive account', async () => {
   const store = new MemoryStore();
   await seed(store);
-  const opened = driveFor(supervisorEmail, {
+  const opened = driveFor(ACTOR, {
     text: 'draft words here',
     revisions: ['2026-10-14T01:00:00.000Z'],
   });
-  const stats = await getStudentEssayAnalytics(appFor(store, supervisorEmail), studentEmail, '2026', 'supervisor', {
-    accessToken: TOKEN,
-    fileId: 'otherDocId99999999',
-  }, {
-    now: NOW,
-    driveForToken() { return Promise.resolve(opened.drive); },
-  });
+  let calls = 0;
+  const stats = await getStudentEssayAnalytics(appFor(store, supervisorEmail), studentEmail, '2026', 'supervisor', assigned(opened.drive));
   assert.equal(stats.ok, true);
   assert.deepEqual(opened.reads, [FILE_ID]);
   assert.equal(stats.wordCount, 3);
 
   await assert.rejects(
-    getStudentEssayAnalytics(appFor(store, otherEmail), studentEmail, '2026', 'supervisor', { accessToken: TOKEN }, {
-      driveForToken() { return Promise.resolve(opened.drive); },
+    getStudentEssayAnalytics(appFor(store, otherEmail), studentEmail, '2026', 'supervisor', {
+      ...assigned(opened.drive),
+      driveForActor() { calls += 1; return Promise.resolve(opened.drive); },
     }),
     /Access denied/,
   );
+  assert.equal(calls, 0);
   await assert.rejects(
-    getStudentEssayAnalytics(appFor(store, studentEmail), studentEmail, '2026', 'supervisor', { accessToken: TOKEN }),
+    getStudentEssayAnalytics(appFor(store, studentEmail), studentEmail, '2026', 'supervisor', assigned(opened.drive)),
     /Access denied/,
   );
-  await assert.rejects(getMyEssayAnalytics(appFor(store, supervisorEmail), { accessToken: TOKEN }), /Access denied/);
+  await assert.rejects(getMyEssayAnalytics(appFor(store, supervisorEmail), assigned(opened.drive)), /Access denied/);
 
-  const coordinator = driveFor(coordinatorEmail, { text: 'owned by coordinator' });
-  const owned = await getStudentEssayAnalytics(appFor(store, coordinatorEmail), studentEmail, '2026', 'coordinator', { accessToken: TOKEN }, {
-    now: NOW,
-    driveForToken() { return Promise.resolve(coordinator.drive); },
-  });
+  const coordinator = driveFor(ACTOR, { text: 'owned by the assigned account' });
+  const owned = await getStudentEssayAnalytics(appFor(store, coordinatorEmail), studentEmail, '2026', 'coordinator', assigned(coordinator.drive));
   assert.equal(owned.ok, true);
   assert.deepEqual(coordinator.reads, [FILE_ID]);
 });
 
-test('a document the viewer cannot open returns no history, and a failed revision list still returns the word count', async () => {
+test('a document the assigned account cannot open returns no history, and a failed revision list still returns the word count', async () => {
   const store = new MemoryStore();
   await seed(store);
-  const blocked = await getMyEssayAnalytics(appFor(store, studentEmail), { accessToken: TOKEN }, {
-    now: NOW,
-    driveForToken() { return Promise.resolve(driveFor(studentEmail, { missing: true }).drive); },
-  });
+  const blocked = await getMyEssayAnalytics(appFor(store, studentEmail), assigned(driveFor(ACTOR, { missing: true }).drive));
   assert.equal(blocked.reason, 'access');
-  assert.equal(blocked.message, 'You do not have access to this document.');
+  assert.equal(blocked.message, 'The Google account assigned for Drive cannot open this document.');
   assert.equal(blocked.days, undefined);
 
   const partial = driveFor(studentEmail, { text: 'still readable', failRevisions: true });
@@ -353,7 +392,7 @@ test('a document the viewer cannot open returns no history, and a failed revisio
   assert.match(otherFile.wordsHint || '', /Google Doc/);
 });
 
-test('Drive revision pages and an expired token stay on the API adapter', async () => {
+test('Drive revision pages and a rejected credential stay on the API adapter', async () => {
   const calls: Array<Record<string, unknown>> = [];
   const api = {
     about: { get: async () => ({ data: { user: { emailAddress: studentEmail } } }) },
@@ -390,5 +429,5 @@ test('Drive revision pages and an expired token stay on the API adapter', async 
     ...api,
     files: { ...api.files, get: async () => { throw hidden; } },
   });
-  await assert.rejects(missing.getFile(FILE_ID), /You do not have access to this document/);
+  await assert.rejects(missing.getFile(FILE_ID), /assigned for Drive cannot open/);
 });

@@ -77,9 +77,17 @@ VITE_FIREBASE_APP_ID=
 
 Do not set `VITE_USE_EMULATORS` for that build.
 
-3. Create `functions/.env` with `EE_TIMEZONE=Asia/Hong_Kong`. Student Drive folders are not created by a service account. An Admin or Coordinator connects Google Drive in the cohort roster, and that Google account owns the folders and the copied EE documents. Enable the Google Drive API on the Firebase project, and keep the Google sign-in OAuth client internal to the school Workspace so the Drive scopes can be granted without a public verification review. The local demo can save a folder link and a template link; it cannot create Drive files. Email reminders use the same file; see Email notifications below.
+3. Create `functions/.env` with `EE_TIMEZONE=Asia/Hong_Kong`. Drive folders, copied EE documents, and essay edit history all use one Workspace account. The function signs in as that account with a service account and domain-wide delegation. The private key stays in this file. An admin or coordinator chooses the Workspace account in Admin → Google Drive. Enable the Google Drive API on the Firebase project. The local demo can save the assigned account and a folder or template link; it cannot create or read Drive files. Email reminders use the same file; see Email notifications below.
 
-The student page shows an EE folder card and an EE document card with word-count changes and an edit heatmap. That read uses the Google account of the person who has the page open (`https://www.googleapis.com/auth/drive.readonly`), not a service account and not the coordinator account that created the folder. The function checks that the Drive token belongs to the signed-in user, then reads only the EE document already saved on that student. If this person cannot open the document, the page says so. The access token is not stored. Daily word totals are kept in `docWordLogs` so a later visit can show the change. Add `https://www.googleapis.com/auth/drive.readonly` on the same internal OAuth client. A supervisor sees the heatmap when their own Google account can open that student's document. The local demo cannot read a Google Doc.
+The student page shows an EE folder card and an EE document card with word-count changes and an edit heatmap. The heatmap uses the same assigned account as folder provisioning (`https://www.googleapis.com/auth/drive`). The signed-in student or supervisor is not asked for a Drive scope. The file id is the EE document already saved on that student. If the assigned account cannot open the document, the page says so. No access token is stored. Daily word totals are kept in `docWordLogs` so a later visit can show the change. The local demo cannot read a Google Doc until that account and key are configured.
+
+Add to `functions/.env` (do not commit that file):
+
+```bash
+EE_DRIVE_SERVICE_ACCOUNT_JSON=/path/to/service-account.json
+```
+
+`EE_DRIVE_SERVICE_ACCOUNT_JSON` may be the JSON itself or a path to the file. If it is unset, Drive reuses `EE_GMAIL_SERVICE_ACCOUNT_JSON`. Prefer the Drive variable when both are set. In Google Workspace admin, turn on domain-wide delegation for that service account client id and authorize `https://www.googleapis.com/auth/drive`. The assigned user must be a real user in that domain, and the cohort folder must be somewhere that user can edit. Existing folders owned by a personal My Drive are left where they are.
 
 4. From this repo:
 

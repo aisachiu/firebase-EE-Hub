@@ -41,27 +41,6 @@ window.eeSignIn = function() {
 
 window.eeUseEmulators = useEmulators;
 
-function googleDriveToken(scope) {
-  const provider = new GoogleAuthProvider();
-  provider.addScope(scope);
-  const hint = window.eeUser && window.eeUser.email ? window.eeUser.email : '';
-  const params = { prompt: 'consent', include_granted_scopes: 'true' };
-  if (hint) params.login_hint = hint;
-  provider.setCustomParameters(params);
-  return signInWithPopup(auth, provider).then(function(result) {
-    const credential = GoogleAuthProvider.credentialFromResult(result);
-    return credential && credential.accessToken ? credential.accessToken : '';
-  });
-}
-
-window.eeConnectDrive = function() {
-  return googleDriveToken('https://www.googleapis.com/auth/drive');
-};
-
-window.eeConnectDriveRead = function() {
-  return googleDriveToken('https://www.googleapis.com/auth/drive.readonly');
-};
-
 window.eeSignOut = function() {
   return signOut(auth);
 };

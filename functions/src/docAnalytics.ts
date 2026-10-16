@@ -1,9 +1,11 @@
-// Essay document stats for the student page. The Drive call uses the access
-// token of the person who has the page open. The file id comes from that
-// student's saved EE document, not from the browser. Word-count samples are
-// stored one row per file in docWordLogs. Edit squares come from Drive revisions.
+// Essay document stats for the student page. Drive reads run as the Workspace
+// account assigned in Admin, not as the person who has the page open. The file
+// id comes from that student's saved EE document, not from the browser.
+// Word-count samples are stored one row per file in docWordLogs. Edit squares
+// come from Drive revisions.
 
-import { DRIVE_DOCUMENT_MIME, parseDriveId, readAccessToken, RECONNECT, WRONG_ACCOUNT } from './drive';
+import { DRIVE_SCOPE, DriveKeySource, ESSAY_DRIVE_NOT_CONFIGURED, ESSAY_DRIVE_UNAVAILABLE, impersonatedAuth, presentDriveAccount } from './driveAccount';
+import { DRIVE_DOCUMENT_MIME, parseDriveId, RECONNECT, WRONG_ACCOUNT } from './drive';
 import {
   buildEditHeatmap,
   countRevisionDays,
@@ -23,9 +25,8 @@ import { COLLECTIONS } from './schema';
 import { App, deny, requireStaff, requireUser } from './session';
 import { HubError, normalizeEmail, nowIso, text } from './util';
 
-const NEEDS_DRIVE = 'Connect Google Drive to read this document. The hub uses your Google account, and only a document you can already open is included.';
-const NEEDS_SCOPE = 'Allow Google Drive access to read this document. The hub uses your Google account, and only a document you can already open is included.';
-const ACCESS_DENIED_DOC = 'You do not have access to this document.';
+const NEEDS_SCOPE = `The service account used for Drive is missing the Google Drive scope. An admin needs to grant ${DRIVE_SCOPE}.`;
+const ACCESS_DENIED_DOC = 'The Google account assigned for Drive cannot open this document.';
 const OPEN_FAILED = 'The EE Hub could not open this document.';
 const WORD_HINT_DOC = 'Word count is available for a Google Doc.';
 const WORD_HINT_LATER = 'Daily and weekly word changes appear after this document is checked again on a later day.';
@@ -69,7 +70,10 @@ export interface EssayAnalytics {
 }
 
 export interface AnalyticsDeps {
-  driveForToken(token: string): Promise<EssayDrive>;
+  actorEmail?: string;
+  keyConfigured?: boolean;
+  keySource?: DriveKeySource;
+  driveForActor?: (actorEmail: string) => Promise<EssayDrive>;
   now?: Date;
 }
 
@@ -122,7 +126,7 @@ function asHub(error: unknown, fallback: string): HubError {
 }
 
 export function isDriveAuthProblem(error: unknown): boolean {
-  return error instanceof HubError && (error.message === RECONNECT || error.message === WRONG_ACCOUNT || error.message === NEEDS_SCOPE || error.message === NEEDS_DRIVE);
+  return error instanceof HubError && (error.message === RECONNECT || error.message === WRONG_ACCOUNT || error.message === NEEDS_SCOPE);
 }
 
 function accessMessage(error: unknown): string {
@@ -217,14 +221,13 @@ export function essayDriveFromApi(api: EssayApi): EssayDrive {
   };
 }
 
-export async function essayDriveFromToken(accessToken: string): Promise<EssayDrive> {
+export async function essayDriveForActor(actorEmail: string, source?: DriveKeySource): Promise<EssayDrive> {
+  const auth = await impersonatedAuth(actorEmail, source);
   const { google } = await import('googleapis');
-  const auth = new google.auth.OAuth2();
-  auth.setCredentials({ access_token: accessToken });
   return essayDriveFromApi(google.drive({ version: 'v3', auth }) as unknown as EssayApi);
 }
 
-async function assertViewer(drive: EssayDrive, email: string): Promise<void> {
+async function assertAssignedAccount(drive: EssayDrive, actorEmail: string): Promise<void> {
   let owner = '';
   try {
     owner = normalizeEmail(await drive.aboutEmail());
@@ -232,7 +235,7 @@ async function assertViewer(drive: EssayDrive, email: string): Promise<void> {
     if (error instanceof HubError) throw error;
     throw new HubError(RECONNECT);
   }
-  if (!owner || owner !== normalizeEmail(email)) throw new HubError(WRONG_ACCOUNT);
+  if (!owner || owner !== normalizeEmail(actorEmail)) throw new HubError(WRONG_ACCOUNT);
 }
 
 function wordLog(app: App): WordLog {
@@ -323,19 +326,30 @@ function authResult(error?: unknown): EssayAnalytics {
   return { ok: false, reason: 'auth', message };
 }
 
-async function loadEssayAnalytics(app: App, viewerEmail: string, docUrl: string, request: unknown, deps?: AnalyticsDeps): Promise<EssayAnalytics> {
+async function assignedDriveAccount(app: App, deps?: AnalyticsDeps): Promise<{ actorEmail: string; ready: boolean }> {
+  if (deps && (deps.actorEmail !== undefined || deps.keyConfigured !== undefined)) {
+    const actorEmail = normalizeEmail(deps.actorEmail);
+    const keyConfigured = deps.keyConfigured !== false;
+    return { actorEmail, ready: keyConfigured && !!actorEmail };
+  }
+  const account = await presentDriveAccount(app, deps?.keySource);
+  return { actorEmail: account.actorEmail, ready: account.ready };
+}
+
+async function loadEssayAnalytics(app: App, docUrl: string, deps?: AnalyticsDeps): Promise<EssayAnalytics> {
   const fileId = parseDriveId(docUrl);
   if (!fileId) return { ok: false, reason: 'missing' };
-  let token = '';
-  try {
-    token = readAccessToken(request);
-  } catch (error) {
-    return authResult(error);
+  const account = await assignedDriveAccount(app, deps);
+  if (!account.ready) {
+    return {
+      ok: false,
+      reason: 'config',
+      message: account.actorEmail ? ESSAY_DRIVE_NOT_CONFIGURED : ESSAY_DRIVE_UNAVAILABLE,
+    };
   }
-  if (!token) return { ok: false, reason: 'auth', message: NEEDS_DRIVE };
   try {
-    const drive = await (deps?.driveForToken || essayDriveFromToken)(token);
-    await assertViewer(drive, viewerEmail);
+    const drive = await (deps?.driveForActor || ((actorEmail: string) => essayDriveForActor(actorEmail, deps?.keySource)))(account.actorEmail);
+    await assertAssignedAccount(drive, account.actorEmail);
     return await collectEssayAnalytics({
       fileId,
       drive,
@@ -349,15 +363,15 @@ async function loadEssayAnalytics(app: App, viewerEmail: string, docUrl: string,
   }
 }
 
-export async function getMyEssayAnalytics(app: App, request?: unknown, deps?: AnalyticsDeps): Promise<EssayAnalytics> {
+export async function getMyEssayAnalytics(app: App, deps?: AnalyticsDeps): Promise<EssayAnalytics> {
   const user = await requireUser(app, 'VIEW_ESSAY_ANALYTICS');
   if (user.role !== 'student') return deny(app, user, 'VIEW_ESSAY_ANALYTICS', 'Student access required.');
   const placement = await findPlacement(app, user.email);
-  return loadEssayAnalytics(app, user.email, placement?.doc || '', request, deps);
+  return loadEssayAnalytics(app, placement?.doc || '', deps);
 }
 
-export async function getStudentEssayAnalytics(app: App, studentEmail: unknown, cohortId: unknown, viewAs: unknown, request?: unknown, deps?: AnalyticsDeps): Promise<EssayAnalytics> {
+export async function getStudentEssayAnalytics(app: App, studentEmail: unknown, cohortId: unknown, viewAs: unknown, deps?: AnalyticsDeps): Promise<EssayAnalytics> {
   const user = await requireStaff(app, 'VIEW_STUDENT_ESSAY_ANALYTICS');
   const context = await staffStudentContext(app, user, text(studentEmail), text(cohortId), 'VIEW_STUDENT_ESSAY_ANALYTICS', viewAs);
-  return loadEssayAnalytics(app, user.email, context.roster.doc || '', request, deps);
+  return loadEssayAnalytics(app, context.roster.doc || '', deps);
 }
