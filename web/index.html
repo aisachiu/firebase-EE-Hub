@@ -4237,7 +4237,7 @@
       }
 
       const adminSections = [
-        ['cohorts', 'Cohorts'], ['driveAccount', 'Google Drive'], ['sheetSync', 'Sheets'], ['cohortMembers', 'Students in cohorts'], ['pathway', 'Phases & milestones'],
+        ['cohorts', 'Cohorts'], ['driveAccount', 'Google account'], ['sheetSync', 'Sheets'], ['cohortMembers', 'Students in cohorts'], ['pathway', 'Phases & milestones'],
         ['emailNotifications', 'Email notifications'],
         ['assignments', 'Assignments'],
         ['studentUsers', 'Student users'], ['staffUsers', 'Staff users'], ['subjects', 'Subjects'], ['formDesigner', 'Milestone forms'],
@@ -5692,7 +5692,7 @@
           };
           target.innerHTML = `<section class="editor">
             <h2>Sheets</h2>
-            <p class="doc-hint">Export the collections you choose into a Google Sheet, edit it, then ingest it back. The sheet is created in the Google account assigned for Drive${result.driveActor ? ` (${escapeHtml(result.driveActor)})` : ''}. Phases, milestones, cohorts, and student lists start selected. A missing tab is left unchanged. Rows you delete in a selected tab are removed from the hub after you preview and confirm. Audit logs can be exported and are not written back. Email logs and word-count samples stay in the hub.</p>
+            <p class="doc-hint">Export the collections you choose into a Google Sheet, edit it, then ingest it back. The sheet is created in the connected Google account${result.driveActor ? ` (${escapeHtml(result.driveActor)})` : ''}. Phases, milestones, cohorts, and student lists start selected. A missing tab is left unchanged. Rows you delete in a selected tab are removed from the hub after you preview and confirm. Audit logs can be exported and are not written back. Email logs and word-count samples stay in the hub.</p>
             <div class="toolbar"><button class="button secondary" id="sheet-recommended" type="button">Records to edit</button><button class="button secondary" id="sheet-all" type="button">All collections</button><button class="button secondary" id="sheet-none" type="button">Clear</button></div>
             <h3>Records</h3>
             <div class="sheet-choices">${records.map(choice).join('')}</div>
@@ -5778,45 +5778,48 @@
       }
 
       function renderDriveAccount(target) {
-        target.innerHTML = loadingLine('Loading Google Drive...');
+        target.innerHTML = loadingLine('Loading Google account...');
         callServer('getDriveAccount').then(paintDriveAccount).catch(showError);
       }
 
       function paintDriveAccount(account) {
         const target = document.getElementById('admin-content');
         if (!target || state.adminEntity !== 'driveAccount') return;
-        const keyLine = account.serviceAccountEmail
-          ? 'Service account key is set (' + account.serviceAccountEmail + '). The private key stays in the server environment.'
-          : (account.keyError
-            ? account.keyError
-            : 'No service account key is set. Add EE_DRIVE_SERVICE_ACCOUNT_JSON, or reuse the Gmail service account and grant it the Drive scope.');
-        const saved = account.actorEmail
-          ? 'Assigned account: ' + account.actorEmail + (account.updatedAt ? ' · saved ' + account.updatedAt : '')
-          : 'No Google account is assigned yet.';
-        target.innerHTML = `<section class="editor"><h2>Google Drive</h2>
-          <p class="muted">Folders, copied EE documents, and essay edit history all use one Google account. The hub signs in as that account with a service account key. Students and staff are not asked to connect Drive.</p>
-          <p class="${account.serviceAccountEmail ? 'muted' : 'notice'}">${escapeHtml(keyLine)}</p>
-          <p class="muted" id="drive-account-saved">${escapeHtml(saved)}</p>
-          <div class="field"><label for="drive-actor-email">Google account</label>
-            <input id="drive-actor-email" type="email" value="${escapeHtml(account.actorEmail || '')}" placeholder="name@school.edu">
-          </div>
+        const consent = safeUrl(account.consentUrl);
+        const status = account.confirmed && account.actorEmail
+          ? 'Connected as ' + account.actorEmail + (account.updatedAt ? ' · confirmed ' + account.updatedAt : '') + '.'
+          : account.configured
+            ? 'The OAuth refresh token is set. Check the connection to confirm the mailbox.'
+            : (account.error || 'Google is not connected.');
+        const legacy = account.legacyNote
+          ? `<p class="notice">${escapeHtml(account.legacyNote)}</p>`
+          : '';
+        const consentLine = consent
+          ? `<p class="muted"><a href="${escapeHtml(consent)}" target="_blank" rel="noopener">Open the one-time consent page</a> while signed in as the school account, then exchange the code with <code>npm run mint-google-oauth -- --code=...</code>.</p>`
+          : '';
+        const scopes = (account.scopes || []).map(function(scope) { return `<li><code>${escapeHtml(scope)}</code></li>`; }).join('');
+        target.innerHTML = `<section class="editor"><h2>Connect Google</h2>
+          <p class="muted">Drive folders, copied EE documents, essay edit history, spreadsheet export, and reminder email all use one Google account. Students and staff are not asked to connect Google.</p>
+          <p class="${account.configured ? 'muted' : 'notice'}" id="drive-account-saved">${escapeHtml(status)}</p>
+          ${legacy}
+          <ol class="muted">
+            <li>In Google Cloud Console, create an OAuth client (Desktop, or Web with redirect <code>http://127.0.0.1:8765/oauth/callback</code>). Set the consent screen to Internal and add the scopes below.</li>
+            <li>On a computer that can sign in as the school account, run <code>npm run mint-google-oauth</code>.</li>
+            <li>Put the printed values in <code>functions/.env</code> and redeploy: <code>EE_GOOGLE_OAUTH_CLIENT_ID</code>, <code>EE_GOOGLE_OAUTH_CLIENT_SECRET</code>, <code>EE_GOOGLE_OAUTH_REFRESH_TOKEN</code>.</li>
+            <li>Check the connection. The mailbox shown here is the account that owns the refresh token.</li>
+          </ol>
+          ${scopes ? `<ul>${scopes}</ul>` : ''}
+          ${consentLine}
           <div class="toolbar">
-            <button type="button" class="button secondary" id="drive-use-my-account">Use my account</button>
-            <button type="button" class="button" id="save-drive-account">Save</button>
+            <button type="button" class="button" id="save-drive-account">Check connection</button>
           </div></section>`;
-        document.getElementById('drive-use-my-account').addEventListener('click', function() {
-          const input = document.getElementById('drive-actor-email');
-          if (input && state.user && state.user.email) input.value = state.user.email;
-        });
         document.getElementById('save-drive-account').addEventListener('click', function() {
-          const input = document.getElementById('drive-actor-email');
-          const actorEmail = input ? input.value.trim() : '';
           const button = document.getElementById('save-drive-account');
           if (button) button.disabled = true;
-          runMutation('saveDriveAccount', [{ actorEmail: actorEmail }], { key: 'drive-account' }).then(function(savedAccount) {
+          runMutation('saveDriveAccount', [{}], { key: 'drive-account' }).then(function(savedAccount) {
             if (button) button.disabled = false;
             paintDriveAccount(savedAccount);
-            showSuccess('Google Drive will use ' + savedAccount.actorEmail + '.');
+            showSuccess('Connected as ' + savedAccount.actorEmail + '.');
           }).catch(function(error) {
             if (button) button.disabled = false;
             showError(error);
@@ -5828,8 +5831,8 @@
         const panel = document.getElementById('drive-folder-panel');
         if (!panel) return;
         panel.innerHTML = `<h2>Drive folders</h2>
-          <p class="muted">Create one folder per selected student inside the cohort folder. Folders and copied documents are created by the Google account assigned in Admin → Google Drive. Keep the cohort folder where that account can edit. Students are shared as editors, and no email is sent. A copy of the EE document template is placed in each folder and saved on that student.</p>
-          <p class="muted" id="drive-actor-label">Checking the assigned Google account…</p>
+          <p class="muted">Create one folder per selected student inside the cohort folder. Folders and copied documents are created by the Google account connected in Admin → Google account. Keep the cohort folder where that account can edit. Students are shared as editors, and no email is sent. A copy of the EE document template is placed in each folder and saved on that student.</p>
+          <p class="muted" id="drive-actor-label">Checking the connected Google account…</p>
           <div class="form-grid">
             <div class="field wide"><label for="drive-root-url">Cohort folder</label>
               <div class="toolbar"><button type="button" class="button secondary" id="save-drive-root">Save folder and template</button><strong id="drive-root-label">No folder selected</strong></div>
@@ -5869,8 +5872,8 @@
       function driveActorLabel(settings) {
         if (settings && settings.driveProblem) return settings.driveProblem;
         if (settings && settings.driveReady && settings.driveActor) return 'Using ' + settings.driveActor + ' for new folders and copied documents.';
-        if (settings && settings.driveActor) return settings.driveActor + ' is assigned. Drive calls wait until the service account key is configured.';
-        return 'Assign the Google account in Admin → Google Drive before creating folders.';
+        if (settings && settings.driveReady) return 'Using the connected Google account for new folders and copied documents.';
+        return 'Connect Google in Admin → Google account before creating folders.';
       }
 
       function loadDriveSettings() {
@@ -6497,8 +6500,8 @@
         const mailLine = gmail.dryRun
           ? '<p class="notice">Dry run is on. The morning job checks these rules and does not send email.</p>'
           : gmail.configured
-            ? `<p class="muted">Sent each morning as ${escapeHtml(gmail.sender)}.</p>`
-            : '<p class="notice">Gmail is not connected yet. Rules can be saved, and nothing is emailed until the school account is configured.</p>';
+            ? `<p class="muted">Sent each morning as ${escapeHtml(gmail.sender || 'the connected Google account')}.</p>`
+            : '<p class="notice">Gmail is not connected yet. Rules can be saved, and nothing is emailed until the school account is connected in Admin → Google account.</p>';
         const head = back
           ? `<div class="page-head"><div><p class="eyebrow">My Students</p><h1>Email reminders</h1><p class="lede">Cohort rules belong to the coordinator. Add an extra reminder here for your own students.</p></div><div class="page-actions"><button type="button" class="button secondary" id="email-desk-back">Back to students</button></div></div>`
           : '<p class="lede">Cohort rules belong to the coordinator. A supervisor can add an extra reminder for their own students. Each reminder is sent once, on its trigger day.</p>';

@@ -1,7 +1,7 @@
-import { readFileSync } from 'node:fs';
-import { HubError, normalizeEmail, text } from './util';
+import { connectedEmail, GMAIL_SEND_SCOPE, getGoogleAuth, googleOAuthConfigured, GoogleOAuthSource, legacyOAuthNote } from './googleAuth';
+import { HubError, normalizeEmail } from './util';
 
-export const GMAIL_SEND_SCOPE = 'https://www.googleapis.com/auth/gmail.send';
+export const GMAIL_NOT_CONFIGURED = 'Gmail is not configured. Set EE_GOOGLE_OAUTH_CLIENT_ID, EE_GOOGLE_OAUTH_CLIENT_SECRET, and EE_GOOGLE_OAUTH_REFRESH_TOKEN.';
 
 export interface OutboundMail {
   to: string[];
@@ -13,33 +13,27 @@ export interface Mailer {
   send(mail: OutboundMail): Promise<void>;
 }
 
-interface ServiceAccount {
-  client_email: string;
-  private_key: string;
+interface GmailSendClient {
+  users: {
+    messages: {
+      send(args: { userId: string; requestBody: { raw: string } }): Promise<unknown>;
+    };
+  };
 }
 
-export function gmailSender(): string {
-  return normalizeEmail(process.env.EE_GMAIL_SENDER);
+export interface GmailMailerDeps {
+  source?: GoogleOAuthSource;
+  sender?: string;
+  gmail?: GmailSendClient;
 }
 
-export function gmailConfigured(): boolean {
-  return !!gmailSender() && !!text(process.env.EE_GMAIL_SERVICE_ACCOUNT_JSON);
+export function gmailConfigured(source?: GoogleOAuthSource): boolean {
+  return googleOAuthConfigured(source);
 }
 
-export function loadGmailAccount(): ServiceAccount {
-  const raw = text(process.env.EE_GMAIL_SERVICE_ACCOUNT_JSON);
-  if (!raw) throw new HubError('Gmail is not configured. Set EE_GMAIL_SENDER and EE_GMAIL_SERVICE_ACCOUNT_JSON.');
-  let parsed: ServiceAccount;
-  try {
-    parsed = raw.startsWith('{') ? JSON.parse(raw) : JSON.parse(readFileSync(raw, 'utf8'));
-  } catch {
-    throw new HubError('EE_GMAIL_SERVICE_ACCOUNT_JSON must be service-account JSON or a path to that file.');
-  }
-  if (!parsed.client_email || !parsed.private_key) throw new HubError('The Gmail service account JSON needs client_email and private_key.');
-  if (!parsed.private_key.includes('\n') && parsed.private_key.includes('\\n')) {
-    parsed.private_key = parsed.private_key.replace(/\\n/g, '\n');
-  }
-  return parsed;
+export function gmailNotConfiguredMessage(): string {
+  const legacy = legacyOAuthNote();
+  return legacy ? `${GMAIL_NOT_CONFIGURED} ${legacy}` : GMAIL_NOT_CONFIGURED;
 }
 
 export function sanitizeHeader(value: string): string {
@@ -68,18 +62,13 @@ export function buildRawMessage(from: string, mail: OutboundMail): string {
   return Buffer.from(message, 'utf8').toString('base64url');
 }
 
-export async function createGmailMailer(): Promise<Mailer> {
-  const sender = gmailSender();
-  if (!sender) throw new HubError('Gmail is not configured. Set EE_GMAIL_SENDER and EE_GMAIL_SERVICE_ACCOUNT_JSON.');
-  const account = loadGmailAccount();
-  const { google } = await import('googleapis');
-  const auth = new google.auth.JWT({
-    email: account.client_email,
-    key: account.private_key,
-    scopes: [GMAIL_SEND_SCOPE],
-    subject: sender,
-  });
-  const gmail = google.gmail({ version: 'v1', auth });
+export async function createGmailMailer(deps?: GmailMailerDeps): Promise<Mailer> {
+  if (!deps?.gmail && !gmailConfigured(deps?.source)) throw new HubError(gmailNotConfiguredMessage());
+  const auth = deps?.gmail ? null : await getGoogleAuth(deps?.source);
+  let sender = normalizeEmail(deps?.sender);
+  if (!sender) sender = await connectedEmail(auth || undefined, deps?.source);
+  if (!sender) throw new HubError(gmailNotConfiguredMessage());
+  const gmail = deps?.gmail || await gmailClient(auth);
   return {
     async send(mail: OutboundMail): Promise<void> {
       const raw = buildRawMessage(sender, mail);
@@ -87,3 +76,10 @@ export async function createGmailMailer(): Promise<Mailer> {
     },
   };
 }
+
+async function gmailClient(auth: unknown): Promise<GmailSendClient> {
+  const { google } = await import('googleapis');
+  return google.gmail({ version: 'v1', auth: auth as never });
+}
+
+export { GMAIL_SEND_SCOPE };

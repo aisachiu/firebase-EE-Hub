@@ -158,9 +158,9 @@ test('a check does not create folders or documents', async () => {
   assert.equal(drive.calls.some((call) => call.op === 'create' || call.op === 'copy' || call.op === 'share'), false);
 });
 
-test('a Drive account that is not the assigned account creates nothing', async () => {
+test('a Drive account that is not the connected account creates nothing', async () => {
   const drive = harness('other@vsa.example.edu');
-  await assert.rejects(() => provisionStudents(input(drive.api, [member()])), /assigned Google account/);
+  await assert.rejects(() => provisionStudents(input(drive.api, [member()])), /connected Google account/);
   assert.equal(drive.calls.some((call) => call.op === 'create' || call.op === 'copy'), false);
 });
 
