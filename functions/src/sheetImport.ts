@@ -77,13 +77,13 @@ export function planSheetImport(grids: SheetGrid[]): SheetImportPlan {
   }
 
   grids.forEach((grid) => {
-    const cohort = /^cohort:\s*(\d{4})$/i.exec(grid.title.trim());
+    const cohort = /^(?:cohort:\s*|cohort\s+)(\d{4})$/i.exec(grid.title.trim());
     if (cohort) {
       byTitle.delete(normalizeTitle(grid.title));
       readCohortMembers(plan, cohort[1], grid);
       return;
     }
-    const form = /^form:\s*([a-z][a-z0-9_-]*)$/i.exec(grid.title.trim());
+    const form = /^(?:form:\s*|form\s+)([a-z][a-z0-9_-]*)$/i.exec(grid.title.trim());
     if (form) {
       byTitle.delete(normalizeTitle(grid.title));
       readFormResponses(plan, form[1], grid);

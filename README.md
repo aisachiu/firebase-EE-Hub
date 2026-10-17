@@ -89,6 +89,8 @@ EE_DRIVE_SERVICE_ACCOUNT_JSON=/path/to/service-account.json
 
 `EE_DRIVE_SERVICE_ACCOUNT_JSON` may be the JSON itself or a path to the file. If it is unset, Drive reuses `EE_GMAIL_SERVICE_ACCOUNT_JSON`. Prefer the Drive variable when both are set. In Google Workspace admin, turn on domain-wide delegation for that service account client id and authorize `https://www.googleapis.com/auth/drive`. The assigned user must be a real user in that domain, and the cohort folder must be somewhere that user can edit. Existing folders owned by a personal My Drive are left where they are.
 
+Admin → Sheets exports the collections an admin or coordinator selects into a spreadsheet owned by that same Drive account, and shares it with the person who exported it. Phases, milestones, cohorts, and student lists are selected by default. Ingest reads a Google Sheet link and replaces only the selected collections whose tabs are present. A missing tab is left unchanged. Rows that are not in a selected tab are removed, after a preview and a confirmation. Audit logs can be exported and are not written back. Email logs and word-count samples are not part of this sheet. The same `https://www.googleapis.com/auth/drive` delegation is enough for the Sheets API. The local demo can open the page and cannot create a spreadsheet until the Drive account and key are configured. The command-line `import-sheet` path is unchanged.
+
 4. From this repo:
 
 ```bash

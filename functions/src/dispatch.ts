@@ -55,6 +55,7 @@ import {
   setNotificationRuleEnabled,
 } from './notifications';
 import { App } from './session';
+import { applySheetIngest, exportSheetCollections, listSheetCollections, previewSheetIngest } from './sheetSync';
 import { HubError, text } from './util';
 
 export async function dispatch(app: App, method: string, args: unknown[]): Promise<unknown> {
@@ -112,6 +113,10 @@ export async function dispatch(app: App, method: string, args: unknown[]): Promi
     case 'saveCohortDriveSettings': return saveCohortDriveSettings(app, args[0], args[1]);
     case 'checkCohortDriveFolders': return checkCohortDriveFolders(app, args[0], args[1], args[2]);
     case 'syncCohortDriveFolders': return syncCohortDriveFolders(app, args[0], args[1], args[2]);
+    case 'listSheetCollections': return listSheetCollections(app);
+    case 'exportSheetCollections': return exportSheetCollections(app, args[0]);
+    case 'previewSheetIngest': return previewSheetIngest(app, args[0], args[1]);
+    case 'applySheetIngest': return applySheetIngest(app, args[0], args[1], args[2]);
     case 'listNotificationDesk': return listNotificationDesk(app, args[0], args[1]);
     case 'saveNotificationRule': return saveNotificationRule(app, args[0]);
     case 'deleteNotificationRule': return deleteNotificationRule(app, args[0]);
