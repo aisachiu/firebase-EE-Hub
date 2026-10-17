@@ -299,6 +299,7 @@ export const COLLECTIONS: Record<string, string> = {
   notificationRules: 'notificationRules',
   notificationOverlays: 'notificationOverlays',
   notificationSends: 'notificationSends',
+  docWordLogs: 'docWordLogs',
 };
 
 export function tableConfig(entity: string): TableDef {

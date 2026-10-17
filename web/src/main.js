@@ -41,19 +41,6 @@ window.eeSignIn = function() {
 
 window.eeUseEmulators = useEmulators;
 
-window.eeConnectDrive = function() {
-  const provider = new GoogleAuthProvider();
-  provider.addScope('https://www.googleapis.com/auth/drive');
-  const hint = window.eeUser && window.eeUser.email ? window.eeUser.email : '';
-  const params = { prompt: 'consent', include_granted_scopes: 'true' };
-  if (hint) params.login_hint = hint;
-  provider.setCustomParameters(params);
-  return signInWithPopup(auth, provider).then(function(result) {
-    const credential = GoogleAuthProvider.credentialFromResult(result);
-    return credential && credential.accessToken ? credential.accessToken : '';
-  });
-};
-
 window.eeSignOut = function() {
   return signOut(auth);
 };

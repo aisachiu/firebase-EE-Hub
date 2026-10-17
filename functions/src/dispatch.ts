@@ -23,7 +23,8 @@ import {
   saveCohortMember,
 } from './admin';
 import { getAppBootstrap } from './bootstrap';
-import { checkCohortDriveFolders, getCohortDriveSettings, saveCohortDriveSettings, syncCohortDriveFolders } from './drive';
+import { getMyEssayAnalytics, getStudentEssayAnalytics } from './docAnalytics';
+import { checkCohortDriveFolders, getCohortDriveSettings, getDriveAccount, saveCohortDriveSettings, saveDriveAccount, syncCohortDriveFolders } from './drive';
 import { getFormDesigner, getFormResponse, getStudentForm, listFormMilestones, publishForm, saveFormDraft, saveStudentForm } from './forms';
 import { getMyActivity, getPathwayPlan, getStaffHome, getStaffStudentHome, getStudentActivity, getStudentHome } from './journey';
 import {
@@ -54,6 +55,7 @@ import {
   setNotificationRuleEnabled,
 } from './notifications';
 import { App } from './session';
+import { applySheetIngest, exportSheetCollections, listSheetCollections, previewSheetIngest } from './sheetSync';
 import { HubError, text } from './util';
 
 export async function dispatch(app: App, method: string, args: unknown[]): Promise<unknown> {
@@ -64,6 +66,8 @@ export async function dispatch(app: App, method: string, args: unknown[]): Promi
     case 'getStaffStudentHome': return getStaffStudentHome(app, args[0], args[1], args[2]);
     case 'getMyActivity': return getMyActivity(app);
     case 'getStudentActivity': return getStudentActivity(app, args[0], args[1]);
+    case 'getMyEssayAnalytics': return getMyEssayAnalytics(app);
+    case 'getStudentEssayAnalytics': return getStudentEssayAnalytics(app, args[0], args[1], args[2]);
     case 'getContentHub': return getContentHub(app);
     case 'getCohorts': return getCohorts(app);
     case 'getAdminRecords': return getAdminRecords(app, text(args[0]));
@@ -103,10 +107,16 @@ export async function dispatch(app: App, method: string, args: unknown[]): Promi
     case 'getStudentForm': return getStudentForm(app, args[0]);
     case 'saveStudentForm': return saveStudentForm(app, args[0], args[1]);
     case 'getFormResponse': return getFormResponse(app, args[0], args[1]);
+    case 'getDriveAccount': return getDriveAccount(app);
+    case 'saveDriveAccount': return saveDriveAccount(app, args[0]);
     case 'getCohortDriveSettings': return getCohortDriveSettings(app, args[0], args[1]);
     case 'saveCohortDriveSettings': return saveCohortDriveSettings(app, args[0], args[1]);
     case 'checkCohortDriveFolders': return checkCohortDriveFolders(app, args[0], args[1], args[2]);
     case 'syncCohortDriveFolders': return syncCohortDriveFolders(app, args[0], args[1], args[2]);
+    case 'listSheetCollections': return listSheetCollections(app);
+    case 'exportSheetCollections': return exportSheetCollections(app, args[0]);
+    case 'previewSheetIngest': return previewSheetIngest(app, args[0], args[1]);
+    case 'applySheetIngest': return applySheetIngest(app, args[0], args[1], args[2]);
     case 'listNotificationDesk': return listNotificationDesk(app, args[0], args[1]);
     case 'saveNotificationRule': return saveNotificationRule(app, args[0]);
     case 'deleteNotificationRule': return deleteNotificationRule(app, args[0]);

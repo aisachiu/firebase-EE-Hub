@@ -327,13 +327,12 @@
       main.plan-wide { max-width: none; padding-inline: clamp(12px, 2vw, 28px); }
       @container (max-width: 760px) {
         .tiles, .steps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-        .doc-grid { grid-template-columns: 1fr; }
       }
       .hero { display: flex; justify-content: space-between; gap: 16px; align-items: center; flex-wrap: wrap; padding: 14px 16px; color: white; background: var(--ink); border-left: 5px solid var(--gold); }
       .hero p { margin: 0; color: #d5e4ef; }
       .hero h2 { margin: 2px 0 4px; color: white; }
       .tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-top: 10px; }
-      .tile, .scard, .strip, .doc-card { padding: 10px 12px; background: white; border: 1px solid var(--line); }
+      .tile, .scard, .strip { padding: 10px 12px; background: white; border: 1px solid var(--line); }
       .tile .val { font-size: 20px; font-weight: 700; color: var(--ink); }
       .steps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; list-style: none; margin: 8px 0 0; padding: 0; }
       .steps .step { text-align: center; color: var(--muted); font-size: 12px; font-weight: 700; }
@@ -351,7 +350,6 @@
       .form-dialog { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: 12px; background: rgba(0, 30, 50, .45); }
       .form-dialog[hidden] { display: none; }
       .form-panel { width: min(720px, 100%); max-height: calc(100vh - 24px); overflow: auto; padding: 14px; background: white; border-top: 4px solid var(--gold); }
-      .doc-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
       .milestone-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 8px 0; border-top: 1px solid var(--line); }
       .activity-panel { max-width: 860px; }
       .activity-slider { margin: 4px 0 10px; }
@@ -385,7 +383,7 @@
       .activity-detail div { display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: 8px; }
       .activity-detail dt { margin: 0; color: var(--muted); font-size: 12px; font-weight: 700; }
       .activity-detail dd { margin: 0; }
-      @media (max-width: 800px) { .tiles, .steps, .doc-grid { grid-template-columns: 1fr 1fr; } .topbar { flex-wrap: wrap; } .resource-editor-layout { grid-template-columns: 1fr; } .resource-preview { position: static; } }
+      @media (max-width: 800px) { .tiles, .steps { grid-template-columns: 1fr 1fr; } .topbar { flex-wrap: wrap; } .resource-editor-layout { grid-template-columns: 1fr; } .resource-preview { position: static; } }
       @media (max-width: 700px) {
         .topbar { align-items: flex-start; padding: 14px 16px; }
         .shell { padding: 16px 14px 36px; }
@@ -629,6 +627,56 @@
       .notify-mail { margin: 8px 0 0; padding: 8px 10px; white-space: pre-wrap; background: var(--surface); border: 1px solid var(--line); font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
       .list-journey-tip { position: fixed; z-index: 80; max-width: min(280px, calc(100vw - 16px)); padding: 5px 8px; border-radius: 4px; background: #263746; color: white; font-size: 11px; line-height: 1.35; pointer-events: none; box-shadow: 0 2px 8px rgba(0, 30, 50, .22); }
       .list-journey-tip[hidden] { display: none !important; }
+      .docs-layout { display: flex; align-items: stretch; gap: 12px; }
+      .folder-card { flex: 0 0 168px; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 14px; background: white; border: 1px solid var(--line); border-radius: 8px; }
+      .folder-card svg { width: 36px; height: 36px; fill: #fbbc04; }
+      .folder-card h3, .doc-head h3 { margin: 0; font-size: 15px; }
+      .folder-card p { margin: 0; }
+      .folder-card a, .doc-head a { color: var(--green); font-weight: 700; }
+      .folder-links { list-style: none; margin: 8px 0 0; padding: 8px 0 0; border-top: 1px solid var(--line); display: grid; gap: 4px; width: 100%; font-size: 13px; }
+      .doc-dashboard { flex: 1; min-width: 0; padding: 14px 16px 16px; background: white; border: 1px solid var(--line); border-radius: 8px; }
+      .doc-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 14px; }
+      .doc-head h3 { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--ink); }
+      .doc-head h3 span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .doc-head svg { flex: none; width: 18px; height: 18px; fill: #1a73e8; }
+      .doc-stats { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; margin: 0 0 8px; }
+      .doc-stat { padding: 10px 6px; text-align: center; background: #f8f9fa; border: 1px solid #e9ecef; border-radius: 6px; }
+      .doc-stat b { display: block; color: var(--ink); font-size: 18px; line-height: 1.2; }
+      .doc-stat b.compact { font-size: 14px; }
+      .doc-stat span { display: block; margin-top: 4px; color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+      .doc-stat.streak { background: #fff8e1; border-color: #ffe0b2; }
+      .doc-stat.streak b, .doc-stat.streak span { color: #e65100; }
+      .doc-hint { margin: 0 0 12px; font-size: 12px; }
+      .sheet-choices { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 4px 16px; }
+      .heatmap-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 8px 0; }
+      .heatmap-head strong { font-size: 12px; }
+      .heatmap-legend { display: flex; align-items: center; gap: 3px; color: var(--muted); font-size: 10px; }
+      .heatmap-legend i { width: 10px; height: 10px; border-radius: 2px; }
+      .heatmap-months { display: grid; grid-template-columns: repeat(var(--weeks), minmax(0, 1fr)); column-gap: 3px; height: 14px; margin: 0 0 4px 20px; color: var(--muted); font-size: 10px; }
+      .heatmap-months span { white-space: nowrap; }
+      .heatmap-plot { display: grid; grid-template-columns: 14px minmax(0, 1fr); column-gap: 6px; align-items: stretch; }
+      .heatmap-days { position: relative; color: var(--muted); font-size: 9px; line-height: 1; }
+      .heatmap-days span { position: absolute; right: 0; transform: translateY(-40%); }
+      .heatmap-days span:nth-child(1) { top: calc(100% * .5 / 7); }
+      .heatmap-days span:nth-child(2) { top: calc(100% * 2.5 / 7); }
+      .heatmap-days span:nth-child(3) { top: calc(100% * 4.5 / 7); }
+      .heatmap-grid { display: grid; grid-template-rows: repeat(7, auto); grid-template-columns: repeat(var(--weeks), minmax(0, 1fr)); grid-auto-flow: column; gap: 3px; }
+      .heatmap-grid .heat-cell { width: 100%; aspect-ratio: 1; }
+      .heat-cell { display: block; border-radius: 2px; background: #ebedf0; }
+      .heat-cell.lvl-1 { background: #c6e48b; }
+      .heat-cell.lvl-2 { background: #7bc96f; }
+      .heat-cell.lvl-3 { background: #239a3b; }
+      .heat-cell.lvl-4 { background: #196127; }
+      .heat-cell.is-future { background: transparent; }
+      @container (max-width: 860px) {
+        .docs-layout { flex-direction: column; }
+        .folder-card { flex-basis: auto; }
+        .doc-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      }
+      @container (max-width: 520px) {
+        .doc-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .doc-head { align-items: flex-start; flex-direction: column; }
+      }
     </style>
   </head>
   <body>
@@ -647,7 +695,7 @@
         status: '',
         selectedMemberIds: [],
         driveBusy: false,
-        driveAccessToken: '',
+        essayAnalytics: null,
         driveSettingsLoaded: false,
         assignmentStudentIds: [],
         importRecords: null,
@@ -1149,12 +1197,6 @@
         const done = (home.actionItems || []).filter(function(item) { return item.CreatorType === 'System' && item.Status === 'Completed'; }).length;
         const pageName = home.displayName || 'Student';
         const hero = next ? `<section class="hero"><div><p class="eyebrow">${home.staffView ? 'Next step' : 'Your next step'}</p><h2>${escapeHtml(next.template.title)}</h2><p>${escapeHtml(next.template.description || 'Complete this milestone before the due date.')}</p></div><div>${next.item && next.item.DueDate ? `<div class="chip">${escapeHtml(String(next.item.DueDate).slice(0, 10))}</div>` : ''}${formButton(home, next)}</div></section>` : '<section class="hero"><div><p class="eyebrow">All caught up</p><h2>No action needed right now</h2><p>Open Journey to see what is coming.</p></div></section>';
-        const links = [
-          ['Drive folder', home.links && home.links.folder],
-          ['Extended Essay', home.links && home.links.doc],
-          ['RPPF', home.links && home.links.rppf],
-          ['Poster', home.links && home.links.poster]
-        ];
         main.innerHTML = `${staffStudentBar(home)}
           <div class="page-head"><div><h1>${escapeHtml(pageName)}'s EE</h1>${home.cohort ? `<p class="muted">Cohort ${escapeHtml(home.cohort)}</p>` : ''}</div></div>
           ${renderJourneyHero(journeyOverview(home))}
@@ -1168,10 +1210,7 @@
             <div class="tile"><div class="muted">Anchor</div><div class="val" style="font-size:16px">${escapeHtml(home.anchor || '—')}</div></div>
           </div>
           <h2 class="section-gap">${home.staffView ? 'Documents' : 'My documents'}</h2>
-          <div class="doc-grid">${links.map(function(link) {
-            const url = safeUrl(link[1]);
-            return `<article class="doc-card"><h3>${escapeHtml(link[0])}</h3><p class="muted">${url ? 'Shared with your supervisor.' : 'Not created yet.'}</p>${url ? `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">Open</a>` : ''}</article>`;
-          }).join('')}</div>
+          <div class="docs-layout">${renderFolderCard(home)}${renderEssayCard(home)}</div>
           <section class="section-gap" id="my-activity" aria-label="${home.staffView ? 'Student activity' : 'Your activity'}"></section>`;
         applyJourneyHero(main);
         bindJourneyHero(main);
@@ -1179,7 +1218,126 @@
         bindStaffStudentChrome();
         bindUnreadNotices(main, false);
         paintTabDot('help', home.unreadTicketCount, 'Help');
+        paintEssayAnalytics(home);
         paintStudentActivity(home);
+      }
+
+      function renderFolderCard(home) {
+        const links = home.links || {};
+        const folder = safeUrl(links.folder);
+        const extras = [['RPPF', links.rppf], ['Poster', links.poster]].map(function(entry) {
+          const url = safeUrl(entry[1]);
+          return `<li>${url ? `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(entry[0])}</a>` : `<span class="muted">${escapeHtml(entry[0])} not created yet</span>`}</li>`;
+        }).join('');
+        return `<article class="folder-card"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg><h3>Drive folder</h3><p class="muted">${folder ? 'Shared with your supervisor.' : 'Not created yet.'}</p>${folder ? `<a href="${escapeHtml(folder)}" target="_blank" rel="noopener noreferrer">Open folder</a>` : ''}<ul class="folder-links">${extras}</ul></article>`;
+      }
+
+      function renderEssayCard(home) {
+        const url = safeUrl(home.links && home.links.doc);
+        return `<article class="doc-dashboard"><div class="doc-head"><h3><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg><span id="essay-doc-title">Extended Essay</span></h3>${url ? `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">Open in Google Docs</a>` : ''}</div><div id="essay-stats">${url ? '<p class="muted">Reading the Google Doc…</p>' : '<p class="muted">Not created yet.</p>'}</div></article>`;
+      }
+
+      function essayAnalyticsKey(home) {
+        return (home.email || '') + '|' + ((home.links && home.links.doc) || '');
+      }
+
+      function paintEssayAnalytics(home) {
+        const host = document.getElementById('essay-stats');
+        if (!host) return;
+        const url = safeUrl(home.links && home.links.doc);
+        if (!url) return;
+        const key = essayAnalyticsKey(home);
+        const cached = state.essayAnalytics;
+        if (cached && cached.key === key && cached.stats && cached.stats.ok && Date.now() - cached.at < 600000) {
+          host.innerHTML = renderEssayStats(cached.stats);
+          const cachedTitle = document.getElementById('essay-doc-title');
+          if (cachedTitle && cached.stats.title) cachedTitle.textContent = cached.stats.title;
+          return;
+        }
+        const request = home.staffView
+          ? callServer('getStudentEssayAnalytics', home.email, home.cohort || '', home.viewAs || state.actingAs || '')
+          : callServer('getMyEssayAnalytics');
+        request.then(function(stats) {
+          if (host.isConnected === false) return;
+          if (stats && stats.ok) state.essayAnalytics = { key: key, at: Date.now(), stats: stats };
+          host.innerHTML = renderEssayStats(stats || {});
+          const title = document.getElementById('essay-doc-title');
+          if (title && stats && stats.title) title.textContent = stats.title;
+        }).catch(function(error) {
+          if (host.isConnected === false || isStale(error)) return;
+          const message = error && error.message ? error.message : String(error);
+          host.innerHTML = '<p class="notice error">' + escapeHtml(message) + '</p>';
+        });
+      }
+
+      function formatCount(value) {
+        if (value === null || value === undefined || value === '') return '—';
+        const number = Number(value);
+        if (!isFinite(number)) return '—';
+        return Math.round(number).toLocaleString('en-US');
+      }
+
+      function formatWordDelta(value) {
+        if (value === null || value === undefined || value === '') return '—';
+        const number = Math.round(Number(value));
+        if (!isFinite(number)) return '—';
+        if (number > 0) return '+' + number.toLocaleString('en-US');
+        return number.toLocaleString('en-US');
+      }
+
+      function formatLastEdit(value) {
+        const date = new Date(value || '');
+        if (isNaN(date.getTime())) return '—';
+        const minutes = Math.round((Date.now() - date.getTime()) / 60000);
+        if (minutes < 2) return 'Just now';
+        if (minutes < 60) return minutes + ' min ago';
+        const hours = Math.round(minutes / 60);
+        if (hours < 24) return hours === 1 ? '1 hour ago' : hours + ' hours ago';
+        const days = Math.round(hours / 24);
+        if (days === 1) return 'Yesterday';
+        if (days < 14) return days + ' days ago';
+        return shortDate(value) || '—';
+      }
+
+      function renderEssayStats(stats) {
+        if (!stats || !stats.ok) {
+          if (stats && stats.reason === 'missing') return '<p class="muted">Not created yet.</p>';
+          if (stats && (stats.reason === 'config' || stats.reason === 'auth')) {
+            return '<p class="muted">' + escapeHtml(stats.message || 'Word count and edit history are not available yet.') + '</p>';
+          }
+          return '<p class="notice error">' + escapeHtml((stats && stats.message) || 'The EE Hub could not read this document.') + '</p>';
+        }
+        const lastEdit = formatLastEdit(stats.lastEdit);
+        const streak = stats.streak === null || stats.streak === undefined
+          ? '—'
+          : (Number(stats.streak) === 1 ? '1 day' : formatCount(stats.streak) + (Number(stats.streak) ? ' days' : ''));
+        const streakClass = Number(stats.streak) > 0 ? ' streak' : '';
+        const hint = stats.wordsHint ? `<p class="muted doc-hint">${escapeHtml(stats.wordsHint)}</p>` : '';
+        const days = stats.days || [];
+        const weeks = days.length ? Math.ceil(days.length / 7) : 0;
+        const months = (stats.months || []).map(function(month) {
+          return `<span style="grid-column:${Number(month.column) + 1}">${escapeHtml(month.label || '')}</span>`;
+        }).join('');
+        const cells = days.map(function(day) {
+          const level = day.future ? '' : ' lvl-' + (Number(day.level) || 0);
+          const title = day.future ? '' : (day.date + ': ' + (Number(day.count) ? Number(day.count) + (Number(day.count) === 1 ? ' edit' : ' edits') : 'No edits'));
+          return `<i class="heat-cell${day.future ? ' is-future' : ''}${level}"${title ? ` title="${escapeHtml(title)}"` : ''}></i>`;
+        }).join('');
+        const range = (stats.months || []).map(function(month) { return month.label; }).filter(Boolean);
+        const heatmapLabel = 'Edit activity' + (range.length ? ' from ' + range[0] + (range.length > 1 ? ' to ' + range[range.length - 1] : '') : '') + '. Darker green means more edits.';
+        const historyNote = stats.revisionsLoaded ? '' : '<p class="muted doc-hint">Edit history is not available for this document yet.</p>';
+        return `<div class="doc-stats">
+            <div class="doc-stat"><b>${formatCount(stats.wordCount)}</b><span>Current words</span></div>
+            <div class="doc-stat" title="Change since about one day ago"><b>${formatWordDelta(stats.wordsDay)}</b><span>Words, last day</span></div>
+            <div class="doc-stat" title="Change since about one week ago"><b>${formatWordDelta(stats.wordsWeek)}</b><span>Words, last week</span></div>
+            <div class="doc-stat${streakClass}" title="Days in a row with at least one edit"><b>${streak === '0 days' ? '0' : escapeHtml(streak)}</b><span>Edit streak</span></div>
+            <div class="doc-stat" title="Google Drive does not report how often a document was opened."><b>${formatCount(stats.opens)}</b><span>Times opened</span></div>
+            <div class="doc-stat" title="${escapeHtml(stats.lastEdit ? formatActivityWhen(stats.lastEdit) : '')}"><b class="${lastEdit.length > 12 ? 'compact' : ''}">${escapeHtml(lastEdit)}</b><span>Last edit</span></div>
+          </div>
+          ${hint}
+          <div class="heatmap-head"><strong>Edit activity</strong><div class="heatmap-legend" aria-hidden="true"><span>Less</span><i class="heat-cell"></i><i class="heat-cell lvl-1"></i><i class="heat-cell lvl-2"></i><i class="heat-cell lvl-3"></i><i class="heat-cell lvl-4"></i><span>More</span></div></div>
+          ${weeks ? `<div class="heatmap" style="--weeks:${weeks}" role="img" aria-label="${escapeHtml(heatmapLabel)}"><div class="heatmap-months">${months}</div><div class="heatmap-plot"><div class="heatmap-days" aria-hidden="true"><span>M</span><span>W</span><span>F</span></div><div class="heatmap-grid">${cells}</div></div></div>` : ''}
+          ${historyNote}`;
       }
 
       function journeyOverview(home) {
@@ -4079,7 +4237,7 @@
       }
 
       const adminSections = [
-        ['cohorts', 'Cohorts'], ['cohortMembers', 'Students in cohorts'], ['pathway', 'Phases & milestones'],
+        ['cohorts', 'Cohorts'], ['driveAccount', 'Google Drive'], ['sheetSync', 'Sheets'], ['cohortMembers', 'Students in cohorts'], ['pathway', 'Phases & milestones'],
         ['emailNotifications', 'Email notifications'],
         ['assignments', 'Assignments'],
         ['studentUsers', 'Student users'], ['staffUsers', 'Staff users'], ['subjects', 'Subjects'], ['formDesigner', 'Milestone forms'],
@@ -4121,6 +4279,14 @@
           renderEmailDesk(target, { back: false });
           return;
         }
+        if (state.adminEntity === 'driveAccount') {
+          renderDriveAccount(target);
+          return;
+        }
+        if (state.adminEntity === 'sheetSync') {
+          renderSheetSync(target);
+          return;
+        }
         if (state.adminEntity === 'formDesigner') {
           renderFormDesigner(target);
           return;
@@ -4156,7 +4322,7 @@
       }
 
       function refreshAdminSectionSilently() {
-        if (state.adminEntity === 'pathway' || state.adminEntity === 'emailNotifications') return;
+        if (state.adminEntity === 'pathway' || state.adminEntity === 'emailNotifications' || state.adminEntity === 'driveAccount' || state.adminEntity === 'sheetSync') return;
         if (state.adminEntity === 'cohortMembers') {
           callServer('getCohortMembersForAdmin', state.cohortId).then(renderAdminData).catch(showError);
           return;
@@ -5516,12 +5682,154 @@
         updateDriveNamePreview();
       }
 
+      function renderSheetSync(target) {
+        target.innerHTML = `<section class="editor"><h2>Sheets</h2>${loadingLine('Loading collections...')}</section>`;
+        callServer('listSheetCollections').then(function(result) {
+          const records = result.collections.filter(function(item) { return item.group === 'records'; });
+          const operational = result.collections.filter(function(item) { return item.group === 'operational'; });
+          const choice = function(item) {
+            return `<label class="check-option"><input type="checkbox" data-sheet-entity="${escapeHtml(item.id)}" ${item.recommended ? 'checked' : ''}><span>${escapeHtml(item.label)} <span class="muted">${escapeHtml(item.sheet)} · ${escapeHtml(String(item.count))}${item.exportOnly ? ' · export only' : ''}</span></span></label>`;
+          };
+          target.innerHTML = `<section class="editor">
+            <h2>Sheets</h2>
+            <p class="doc-hint">Export the collections you choose into a Google Sheet, edit it, then ingest it back. The sheet is created in the Google account assigned for Drive${result.driveActor ? ` (${escapeHtml(result.driveActor)})` : ''}. Phases, milestones, cohorts, and student lists start selected. A missing tab is left unchanged. Rows you delete in a selected tab are removed from the hub after you preview and confirm. Audit logs can be exported and are not written back. Email logs and word-count samples stay in the hub.</p>
+            <div class="toolbar"><button class="button secondary" id="sheet-recommended" type="button">Records to edit</button><button class="button secondary" id="sheet-all" type="button">All collections</button><button class="button secondary" id="sheet-none" type="button">Clear</button></div>
+            <h3>Records</h3>
+            <div class="sheet-choices">${records.map(choice).join('')}</div>
+            <h3>Operational records</h3>
+            <p class="doc-hint">Replacing these removes live tasks, messages, or answers that are not in the sheet.</p>
+            <div class="sheet-choices">${operational.map(choice).join('')}</div>
+            <div class="toolbar"><button class="button" id="sheet-export" type="button">Export selected</button></div>
+            <p id="sheet-export-result"></p>
+            <label class="field" for="sheet-url">Spreadsheet link</label>
+            <input id="sheet-url" placeholder="https://docs.google.com/spreadsheets/d/...">
+            <label class="check-option"><input type="checkbox" id="sheet-confirm"><span>Remove hub rows that are not in the selected tabs</span></label>
+            <div class="toolbar"><button class="button secondary" id="sheet-preview" type="button">Preview ingest</button><button class="button" id="sheet-apply" type="button" disabled>Ingest into the hub</button></div>
+            <div id="sheet-preview-result"></div>
+          </section>`;
+          const boxes = function() { return Array.from(target.querySelectorAll('[data-sheet-entity]')); };
+          const selected = function() { return boxes().filter(function(box) { return box.checked; }).map(function(box) { return box.getAttribute('data-sheet-entity'); }); };
+          const clearPreview = function() {
+            const apply = document.getElementById('sheet-apply');
+            if (apply) apply.disabled = true;
+            const preview = document.getElementById('sheet-preview-result');
+            if (preview) preview.innerHTML = '';
+          };
+          document.getElementById('sheet-recommended').addEventListener('click', function() {
+            boxes().forEach(function(box) {
+              const item = result.collections.find(function(entry) { return entry.id === box.getAttribute('data-sheet-entity'); });
+              box.checked = !!(item && item.recommended);
+            });
+            clearPreview();
+          });
+          document.getElementById('sheet-all').addEventListener('click', function() {
+            boxes().forEach(function(box) { box.checked = true; });
+            clearPreview();
+          });
+          document.getElementById('sheet-none').addEventListener('click', function() {
+            boxes().forEach(function(box) { box.checked = false; });
+            clearPreview();
+          });
+          boxes().forEach(function(box) { box.addEventListener('change', clearPreview); });
+          document.getElementById('sheet-url').addEventListener('input', clearPreview);
+          document.getElementById('sheet-export').addEventListener('click', function() {
+            const entities = selected();
+            if (!entities.length) { showError(new Error('Choose at least one collection.')); return; }
+            callServer('exportSheetCollections', entities).then(function(exported) {
+              const url = safeUrl(exported.url);
+              const share = exported.shared ? 'You can edit it.' : `It is owned by ${exported.owner}. ${exported.shareProblem || 'Sharing did not complete.'}`;
+              document.getElementById('sheet-export-result').innerHTML = url
+                ? `<a href="${escapeHtml(url)}" target="_blank" rel="noopener">${escapeHtml(exported.title || 'Open spreadsheet')}</a> <span class="muted">${escapeHtml(share)}</span>`
+                : `<span class="muted">${escapeHtml(share)}</span>`;
+              if (url) document.getElementById('sheet-url').value = url;
+            }).catch(showError);
+          });
+          document.getElementById('sheet-preview').addEventListener('click', function() {
+            const entities = selected().filter(function(id) {
+              const item = result.collections.find(function(entry) { return entry.id === id; });
+              return item && !item.exportOnly;
+            });
+            const source = document.getElementById('sheet-url').value;
+            if (!entities.length) { showError(new Error('Choose at least one collection to ingest.')); return; }
+            callServer('previewSheetIngest', { url: source }, entities).then(function(preview) {
+              const rows = preview.tables.map(function(table) {
+                return `<tr><td>${escapeHtml(table.label)}</td><td>${escapeHtml(String(table.incoming))}</td><td>${escapeHtml(String(table.existing))}</td><td>${escapeHtml(String(table.removing))}</td></tr>`;
+              }).join('');
+              const warnings = (preview.warnings || []).map(function(warning) { return `<li>${escapeHtml(warning)}</li>`; }).join('');
+              document.getElementById('sheet-preview-result').innerHTML = `<div class="table-wrap"><table class="data"><thead><tr><th>Collection</th><th>Rows in the sheet</th><th>Rows in the hub</th><th>Rows removed</th></tr></thead><tbody>${rows}</tbody></table></div>${warnings ? `<ul>${warnings}</ul>` : ''}`;
+              document.getElementById('sheet-apply').disabled = false;
+            }).catch(showError);
+          });
+          document.getElementById('sheet-apply').addEventListener('click', function() {
+            const entities = selected().filter(function(id) {
+              const item = result.collections.find(function(entry) { return entry.id === id; });
+              return item && !item.exportOnly;
+            });
+            const source = document.getElementById('sheet-url').value;
+            if (document.getElementById('sheet-confirm').checked !== true) { showError(new Error('Confirm that rows missing from the selected tabs will be removed from the hub.')); return; }
+            callServer('applySheetIngest', { url: source }, entities, true).then(function(preview) {
+              const labels = preview.tables.map(function(table) { return table.label; }).join(', ');
+              document.getElementById('sheet-apply').disabled = true;
+              showSuccess(`Updated ${labels} from the spreadsheet.`);
+              renderSheetSync(target);
+            }).catch(showError);
+          });
+        }).catch(showError);
+      }
+
+      function renderDriveAccount(target) {
+        target.innerHTML = loadingLine('Loading Google Drive...');
+        callServer('getDriveAccount').then(paintDriveAccount).catch(showError);
+      }
+
+      function paintDriveAccount(account) {
+        const target = document.getElementById('admin-content');
+        if (!target || state.adminEntity !== 'driveAccount') return;
+        const keyLine = account.serviceAccountEmail
+          ? 'Service account key is set (' + account.serviceAccountEmail + '). The private key stays in the server environment.'
+          : (account.keyError
+            ? account.keyError
+            : 'No service account key is set. Add EE_DRIVE_SERVICE_ACCOUNT_JSON, or reuse the Gmail service account and grant it the Drive scope.');
+        const saved = account.actorEmail
+          ? 'Assigned account: ' + account.actorEmail + (account.updatedAt ? ' · saved ' + account.updatedAt : '')
+          : 'No Google account is assigned yet.';
+        target.innerHTML = `<section class="editor"><h2>Google Drive</h2>
+          <p class="muted">Folders, copied EE documents, and essay edit history all use one Google account. The hub signs in as that account with a service account key. Students and staff are not asked to connect Drive.</p>
+          <p class="${account.serviceAccountEmail ? 'muted' : 'notice'}">${escapeHtml(keyLine)}</p>
+          <p class="muted" id="drive-account-saved">${escapeHtml(saved)}</p>
+          <div class="field"><label for="drive-actor-email">Google account</label>
+            <input id="drive-actor-email" type="email" value="${escapeHtml(account.actorEmail || '')}" placeholder="name@school.edu">
+          </div>
+          <div class="toolbar">
+            <button type="button" class="button secondary" id="drive-use-my-account">Use my account</button>
+            <button type="button" class="button" id="save-drive-account">Save</button>
+          </div></section>`;
+        document.getElementById('drive-use-my-account').addEventListener('click', function() {
+          const input = document.getElementById('drive-actor-email');
+          if (input && state.user && state.user.email) input.value = state.user.email;
+        });
+        document.getElementById('save-drive-account').addEventListener('click', function() {
+          const input = document.getElementById('drive-actor-email');
+          const actorEmail = input ? input.value.trim() : '';
+          const button = document.getElementById('save-drive-account');
+          if (button) button.disabled = true;
+          runMutation('saveDriveAccount', [{ actorEmail: actorEmail }], { key: 'drive-account' }).then(function(savedAccount) {
+            if (button) button.disabled = false;
+            paintDriveAccount(savedAccount);
+            showSuccess('Google Drive will use ' + savedAccount.actorEmail + '.');
+          }).catch(function(error) {
+            if (button) button.disabled = false;
+            showError(error);
+          });
+        });
+      }
+
       function renderDriveFolderPanel() {
         const panel = document.getElementById('drive-folder-panel');
         if (!panel) return;
         panel.innerHTML = `<h2>Drive folders</h2>
-          <p class="muted">Connect Google Drive, then create one folder per selected student inside the cohort folder. The Google account you connect owns the new folders and the copied EE documents, so keep the cohort folder in that account’s My Drive. Students are shared as editors, and no email is sent. A copy of the EE document template is placed in each folder and saved on that student.</p>
-          <div class="toolbar"><button type="button" class="button secondary" id="connect-drive">Connect Google Drive</button><strong id="drive-connect-label">Not connected</strong></div>
+          <p class="muted">Create one folder per selected student inside the cohort folder. Folders and copied documents are created by the Google account assigned in Admin → Google Drive. Keep the cohort folder where that account can edit. Students are shared as editors, and no email is sent. A copy of the EE document template is placed in each folder and saved on that student.</p>
+          <p class="muted" id="drive-actor-label">Checking the assigned Google account…</p>
           <div class="form-grid">
             <div class="field wide"><label for="drive-root-url">Cohort folder</label>
               <div class="toolbar"><button type="button" class="button secondary" id="save-drive-root">Save folder and template</button><strong id="drive-root-label">No folder selected</strong></div>
@@ -5541,12 +5849,6 @@
           <label class="field check"><input type="checkbox" id="drive-share-parent"> Share with the parent as viewer</label>
           <div class="toolbar"><button type="button" class="button secondary" id="check-drive-folders" disabled>Check selected</button><button type="button" class="button" id="update-drive-folders" disabled>Create or update selected</button></div>
           <div id="drive-folder-results"></div>`;
-        document.getElementById('connect-drive').addEventListener('click', function() {
-          connectDriveAccount().then(function() {
-            showSuccess('Google Drive connected. Folders and documents you create are owned by this account.');
-            return loadDriveSettings();
-          }).catch(showError);
-        });
         document.getElementById('save-drive-root').addEventListener('click', saveDriveRootFromForm);
         document.getElementById('check-drive-folders').addEventListener('click', function() { runDriveFolderJob(true); });
         document.getElementById('update-drive-folders').addEventListener('click', function() { runDriveFolderJob(false); });
@@ -5554,7 +5856,6 @@
           document.getElementById(id).addEventListener('input', updateDriveNamePreview);
         });
         state.driveSettingsLoaded = false;
-        applyDriveConnection();
         loadDriveSettings();
       }
 
@@ -5565,54 +5866,16 @@
         });
       }
 
-      function applyDriveConnection() {
-        const label = document.getElementById('drive-connect-label');
-        const button = document.getElementById('connect-drive');
-        if (!label) return;
-        if (window.eeUseEmulators) {
-          label.textContent = 'Local demo saves links only';
-          return;
-        }
-        if (state.driveAccessToken) {
-          label.textContent = 'Connected';
-          if (button) button.textContent = 'Reconnect Google Drive';
-        } else {
-          label.textContent = 'Not connected';
-          if (button) button.textContent = 'Connect Google Drive';
-        }
-      }
-
-      function connectDriveAccount() {
-        if (window.eeUseEmulators) {
-          return Promise.reject(new Error('The local demo cannot connect Google Drive. On the deployed hub, Connect Google Drive uses your own Google account.'));
-        }
-        if (!window.eeConnectDrive) return Promise.reject(new Error('Google Drive is not available in this session.'));
-        return window.eeConnectDrive().then(function(token) {
-          const signedIn = window.eeUser && window.eeUser.email ? String(window.eeUser.email).toLowerCase() : '';
-          const expected = state.user && state.user.email ? String(state.user.email).toLowerCase() : '';
-          if (expected && signedIn && signedIn !== expected) throw new Error('Connect the Google account you are signed in with.');
-          if (!token) throw new Error('Google did not return a Drive connection. Allow Drive access for the account you are signed in with.');
-          state.driveAccessToken = token;
-          applyDriveConnection();
-          return token;
-        }).catch(function(error) {
-          const message = error && error.message ? error.message : String(error);
-          if (/popup-closed|cancelled-popup|popup-blocked/i.test(message)) {
-            throw new Error('The Google Drive window was closed before access was granted.');
-          }
-          throw error instanceof Error ? error : new Error(message);
-        });
-      }
-
-      function ensureDriveToken() {
-        if (state.driveAccessToken) return Promise.resolve(state.driveAccessToken);
-        return connectDriveAccount();
+      function driveActorLabel(settings) {
+        if (settings && settings.driveProblem) return settings.driveProblem;
+        if (settings && settings.driveReady && settings.driveActor) return 'Using ' + settings.driveActor + ' for new folders and copied documents.';
+        if (settings && settings.driveActor) return settings.driveActor + ' is assigned. Drive calls wait until the service account key is configured.';
+        return 'Assign the Google account in Admin → Google Drive before creating folders.';
       }
 
       function loadDriveSettings() {
         setDriveFormLocked(true);
-        const request = state.driveAccessToken ? { accessToken: state.driveAccessToken } : {};
-        return callServer('getCohortDriveSettings', state.cohortId, request).then(function(settings) {
+        return callServer('getCohortDriveSettings', state.cohortId).then(function(settings) {
           state.driveSettings = settings;
           state.driveSettingsLoaded = true;
           applyDriveFolderSettings(settings);
@@ -5623,17 +5886,8 @@
           state.driveSettingsLoaded = true;
           setDriveFormLocked(false);
           updateSelectedCount();
-          if (driveConnectionExpired(error)) {
-            state.driveAccessToken = '';
-            applyDriveConnection();
-          }
           showError(error);
         });
-      }
-
-      function driveConnectionExpired(error) {
-        const message = error && error.message ? error.message : String(error || '');
-        return message.indexOf('Connect Google Drive again') === 0;
       }
 
       function applyDriveFolderSettings(settings) {
@@ -5660,6 +5914,8 @@
           templateProblem.hidden = !settings.templateProblem;
           templateProblem.textContent = settings.templateProblem || '';
         }
+        const actor = document.getElementById('drive-actor-label');
+        if (actor) actor.textContent = driveActorLabel(settings);
         updateDriveNamePreview();
       }
 
@@ -5672,8 +5928,7 @@
           suffix: document.getElementById('drive-suffix') ? document.getElementById('drive-suffix').value : '',
           templateId: document.getElementById('drive-template-url') ? document.getElementById('drive-template-url').value : '',
           shareStudent: !!(document.getElementById('drive-share-student') && document.getElementById('drive-share-student').checked),
-          shareParent: !!(document.getElementById('drive-share-parent') && document.getElementById('drive-share-parent').checked),
-          accessToken: state.driveAccessToken || ''
+          shareParent: !!(document.getElementById('drive-share-parent') && document.getElementById('drive-share-parent').checked)
         };
       }
 
@@ -5692,25 +5947,20 @@
       }
 
       function saveDriveRootFromForm() {
-        const prepare = state.driveAccessToken || window.eeUseEmulators ? Promise.resolve() : connectDriveAccount();
-        prepare.then(function() {
-          const form = readDriveFolderForm();
-          if (!form.rootFolderId) throw new Error('Paste a Google Drive folder link.');
-          const button = document.getElementById('save-drive-root');
-          if (button) button.disabled = true;
-          return runMutation('saveCohortDriveSettings', [state.cohortId, form], { key: 'drive-settings:' + state.cohortId }).then(function(settings) {
-            state.driveSettings = settings;
-            applyDriveFolderSettings(settings);
-            if (button) button.disabled = false;
-            showSuccess(form.templateId ? 'Cohort folder and EE template saved.' : 'Cohort folder saved.');
-          });
-        }).catch(function(error) {
-          const button = document.getElementById('save-drive-root');
+        const form = readDriveFolderForm();
+        if (!form.rootFolderId) {
+          showError(new Error('Paste a Google Drive folder link.'));
+          return;
+        }
+        const button = document.getElementById('save-drive-root');
+        if (button) button.disabled = true;
+        runMutation('saveCohortDriveSettings', [state.cohortId, form], { key: 'drive-settings:' + state.cohortId }).then(function(settings) {
+          state.driveSettings = settings;
+          applyDriveFolderSettings(settings);
           if (button) button.disabled = false;
-          if (driveConnectionExpired(error)) {
-            state.driveAccessToken = '';
-            applyDriveConnection();
-          }
+          showSuccess(form.templateId ? 'Cohort folder and EE template saved.' : 'Cohort folder saved.');
+        }).catch(function(error) {
+          if (button) button.disabled = false;
           showError(error);
         });
       }
@@ -5720,19 +5970,14 @@
         const cohortId = state.cohortId;
         const ids = state.selectedMemberIds.slice();
         const results = [];
-        ensureDriveToken().then(function() {
-          const form = readDriveFolderForm();
-          if (!form.rootFolderId) throw new Error('Choose a cohort folder or paste its link.');
-          state.driveBusy = true;
-          updateSelectedCount();
-          step(0, form);
-        }).catch(function(error) {
-          if (driveConnectionExpired(error)) {
-            state.driveAccessToken = '';
-            applyDriveConnection();
-          }
-          showError(error);
-        });
+        const form = readDriveFolderForm();
+        if (!form.rootFolderId) {
+          showError(new Error('Choose a cohort folder or paste its link.'));
+          return;
+        }
+        state.driveBusy = true;
+        updateSelectedCount();
+        step(0, form);
         function finish(error) {
           state.driveBusy = false;
           updateSelectedCount();
@@ -5742,13 +5987,7 @@
             return student.status === 'error' || student.status === 'ambiguous' || (student.doc && student.doc.status === 'error') || (student.shares || []).some(function(share) { return share.status === 'failed'; });
           }).length;
           const countLabel = results.length + ' student' + (results.length === 1 ? '' : 's');
-          if (error) {
-            if (driveConnectionExpired(error)) {
-              state.driveAccessToken = '';
-              applyDriveConnection();
-            }
-            showError(error);
-          }
+          if (error) showError(error);
           else if (problemCount) showSuccess((dryRun ? 'Checked ' : 'Updated ') + countLabel + '. ' + problemCount + ' need attention.');
           else if (!dryRun) showSuccess('Drive folders updated for ' + countLabel + '.');
           else showSuccess('Checked ' + countLabel + '.');
