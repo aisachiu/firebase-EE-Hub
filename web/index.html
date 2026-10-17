@@ -350,6 +350,7 @@
       .form-dialog { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: 12px; background: rgba(0, 30, 50, .45); }
       .form-dialog[hidden] { display: none; }
       .form-panel { width: min(720px, 100%); max-height: calc(100vh - 24px); overflow: auto; padding: 14px; background: white; border-top: 4px solid var(--gold); }
+      .form-panel.member-editor { width: min(920px, 100%); }
       .milestone-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 8px 0; border-top: 1px solid var(--line); }
       .activity-panel { max-width: 860px; }
       .activity-slider { margin: 4px 0 10px; }
@@ -969,6 +970,7 @@
       }
 
       function renderShell() {
+        closeMemberEditor();
         hideListJourneyTip();
         advanceScene();
         const student = state.user.role === 'student';
@@ -4255,6 +4257,7 @@
           }).join('')}</nav><div id="admin-content">${loadingLine('Loading...')}</div>`;
         main.querySelectorAll('[data-admin-entity]').forEach(function(button) {
           button.addEventListener('click', function() {
+            closeMemberEditor();
             state.adminEntity = button.dataset.adminEntity;
             state.editingRecord = null;
             state.noticeEdit = null;
@@ -4307,6 +4310,7 @@
               return `<option value="${escapeHtml(cohort.id)}" ${cohort.id === current ? 'selected' : ''}>${escapeHtml(cohort.name)}</option>`;
             }).join('')}</select></div><section class="editor drive-panel" id="drive-folder-panel">${loadingLine('Loading Drive folders...')}</section><div id="admin-records">${loadingLine('Loading students...')}</div>`;
             document.getElementById('admin-cohort').addEventListener('change', function(event) {
+              closeMemberEditor();
               state.cohortId = event.target.value;
               state.editingRecord = null;
               state.selectedMemberIds = [];
@@ -5831,7 +5835,7 @@
         const panel = document.getElementById('drive-folder-panel');
         if (!panel) return;
         panel.innerHTML = `<h2>Drive folders</h2>
-          <p class="muted">Create one folder per selected student inside the cohort folder. Folders and copied documents are created by the Google account connected in Admin → Google account. Keep the cohort folder where that account can edit. Students are shared as editors, and no email is sent. A copy of the EE document template is placed in each folder and saved on that student.</p>
+          <p class="muted">Create one folder per selected student inside the cohort folder. Folders and copied documents are created by the Google account connected in Admin → Google account. Keep the cohort folder where that account can edit. The folder and EE document are shared with the Student Email on the cohort record. No email is sent. A copy of the EE document template is placed in each folder and saved on that student.</p>
           <p class="muted" id="drive-actor-label">Checking the connected Google account…</p>
           <div class="form-grid">
             <div class="field wide"><label for="drive-root-url">Cohort folder</label>
@@ -5848,7 +5852,7 @@
             <div class="field"><label for="drive-suffix">Suffix</label><input id="drive-suffix" maxlength="80"></div>
           </div>
           <p class="muted" id="drive-name-preview"></p>
-          <label class="field check"><input type="checkbox" id="drive-share-student" checked> Share with the student as editor</label>
+          <label class="field check"><input type="checkbox" id="drive-share-student" checked> Share with the Student Email as editor</label>
           <label class="field check"><input type="checkbox" id="drive-share-parent"> Share with the parent as viewer</label>
           <div class="toolbar"><button type="button" class="button secondary" id="check-drive-folders" disabled>Check selected</button><button type="button" class="button" id="update-drive-folders" disabled>Create or update selected</button></div>
           <div id="drive-folder-results"></div>`;
@@ -6184,6 +6188,54 @@
         });
       }
 
+      let memberEditorReturn = null;
+
+      function onMemberEditorKeydown(event) {
+        if (event.key !== 'Escape') return;
+        const dialog = document.getElementById('form-dialog');
+        if (!dialog || dialog.hidden || dialog.dataset.editor !== 'cohort-member') return;
+        event.preventDefault();
+        closeMemberEditor();
+      }
+
+      function closeMemberEditor() {
+        document.removeEventListener('keydown', onMemberEditorKeydown);
+        const dialog = document.getElementById('form-dialog');
+        const open = !!(dialog && dialog.dataset.editor === 'cohort-member' && !dialog.hidden);
+        if (!open) {
+          memberEditorReturn = null;
+          return;
+        }
+        state.editingRecord = null;
+        state.originalKey = '';
+        dialog.hidden = true;
+        dialog.innerHTML = '';
+        delete dialog.dataset.editor;
+        dialog.onclick = null;
+        const back = memberEditorReturn;
+        memberEditorReturn = null;
+        if (back && typeof back.focus === 'function' && document.contains(back)) back.focus();
+      }
+
+      function openMemberEditorDialog(markup) {
+        const dialog = document.getElementById('form-dialog');
+        if (!dialog) return;
+        const active = document.activeElement;
+        if (active && active !== document.body && !dialog.contains(active)) memberEditorReturn = active;
+        dialog.hidden = false;
+        dialog.dataset.editor = 'cohort-member';
+        dialog.innerHTML = markup;
+        dialog.onclick = function(event) {
+          if (event.target === dialog) closeMemberEditor();
+        };
+        const closeButton = document.getElementById('close-member-editor');
+        if (closeButton) closeButton.addEventListener('click', closeMemberEditor);
+        document.removeEventListener('keydown', onMemberEditorKeydown);
+        document.addEventListener('keydown', onMemberEditorKeydown);
+        const first = dialog.querySelector('input:not([disabled]), select:not([disabled]), textarea:not([disabled])');
+        if (first) first.focus();
+      }
+
       function openEditor(record, preserve, phaseOptionsLoaded) {
         if (state.adminEntity === 'resources') {
           openResourceEditor(record, preserve);
@@ -6194,18 +6246,36 @@
         const fields = data.schema && data.schema.fields ? data.schema.fields : (data.headers || []).map(function(name) { return { name: name }; });
         state.editingRecord = record ? { record: record } : (preserve ? state.editingRecord : null);
         const editing = !!record || !!(preserve && state.originalKey);
-        state.originalKey = editing ? keyValue(entity, record || state.editingRecord.record) : '';
-        const editor = document.getElementById('record-editor');
-        editor.innerHTML = `<section class="editor"><h2>${editing ? 'Edit record' : 'Add record'}</h2>
-          ${entity === 'studentUsers' && !editing ? '<div id="cohort-import"></div>' : ''}
-          <form id="record-form"><div class="form-grid">${fields.filter(function(field) { return field.form !== false; }).map(function(field) { return fieldMarkup(field, record ? record[field.name] : undefined, editing); }).join('')}</div>
-            <div class="toolbar"><button class="button" type="submit">Save</button><button class="button secondary" type="button" id="cancel-edit">Cancel</button></div></form></section>`;
+        const source = record || (state.editingRecord && state.editingRecord.record) || null;
+        state.originalKey = editing ? keyValue(entity, source) : '';
+        const useModal = entity === 'cohortMembers';
+        const studentName = source ? (source['Display Name'] || source.StudentId || '') : '';
+        const title = useModal ? (editing ? ('Edit ' + (studentName || 'student')) : 'Add student') : (editing ? 'Edit record' : 'Add record');
+        const formFields = fields.filter(function(field) { return field.form !== false; }).map(function(field) {
+          return fieldMarkup(field, source ? source[field.name] : undefined, editing);
+        }).join('');
+        const formMarkup = `${entity === 'studentUsers' && !editing ? '<div id="cohort-import"></div>' : ''}
+          <form id="record-form"><div class="form-grid">${formFields}</div>
+            ${useModal ? '<p class="notice error" id="member-save-error" hidden></p>' : ''}
+            <div class="toolbar"><button class="button" type="submit">Save</button><button class="button secondary" type="button" id="cancel-edit">Cancel</button></div></form>`;
+        if (useModal) {
+          openMemberEditorDialog(`<div class="form-panel member-editor" role="dialog" aria-modal="true" aria-labelledby="member-editor-title"><div class="toolbar"><h2 id="member-editor-title">${escapeHtml(title)}</h2><button type="button" class="button secondary" id="close-member-editor">Close</button></div>${formMarkup}</div>`);
+        } else {
+          const editor = document.getElementById('record-editor');
+          if (!editor) return;
+          editor.innerHTML = `<section class="editor"><h2>${escapeHtml(title)}</h2>${formMarkup}</section>`;
+        }
         const form = document.getElementById('record-form');
+        if (!form) return;
         form.addEventListener('submit', saveForm);
         document.getElementById('cancel-edit').addEventListener('click', function() {
-          state.editingRecord = null;
-          state.originalKey = '';
-          document.getElementById('record-editor').innerHTML = '';
+          if (useModal) closeMemberEditor();
+          else {
+            state.editingRecord = null;
+            state.originalKey = '';
+            const editor = document.getElementById('record-editor');
+            if (editor) editor.innerHTML = '';
+          }
         });
         if (entity === 'studentUsers' && !editing) renderCohortImport();
       }
@@ -6346,7 +6416,7 @@
           else record[input.dataset.field] = input.value;
         });
         const submit = form.querySelector('[type="submit"]');
-        const localError = document.getElementById('resource-save-error');
+        const localError = document.getElementById('member-save-error') || document.getElementById('resource-save-error');
         if (localError) { localError.hidden = true; localError.textContent = ''; }
         submit.disabled = true;
         const request = runMutation(entity === 'cohortMembers' ? 'saveCohortMember' : 'saveAdminRecord', entity === 'cohortMembers'
@@ -6354,13 +6424,17 @@
           : [entity, record, state.originalKey || ''], { key: 'admin:' + entity + ':' + (state.originalKey || 'new') });
         request.then(function(result) {
           state.status = result && result.auditWarning ? 'Saved, but the completion audit entry could not be written. Check AUDIT_LOGS.' : 'Saved.';
-          state.editingRecord = null;
-          state.originalKey = '';
+          memberEditorReturn = null;
+          if (entity === 'cohortMembers') closeMemberEditor();
+          else {
+            state.editingRecord = null;
+            state.originalKey = '';
+          }
           refreshAdminSectionSilently();
         }).catch(function(error) {
           submit.disabled = false;
           showError(error);
-          const editorError = document.getElementById('resource-save-error');
+          const editorError = document.getElementById('member-save-error') || document.getElementById('resource-save-error');
           if (editorError) {
             editorError.hidden = false;
             editorError.textContent = error && error.message ? error.message : String(error);
