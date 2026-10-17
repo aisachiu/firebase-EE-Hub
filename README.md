@@ -47,7 +47,7 @@ npm run import-sheet -- "https://docs.google.com/spreadsheets/d/SPREADSHEET_ID/e
 npm run dev
 ```
 
-Share the spreadsheet with the service account email (Viewer is enough). The same JSON used for Drive sync works when that account can read the sheet. If the variable is unset, the command uses application default credentials from `gcloud auth application-default login`.
+Share the spreadsheet with the account that will read it (Viewer is enough). If `GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON` or `GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON` is set, the command uses that service account. This local import is separate from the Cloud Function OAuth user. If the variable is unset, the command uses application default credentials from `gcloud auth application-default login`.
 
 `--dry-run` prints row counts and does not write. A real import replaces each collection that the workbook contains, including cohort members, ticket messages, and audit logs, so running it again does not duplicate rows. Collections whose tabs are missing are left as they are. Every `FORM:` tab is stored in one response collection, so the import keeps the answers from the form tabs that are present. `CONTENT_PAGES` rows are copied into resources when that resource id is not already there.
 
@@ -77,19 +77,44 @@ VITE_FIREBASE_APP_ID=
 
 Do not set `VITE_USE_EMULATORS` for that build.
 
-3. Create `functions/.env` with `EE_TIMEZONE=Asia/Hong_Kong`. Drive folders, copied EE documents, and essay edit history all use one Workspace account. The function signs in as that account with a service account and domain-wide delegation. The private key stays in this file. An admin or coordinator chooses the Workspace account in Admin → Google Drive. Enable the Google Drive API on the Firebase project. The local demo can save the assigned account and a folder or template link; it cannot create or read Drive files. Email reminders use the same file; see Email notifications below.
+3. Create `functions/.env` with `EE_TIMEZONE=Asia/Hong_Kong`. Drive folders, copied EE documents, spreadsheet export, and essay edit history all use one Workspace account (for VSA, `sec-ict@vsa.edu.hk`). The function signs in as that account with an OAuth refresh token. The client secret and refresh token stay in this file. Students and staff are never asked to connect Google. Enable the Google Drive API, Google Sheets API, and Gmail API on the Firebase project. The local demo can save a folder or template link; it cannot create or read Drive files until the refresh token is set. Email reminders use the same token; see Email notifications below.
 
-The student page shows an EE folder card and an EE document card with word-count changes and an edit heatmap. The heatmap uses the same assigned account as folder provisioning (`https://www.googleapis.com/auth/drive`). The signed-in student or supervisor is not asked for a Drive scope. The file id is the EE document already saved on that student. If the assigned account cannot open the document, the page says so. No access token is stored. Daily word totals are kept in `docWordLogs` so a later visit can show the change. The local demo cannot read a Google Doc until that account and key are configured.
+The student page shows an EE folder card and an EE document card with word-count changes and an edit heatmap. The heatmap uses the connected account (`https://www.googleapis.com/auth/drive`). The signed-in student or supervisor is not asked for a Drive scope. The file id is the EE document already saved on that student. If the connected account cannot open the document, the page says so. No access token is stored. Daily word totals are kept in `docWordLogs` so a later visit can show the change. The local demo cannot read a Google Doc until the OAuth refresh token is configured.
 
-Add to `functions/.env` (do not commit that file):
+### Connect Google (Drive + Sheets + Gmail)
+
+In Google Cloud Console, on the same project:
+
+1. APIs & Services → OAuth consent screen. User type **Internal** (Workspace users only). Add these scopes:
+   - `https://www.googleapis.com/auth/drive`
+   - `https://www.googleapis.com/auth/spreadsheets`
+   - `https://www.googleapis.com/auth/gmail.send`
+2. Create an OAuth client. A **Desktop** client can use the loopback redirect below. A **Web** client must list that exact URI as an authorized redirect.
+3. Sign in once as the school mailbox (the account that should own folders, spreadsheets, and outgoing mail) and mint a refresh token:
 
 ```bash
-EE_DRIVE_SERVICE_ACCOUNT_JSON=/path/to/service-account.json
+export EE_GOOGLE_OAUTH_CLIENT_ID=YOUR_CLIENT_ID
+export EE_GOOGLE_OAUTH_CLIENT_SECRET=YOUR_CLIENT_SECRET
+# optional; this is the default
+# export EE_GOOGLE_OAUTH_REDIRECT_URI=http://127.0.0.1:8765/oauth/callback
+npm run mint-google-oauth
 ```
 
-`EE_DRIVE_SERVICE_ACCOUNT_JSON` may be the JSON itself or a path to the file. If it is unset, Drive reuses `EE_GMAIL_SERVICE_ACCOUNT_JSON`. Prefer the Drive variable when both are set. In Google Workspace admin, turn on domain-wide delegation for that service account client id and authorize `https://www.googleapis.com/auth/drive`. The assigned user must be a real user in that domain, and the cohort folder must be somewhere that user can edit. Existing folders owned by a personal My Drive are left where they are.
+The script prints a consent URL, listens on `http://127.0.0.1:8765/oauth/callback`, and prints the refresh token. If you already have an authorization code, run `npm run mint-google-oauth -- --code=THE_CODE`. Google returns a refresh token only on the first consent with `prompt=consent`. If it does not, revoke the app at https://myaccount.google.com/permissions and run the script again.
 
-Admin → Sheets exports the collections an admin or coordinator selects into a spreadsheet owned by that same Drive account, and shares it with the person who exported it. Phases, milestones, cohorts, and student lists are selected by default. Ingest reads a Google Sheet link and replaces only the selected collections whose tabs are present. A missing tab is left unchanged. Rows that are not in a selected tab are removed, after a preview and a confirmation. Audit logs can be exported and are not written back. Email logs and word-count samples are not part of this sheet. The same `https://www.googleapis.com/auth/drive` delegation is enough for the Sheets API. The local demo can open the page and cannot create a spreadsheet until the Drive account and key are configured. The command-line `import-sheet` path is unchanged.
+Add the printed lines to `functions/.env` (do not commit that file):
+
+```bash
+EE_GOOGLE_OAUTH_CLIENT_ID=
+EE_GOOGLE_OAUTH_CLIENT_SECRET=
+EE_GOOGLE_OAUTH_REFRESH_TOKEN=
+```
+
+Redeploy `eeHub` and `notificationSweep`. Open Admin → Google account and choose **Check connection**. The page shows the mailbox on the refresh token. It does not ask for a different account, and it does not store the token in Firestore. Domain-wide delegation is not used. `EE_DRIVE_SERVICE_ACCOUNT_JSON`, `EE_GMAIL_SERVICE_ACCOUNT_JSON`, and `EE_GMAIL_SENDER` are ignored.
+
+The cohort folder must be somewhere that connected account can edit. Existing folders owned by a personal My Drive are left where they are.
+
+Admin → Sheets exports the collections an admin or coordinator selects into a spreadsheet owned by that same account, and shares it with the person who exported it. Phases, milestones, cohorts, and student lists are selected by default. Ingest reads a Google Sheet link and replaces only the selected collections whose tabs are present. A missing tab is left unchanged. Rows that are not in a selected tab are removed, after a preview and a confirmation. Audit logs can be exported and are not written back. Email logs and word-count samples are not part of this sheet. The Sheets scope on the same refresh token is what the Sheets API uses. The local demo can open the page and cannot create a spreadsheet until the refresh token is configured. The command-line `import-sheet` path is unchanged.
 
 4. From this repo:
 
@@ -112,21 +137,13 @@ Coordinators own the cohort rules. Open Admin → Email notifications, or use Em
 
 Rules live in `notificationRules`. Supervisor overlays live in `notificationOverlays`. `notificationSends` records each send, keyed by rule, task, and trigger day, so the morning job does not repeat a reminder. Admin → Email notifications shows that log. A supervisor sees mail from their own reminders. When the student is one of the recipients, the same send is written to the audit log and appears in that student’s activity. Callable methods on `eeHub`: `listNotificationDesk`, `saveNotificationRule`, `deleteNotificationRule`, `setNotificationRuleEnabled`, `saveNotificationOverlay`, `deleteNotificationOverlay`, `setNotificationOverlayEnabled`, `previewNotificationSweep`, `previewNotificationRule`, `runNotificationSweep`, `sendNotificationRule`, and `sendNotificationTest`.
 
-Sending uses the Gmail API with a service account and domain-wide delegation. It does not use SMTP. Add these to `functions/.env` (do not commit that file):
+Sending uses the Gmail API as the connected Google account. It does not use SMTP, and it does not use a service account. The same refresh token from Connect Google above is enough. Add this to `functions/.env` (do not commit that file):
 
 ```bash
 EE_TIMEZONE=Asia/Hong_Kong
-EE_GMAIL_SENDER=ee-hub@school.edu
-EE_GMAIL_SERVICE_ACCOUNT_JSON=/path/to/service-account.json
 # EE_NOTIFICATIONS_DRY_RUN=true
 ```
 
-`EE_GMAIL_SERVICE_ACCOUNT_JSON` may be the JSON itself or a path to the file. `EE_GMAIL_SENDER` is the Workspace user the job sends as. `EE_NOTIFICATIONS_DRY_RUN=true` writes a dry-run log and does not send. Leave it unset once Gmail is ready. The scheduled function is `notificationSweep` (07:15 in `EE_TIMEZONE`).
+`EE_NOTIFICATIONS_DRY_RUN=true` writes a dry-run log and does not send. Leave it unset once Gmail is ready. The scheduled function is `notificationSweep` (07:15 in `EE_TIMEZONE`). Mail is sent as the mailbox on the refresh token (`userId: me`). Confirm that address in Admin → Google account after deploy.
 
-In Google Workspace admin, for that service account:
-
-1. Enable the Gmail API on the Cloud project.
-2. Turn on domain-wide delegation for the service account client id.
-3. Authorize the scope `https://www.googleapis.com/auth/gmail.send`.
-
-The sender must be a real user in that domain. Preview today does not send. Coordinators and admins can use Preview and send on one rule: it runs that rule’s check for today, shows each message, and emails only the ones they select. The rule has to be on, and Gmail has to be connected. Send test emails only the signed-in coordinator or supervisor.
+Preview today does not send. Coordinators and admins can use Preview and send on one rule: it runs that rule’s check for today, shows each message, and emails only the ones they select. The rule has to be on, and Google has to be connected. Send test emails only the signed-in coordinator or supervisor.

@@ -215,21 +215,24 @@ test('gmail raw messages keep header text on one line', () => {
     note: '',
     test: true,
   }).subject.startsWith('[Test] '), true);
-  const previous = process.env.EE_GMAIL_SENDER;
-  const previousJson = process.env.EE_GMAIL_SERVICE_ACCOUNT_JSON;
-  delete process.env.EE_GMAIL_SENDER;
-  delete process.env.EE_GMAIL_SERVICE_ACCOUNT_JSON;
+  const names = ['EE_GOOGLE_OAUTH_CLIENT_ID', 'EE_GOOGLE_OAUTH_CLIENT_SECRET', 'EE_GOOGLE_OAUTH_REFRESH_TOKEN', 'EE_GMAIL_SENDER', 'EE_GMAIL_SERVICE_ACCOUNT_JSON'];
+  const previous = Object.fromEntries(names.map((name) => [name, process.env[name]]));
+  names.forEach((name) => { delete process.env[name]; });
   assert.equal(gmailConfigured(), false);
-  if (previous === undefined) delete process.env.EE_GMAIL_SENDER;
-  else process.env.EE_GMAIL_SENDER = previous;
-  if (previousJson === undefined) delete process.env.EE_GMAIL_SERVICE_ACCOUNT_JSON;
-  else process.env.EE_GMAIL_SERVICE_ACCOUNT_JSON = previousJson;
+  process.env.EE_GMAIL_SENDER = 'old@school.edu';
+  process.env.EE_GMAIL_SERVICE_ACCOUNT_JSON = '{"client_email":"bot@project.iam.gserviceaccount.com","private_key":"secret"}';
+  assert.equal(gmailConfigured(), false);
+  names.forEach((name) => {
+    if (previous[name] === undefined) delete process.env[name];
+    else process.env[name] = previous[name];
+  });
 });
 
 function memoryStore() {
   const docs: Record<string, Record<string, Doc>> = {};
   const members: Record<string, Record<string, Doc>> = {};
   const audits: Doc[] = [];
+  const meta: Record<string, Doc> = {};
   const store = {
     audits,
     async list(name: string) { return Object.values(docs[name] || {}); },
@@ -243,6 +246,8 @@ function memoryStore() {
     async listMembers(cohortId: string) { return Object.values(members[cohortId] || {}); },
     async getMember(cohortId: string, email: string) { return (members[cohortId] || {})[email] || null; },
     async setMember(cohortId: string, email: string, data: Doc) { (members[cohortId] ||= {})[email] = { ...data }; },
+    async getMeta(id: string) { return meta[id] ? { ...meta[id] } : null; },
+    async setMeta(id: string, data: Doc) { meta[id] = { ...data }; },
     async addAudit(entry: Doc) { audits.push(entry); },
     db: {
       collection(name: string) {

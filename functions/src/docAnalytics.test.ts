@@ -34,10 +34,9 @@ const DOC_URL = `https://docs.google.com/document/d/${FILE_ID}/edit`;
 const ACTOR = 'coordinator@vsa.example.edu';
 const NOW = new Date('2026-10-16T12:00:00.000Z');
 const DRIVE_KEY = {
-  driveJson: JSON.stringify({
-    client_email: 'ee-drive@project.iam.gserviceaccount.com',
-    private_key: '-----BEGIN PRIVATE KEY-----\\nABC\\n-----END PRIVATE KEY-----',
-  }),
+  clientId: 'ee-hub.apps.googleusercontent.com',
+  clientSecret: 'oauth-client-secret',
+  refreshToken: 'oauth-refresh-token',
 };
 
 class MemoryStore {
@@ -260,7 +259,7 @@ test('a student read uses the assigned Drive account and the saved document, the
   const saved = await store.get('docWordLogs', FILE_ID);
   const samples = JSON.parse(String(saved && saved.SamplesJson));
   assert.equal(samples[0].w, 4);
-  assert.equal(JSON.stringify(saved).includes('PRIVATE KEY'), false);
+  assert.equal(JSON.stringify(saved).includes('oauth-refresh-token'), false);
 
   opened.drive.exportPlainText = async () => 'one two three four five six';
   const later = await getMyEssayAnalytics(appFor(store, studentEmail), assigned(opened.drive, { now: new Date('2026-10-16T13:00:00.000Z') }));
@@ -304,7 +303,7 @@ test('missing documents, a missing Drive account, and the wrong Google account d
   });
   assert.equal(needsAccount.ok, false);
   assert.equal(needsAccount.reason, 'config');
-  assert.match(needsAccount.message || '', /assigns the Google account/);
+  assert.match(needsAccount.message || '', /connects the Google account/);
   assert.equal(calls, 0);
 
   const noKey = await getMyEssayAnalytics(appFor(store, studentEmail), {

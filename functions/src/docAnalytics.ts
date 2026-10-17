@@ -1,11 +1,12 @@
-// Essay document stats for the student page. Drive reads run as the Workspace
-// account assigned in Admin, not as the person who has the page open. The file
-// id comes from that student's saved EE document, not from the browser.
-// Word-count samples are stored one row per file in docWordLogs. Edit squares
-// come from Drive revisions.
+// Essay document stats for the student page. Drive reads run as the connected
+// school account, not as the person who has the page open. The file id comes
+// from that student's saved EE document, not from the browser. Word-count
+// samples are stored one row per file in docWordLogs. Edit squares come from
+// Drive revisions.
 
-import { DRIVE_SCOPE, DriveKeySource, ESSAY_DRIVE_NOT_CONFIGURED, ESSAY_DRIVE_UNAVAILABLE, impersonatedAuth, presentDriveAccount } from './driveAccount';
+import { ESSAY_DRIVE_NOT_CONFIGURED, ESSAY_DRIVE_UNAVAILABLE, presentDriveAccount } from './driveAccount';
 import { DRIVE_DOCUMENT_MIME, parseDriveId, RECONNECT, WRONG_ACCOUNT } from './drive';
+import { DRIVE_SCOPE, getGoogleAuth, GoogleOAuthSource } from './googleAuth';
 import {
   buildEditHeatmap,
   countRevisionDays,
@@ -25,7 +26,7 @@ import { COLLECTIONS } from './schema';
 import { App, deny, requireStaff, requireUser } from './session';
 import { HubError, normalizeEmail, nowIso, text } from './util';
 
-const NEEDS_SCOPE = `The service account used for Drive is missing the Google Drive scope. An admin needs to grant ${DRIVE_SCOPE}.`;
+const NEEDS_SCOPE = `The connected Google account is missing the Google Drive scope. An admin needs to grant ${DRIVE_SCOPE} and mint a new refresh token.`;
 const ACCESS_DENIED_DOC = 'The Google account assigned for Drive cannot open this document.';
 const OPEN_FAILED = 'The EE Hub could not open this document.';
 const WORD_HINT_DOC = 'Word count is available for a Google Doc.';
@@ -72,7 +73,8 @@ export interface EssayAnalytics {
 export interface AnalyticsDeps {
   actorEmail?: string;
   keyConfigured?: boolean;
-  keySource?: DriveKeySource;
+  oauth?: GoogleOAuthSource;
+  keySource?: GoogleOAuthSource;
   driveForActor?: (actorEmail: string) => Promise<EssayDrive>;
   now?: Date;
 }
@@ -221,8 +223,8 @@ export function essayDriveFromApi(api: EssayApi): EssayDrive {
   };
 }
 
-export async function essayDriveForActor(actorEmail: string, source?: DriveKeySource): Promise<EssayDrive> {
-  const auth = await impersonatedAuth(actorEmail, source);
+export async function essayDriveForActor(_actorEmail: string, source?: GoogleOAuthSource): Promise<EssayDrive> {
+  const auth = await getGoogleAuth(source);
   const { google } = await import('googleapis');
   return essayDriveFromApi(google.drive({ version: 'v3', auth }) as unknown as EssayApi);
 }
@@ -235,7 +237,9 @@ async function assertAssignedAccount(drive: EssayDrive, actorEmail: string): Pro
     if (error instanceof HubError) throw error;
     throw new HubError(RECONNECT);
   }
-  if (!owner || owner !== normalizeEmail(actorEmail)) throw new HubError(WRONG_ACCOUNT);
+  const expected = normalizeEmail(actorEmail);
+  if (!owner) throw new HubError(RECONNECT);
+  if (expected && owner !== expected) throw new HubError(WRONG_ACCOUNT);
 }
 
 function wordLog(app: App): WordLog {
@@ -332,7 +336,7 @@ async function assignedDriveAccount(app: App, deps?: AnalyticsDeps): Promise<{ a
     const keyConfigured = deps.keyConfigured !== false;
     return { actorEmail, ready: keyConfigured && !!actorEmail };
   }
-  const account = await presentDriveAccount(app, deps?.keySource);
+  const account = await presentDriveAccount(app, deps?.oauth || deps?.keySource);
   return { actorEmail: account.actorEmail, ready: account.ready };
 }
 
@@ -348,7 +352,7 @@ async function loadEssayAnalytics(app: App, docUrl: string, deps?: AnalyticsDeps
     };
   }
   try {
-    const drive = await (deps?.driveForActor || ((actorEmail: string) => essayDriveForActor(actorEmail, deps?.keySource)))(account.actorEmail);
+    const drive = await (deps?.driveForActor || ((actorEmail: string) => essayDriveForActor(actorEmail, deps?.oauth || deps?.keySource)))(account.actorEmail);
     await assertAssignedAccount(drive, account.actorEmail);
     return await collectEssayAnalytics({
       fileId,

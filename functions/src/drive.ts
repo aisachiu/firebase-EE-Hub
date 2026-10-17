@@ -1,12 +1,10 @@
 import {
   DriveAccountStatus,
-  DriveKeySource,
-  impersonatedAuth,
-  MISSING_ACTOR,
   presentDriveAccount,
   requireDriveActor,
   writeDriveActor,
 } from './driveAccount';
+import { getGoogleAuth, GOOGLE_AUTH_REJECTED, GoogleOAuthSource } from './googleAuth';
 import { requireCohort } from './roster';
 import { COLLECTIONS } from './schema';
 import { App, audited, requireAdmin } from './session';
@@ -17,8 +15,8 @@ const BATCH_LIMIT = 8;
 export const DRIVE_FOLDER_MIME = 'application/vnd.google-apps.folder';
 export const DRIVE_DOCUMENT_MIME = 'application/vnd.google-apps.document';
 
-export const RECONNECT = 'Google Drive rejected the assigned account. Check the service account key and domain-wide delegation.';
-export const WRONG_ACCOUNT = 'Drive is not running as the assigned Google account.';
+export const RECONNECT = GOOGLE_AUTH_REJECTED;
+export const WRONG_ACCOUNT = 'Drive is not running as the connected Google account.';
 
 export interface DriveFile {
   id: string;
@@ -294,13 +292,13 @@ export function driveClientFromApi(api: DriveApi): DriveClient {
   };
 }
 
-export async function driveClientForActor(actorEmail: string, source?: DriveKeySource): Promise<DriveClient> {
-  const auth = await impersonatedAuth(actorEmail, source);
+export async function driveClient(source?: GoogleOAuthSource): Promise<DriveClient> {
+  const auth = await getGoogleAuth(source);
   const { google } = await import('googleapis');
   return driveClientFromApi(google.drive({ version: 'v3', auth }) as unknown as DriveApi);
 }
 
-export async function assertDriveAccount(drive: DriveClient, email: string): Promise<void> {
+export async function assertDriveAccount(drive: DriveClient, email: string): Promise<string> {
   let owner = '';
   try {
     owner = normalizeEmail(await drive.aboutEmail());
@@ -308,14 +306,17 @@ export async function assertDriveAccount(drive: DriveClient, email: string): Pro
     if (error instanceof HubError) throw error;
     throw new HubError(RECONNECT);
   }
-  if (!owner || owner !== normalizeEmail(email)) throw new HubError(WRONG_ACCOUNT);
+  const expected = normalizeEmail(email);
+  if (!owner) throw new HubError(RECONNECT);
+  if (expected && owner !== expected) throw new HubError(WRONG_ACCOUNT);
+  return owner;
 }
 
 function driveIdentity(account: DriveAccountStatus, problem = '') {
   return {
     driveActor: account.actorEmail,
-    driveReady: account.ready && !problem,
-    driveProblem: problem || account.keyError || '',
+    driveReady: account.configured && !problem,
+    driveProblem: problem,
   };
 }
 
@@ -327,19 +328,20 @@ export async function getDriveAccount(app: App): Promise<DriveAccountStatus> {
 export async function saveDriveAccount(
   app: App,
   settings: unknown,
-  deps?: { driveForActor?: (actorEmail: string) => Promise<DriveClient>; keySource?: DriveKeySource },
+  deps?: { driveForActor?: (actorEmail: string) => Promise<DriveClient>; oauth?: GoogleOAuthSource },
 ): Promise<DriveAccountStatus> {
   const user = await requireAdmin(app, 'SAVE_DRIVE_ACCOUNT');
-  const actorEmail = validateEmail((settings as Doc | null)?.actorEmail, 'Google account');
-  return audited(app, user, 'SAVE_DRIVE_ACCOUNT', { actorEmail }, async () => {
-    const current = await presentDriveAccount(app, deps?.keySource);
-    if (current.keyError) throw new HubError(current.keyError);
-    if (current.keyConfigured) {
-      const drive = await (deps?.driveForActor || ((email: string) => driveClientForActor(email, deps?.keySource)))(actorEmail);
-      await assertDriveAccount(drive, actorEmail);
-    }
-    await writeDriveActor(app, actorEmail, user.email);
-    return presentDriveAccount(app, deps?.keySource);
+  const requested = text((settings as Doc | null)?.actorEmail);
+  if (requested) validateEmail(requested, 'Google account');
+  const detail: Doc = requested ? { actorEmail: requested } : {};
+  return audited(app, user, 'SAVE_DRIVE_ACCOUNT', detail, async () => {
+    const current = await presentDriveAccount(app, deps?.oauth);
+    if (!current.configured) throw new HubError(current.error);
+    const drive = await (deps?.driveForActor || (() => driveClient(deps?.oauth)))(requested);
+    const owner = await assertDriveAccount(drive, requested);
+    detail.actorEmail = owner;
+    await writeDriveActor(app, owner, user.email);
+    return presentDriveAccount(app, deps?.oauth);
   });
 }
 
@@ -440,17 +442,14 @@ export async function getCohortDriveSettings(app: App, cohortId: unknown, settin
   void settings;
   const presented = await present(app, text(cohortId));
   const account = await presentDriveAccount(app);
-  if (!account.ready) {
-    const problem = account.keyError || (account.keyConfigured && !account.actorEmail ? MISSING_ACTOR : '');
-    return { ...presented, ...driveIdentity(account, problem) };
-  }
+  if (!account.configured) return { ...presented, ...driveIdentity(account, account.error) };
   try {
-    const drive = await driveClientForActor(account.actorEmail);
-    await assertDriveAccount(drive, account.actorEmail);
+    const drive = await driveClient();
+    const owner = await assertDriveAccount(drive, account.actorEmail);
     const described = await describeAccess(drive, presented.rootFolderId, presented.templateId);
-    return { ...presented, ...described, ...driveIdentity(account) };
+    return { ...presented, ...described, ...driveIdentity({ ...account, actorEmail: owner }) };
   } catch (error) {
-    const problem = error instanceof Error ? error.message : MISSING_ACTOR;
+    const problem = error instanceof Error ? error.message : account.error;
     return { ...presented, ...driveIdentity(account, problem) };
   }
 }
@@ -460,17 +459,16 @@ export async function saveCohortDriveSettings(app: App, cohortId: unknown, setti
   const options = normalizeOptions(settings);
   if (!options.rootFolderId) throw new HubError('Paste a Google Drive folder link.');
   const account = await presentDriveAccount(app);
-  if (account.keyError) throw new HubError(account.keyError);
-  if (account.keyConfigured && !account.actorEmail) throw new HubError(MISSING_ACTOR);
   return audited(app, user, 'SAVE_COHORT_DRIVE_SETTINGS', { cohort: text(cohortId) }, async () => {
     const cohort = await requireCohort(app, text(cohortId), true);
     const record = await app.store.get(COLLECTIONS.cohorts, cohort.id);
     if (!record) throw new HubError('Save this cohort in the Cohorts section before creating Drive folders.');
     let rootName = '';
     let templateName = '';
-    if (account.ready) {
-      const drive = await driveClientForActor(account.actorEmail);
-      await assertDriveAccount(drive, account.actorEmail);
+    let actorEmail = account.actorEmail;
+    if (account.configured) {
+      const drive = await driveClient();
+      actorEmail = await assertDriveAccount(drive, account.actorEmail);
       rootName = (await requireFolder(drive, options.rootFolderId, 'The cohort root folder could not be opened. Choose a folder that is not in the trash.')).name;
       if (options.templateId) templateName = (await requireTemplate(drive, options.templateId)).name;
     }
@@ -479,7 +477,7 @@ export async function saveCohortDriveSettings(app: App, cohortId: unknown, setti
     record.FolderSuffix = options.suffix;
     record.EEDocTemplateId = options.templateId;
     await app.store.set(COLLECTIONS.cohorts, cohort.id, record);
-    return { ...presentRecord(cohort.id, record), rootName, templateName, ...driveIdentity(account) };
+    return { ...presentRecord(cohort.id, record), rootName, templateName, ...driveIdentity({ ...account, actorEmail }) };
   });
 }
 
@@ -529,7 +527,7 @@ async function runDrive(app: App, cohortId: unknown, selectedStudentIds: unknown
       await app.store.set(COLLECTIONS.cohorts, cohort.id, record);
     }
     const roster = await app.store.listMembers(cohort.id);
-    const drive = await driveClientForActor(account.actorEmail);
+    const drive = await driveClient();
     const result = await provisionStudents({
       actorEmail: account.actorEmail,
       dryRun,

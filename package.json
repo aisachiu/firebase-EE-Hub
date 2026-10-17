@@ -9,6 +9,7 @@
     "schema": "npm --prefix functions run schema",
     "seed": "npm --prefix functions run seed",
     "import-sheet": "npm --prefix functions run import-sheet --",
+    "mint-google-oauth": "npm --prefix functions run mint-google-oauth --",
     "emulators": "firebase emulators:start --only auth,functions,firestore"
   },
   "dependencies": {

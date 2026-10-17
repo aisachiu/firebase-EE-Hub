@@ -1,4 +1,5 @@
-import { createGmailMailer, gmailConfigured, gmailSender, Mailer } from './gmail';
+import { presentDriveAccount } from './driveAccount';
+import { createGmailMailer, gmailConfigured, gmailNotConfiguredMessage, Mailer } from './gmail';
 import { HubUser } from './permissions';
 import {
   audienceHint,
@@ -239,7 +240,7 @@ export async function listNotificationDesk(app: App, cohortId: unknown, mileston
     sends: await loadSendLog(app, user.email, powers, selectedCohort, milestoneFilter, templateMap),
     gmail: {
       configured: gmailConfigured(),
-      sender: gmailSender(),
+      sender: (await presentDriveAccount(app)).actorEmail,
       dryRun: toBoolean(process.env.EE_NOTIFICATIONS_DRY_RUN),
     },
   };
@@ -649,7 +650,7 @@ export async function executeSweep(app: App, options: { now?: Date; dryRun?: boo
     return summaryFrom(plan, true, statuses);
   }
   const mailer = options.mailer === undefined ? await createGmailMailer() : options.mailer;
-  if (!mailer) throw new HubError('Gmail is not configured. Set EE_GMAIL_SENDER and EE_GMAIL_SERVICE_ACCOUNT_JSON.');
+  if (!mailer) throw new HubError(gmailNotConfiguredMessage());
   for (const send of plan.sends) {
     const claim = await claimSend(app, send, now);
     if (claim === 'skip') {
@@ -744,7 +745,7 @@ export async function sendNotificationRule(app: App, raw: unknown, options: { no
     const wanted = new Set(requested);
     const chosen = plan.sends.filter((send) => wanted.has(send.sendId));
     const mailer = options.mailer === undefined ? await createGmailMailer() : options.mailer;
-    if (!mailer) throw new HubError('Gmail is not configured. Set EE_GMAIL_SENDER and EE_GMAIL_SERVICE_ACCOUNT_JSON.');
+    if (!mailer) throw new HubError(gmailNotConfiguredMessage());
     const items: Array<{ sendId: string; studentName: string; subject: string; status: string; error: string }> = [];
     for (const send of chosen) {
       const claim = await claimSend(app, send, now);
@@ -798,7 +799,7 @@ export async function runNotificationSweep(app: App, raw: unknown) {
 export async function runScheduledNotifications(app: App, now = new Date()): Promise<SweepSummary> {
   const dryRun = toBoolean(process.env.EE_NOTIFICATIONS_DRY_RUN);
   if (!dryRun && !gmailConfigured()) {
-    console.warn('Notification sweep skipped: set EE_GMAIL_SENDER and EE_GMAIL_SERVICE_ACCOUNT_JSON, or EE_NOTIFICATIONS_DRY_RUN=true.');
+    console.warn(`Notification sweep skipped: ${gmailNotConfiguredMessage()} Or set EE_NOTIFICATIONS_DRY_RUN=true.`);
     return {
       dryRun: true,
       today: localToday(now, app.timeZone),

@@ -1,8 +1,9 @@
 // Export hub collections to a Google Sheet, and replace those collections from
-// a sheet the admin has edited. The assigned Drive account creates and reads
+// a sheet the admin has edited. The connected Google account creates and reads
 // the spreadsheet. Tabs use the same names as the workbook import.
 
-import { impersonatedAuth, requireDriveActor } from './driveAccount';
+import { presentDriveAccount, requireDriveActor } from './driveAccount';
+import { getGoogleAuth } from './googleAuth';
 import { assertSafeResourceHtml } from './formsPure';
 import { validatePhasePrerequisites } from './phaseRules';
 import { COLLECTIONS, staffHasAdminAccess, tableFields, validateRecordFields } from './schema';
@@ -90,7 +91,6 @@ export function sheetTabTitle(title: string): string {
 
 export async function listSheetCollections(app: App): Promise<{ collections: SheetCollectionChoice[]; driveActor: string; driveReady: boolean }> {
   await requireAdmin(app, 'LIST_SHEET_COLLECTIONS');
-  const { presentDriveAccount } = await import('./driveAccount');
   const account = await presentDriveAccount(app);
   const collections = await Promise.all(CATALOG.map(async (item) => ({
     id: item.id,
@@ -114,7 +114,7 @@ export async function exportSheetCollections(
   const grids = await buildExportGrids(app, selected);
   return audited(app, user, 'EXPORT_SHEET_COLLECTIONS', { entities: selected }, async () => {
     const owner = deps?.workbook ? normalizeEmail(deps.actorEmail) || user.email : (await requireDriveActor(app)).actorEmail;
-    const workbook = deps?.workbook || await googleWorkbook(owner);
+    const workbook = deps?.workbook || await googleWorkbook();
     const title = `EE Hub export ${(deps?.now || new Date()).toISOString().slice(0, 10)}`;
     const created = await workbook.create(title, grids);
     let shared = normalizeEmail(owner) === user.email;
@@ -245,7 +245,8 @@ async function loadIngest(app: App, source: unknown, entities: string[], deps?: 
   formIds: string[];
 }> {
   const spreadsheetId = readSpreadsheetId(source);
-  const workbook = deps?.workbook || await googleWorkbook((await requireDriveActor(app)).actorEmail);
+  if (!deps?.workbook) await requireDriveActor(app);
+  const workbook = deps?.workbook || await googleWorkbook();
   const grids = await workbook.read(spreadsheetId);
   const plan = planSheetImport(grids);
   const cohortIds = cohortTabs(grids);
@@ -572,8 +573,8 @@ function sortBy(records: Doc[], ...fields: string[]): Doc[] {
   });
 }
 
-async function googleWorkbook(actorEmail: string): Promise<SheetWorkbook> {
-  const auth = await impersonatedAuth(actorEmail);
+async function googleWorkbook(): Promise<SheetWorkbook> {
+  const auth = await getGoogleAuth();
   const { google } = await import('googleapis');
   const sheets = google.sheets({ version: 'v4', auth });
   const drive = google.drive({ version: 'v3', auth });
