@@ -84,6 +84,7 @@ function member(): Doc {
     StudentId: STUDENT,
     'Display Name': 'Jamie Wong',
     'Student ID': '20260001',
+    'Student Email': STUDENT,
     'Family Email': 'family.wong@vsa.example.edu',
     EEFolder: '',
     EEDoc: '',
@@ -181,4 +182,49 @@ test('a missing saved document is copied, and a silent share that Google refuses
   assert.notEqual(record.EEDoc, 'https://docs.google.com/document/d/missingDocId123/edit');
   assert.ok(result.students[0].shares.some((share) => share.status === 'failed' && /without sending an email/.test(share.reason)));
   assert.equal((drive.calls.find((call) => call.op === 'share')?.args as { sendNotificationEmail: boolean }).sendNotificationEmail, false);
+});
+
+test('provisioning shares the cohort Student Email, not the StudentId', async () => {
+  const record = member();
+  record.StudentId = 'hub.login@vsa.example.edu';
+  record['Student Email'] = 'jamie.drive@vsa.example.edu';
+  const drive = harness();
+  const result = await provisionStudents({
+    ...input(drive.api, [record]),
+    studentIds: ['hub.login@vsa.example.edu'],
+  });
+  const shares = drive.calls.filter((call) => call.op === 'share');
+  const writers = shares.filter((call) => (call.args as { requestBody: { role: string } }).requestBody.role === 'writer');
+  assert.equal(writers.length, 2);
+  writers.forEach((call) => {
+    assert.equal((call.args as { requestBody: { emailAddress: string } }).requestBody.emailAddress, 'jamie.drive@vsa.example.edu');
+  });
+  assert.equal(shares.some((call) => (call.args as { requestBody: { emailAddress: string } }).requestBody.emailAddress === 'hub.login@vsa.example.edu'), false);
+  assert.equal(result.students[0].shares.find((share) => share.who === 'student')?.email, 'jamie.drive@vsa.example.edu');
+
+  const previewDrive = harness();
+  const previewRecord = member();
+  previewRecord.StudentId = 'hub.login@vsa.example.edu';
+  previewRecord['Student Email'] = 'jamie.drive@vsa.example.edu';
+  const preview = await provisionStudents({
+    ...input(previewDrive.api, [previewRecord], true),
+    studentIds: ['hub.login@vsa.example.edu'],
+  });
+  const studentShare = preview.students[0].shares.find((share) => share.who === 'student');
+  assert.equal(studentShare?.email, 'jamie.drive@vsa.example.edu');
+  assert.equal(studentShare?.status, 'would_share');
+  assert.equal(previewDrive.calls.some((call) => call.op === 'share'), false);
+
+  const missingDrive = harness();
+  const missingRecord = member();
+  missingRecord.StudentId = 'hub.login@vsa.example.edu';
+  missingRecord['Student Email'] = '';
+  const missing = await provisionStudents({
+    ...input(missingDrive.api, [missingRecord]),
+    studentIds: ['hub.login@vsa.example.edu'],
+  });
+  const missingShares = missingDrive.calls.filter((call) => call.op === 'share');
+  assert.equal(missingShares.length, 2);
+  assert.equal(missingShares.some((call) => (call.args as { requestBody: { emailAddress: string } }).requestBody.emailAddress === 'hub.login@vsa.example.edu'), false);
+  assert.equal(missing.students[0].shares.find((share) => share.who === 'student')?.status, 'skipped');
 });
