@@ -86,9 +86,16 @@ if (!tokens.refresh_token) {
 }
 
 console.log('');
-console.log('Add these to functions/.env and redeploy. Do not commit them.');
+console.log('This mint stays on this machine. Store the values in Secret Manager, then redeploy.');
+console.log('Do not write them to functions/.env. A later deploy would overwrite the live refresh token.');
+console.log('');
+console.log('firebase functions:secrets:set EE_GOOGLE_OAUTH_CLIENT_ID');
+console.log('firebase functions:secrets:set EE_GOOGLE_OAUTH_CLIENT_SECRET');
+console.log('firebase functions:secrets:set EE_GOOGLE_OAUTH_REFRESH_TOKEN');
+console.log('');
 console.log(`EE_GOOGLE_OAUTH_CLIENT_ID=${CLIENT_ID}`);
 console.log(`EE_GOOGLE_OAUTH_CLIENT_SECRET=${CLIENT_SECRET}`);
 console.log(`EE_GOOGLE_OAUTH_REFRESH_TOKEN=${tokens.refresh_token}`);
 console.log('');
+console.log('Paste each value when prompted. After a remint, secrets:set the new refresh token and redeploy eeHub and notificationSweep.');
 console.log('Then open Admin → Google account and check the connection.');

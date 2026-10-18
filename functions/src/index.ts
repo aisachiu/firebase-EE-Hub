@@ -3,6 +3,7 @@ import { getFirestore } from 'firebase-admin/firestore';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { dispatch } from './dispatch';
+import { googleOAuthSecrets } from './googleAuth';
 import { verifiedGoogleEmail } from './identity';
 import { runScheduledNotifications } from './notifications';
 import { App } from './session';
@@ -12,7 +13,14 @@ import { HubError, text } from './util';
 initializeApp();
 const store = new Store(getFirestore());
 
-export const eeHub = onCall({ region: 'asia-east2', cors: true, invoker: 'public', timeoutSeconds: 120, memory: '512MiB' }, async (request) => {
+export const eeHub = onCall({
+  region: 'asia-east2',
+  cors: true,
+  invoker: 'public',
+  timeoutSeconds: 120,
+  memory: '512MiB',
+  secrets: googleOAuthSecrets,
+}, async (request) => {
   let email: string;
   try {
     email = verifiedGoogleEmail(request.auth);
@@ -48,6 +56,7 @@ export const notificationSweep = onSchedule({
   region: 'asia-east2',
   timeoutSeconds: 300,
   memory: '512MiB',
+  secrets: googleOAuthSecrets,
 }, async () => {
   const app: App = {
     store,

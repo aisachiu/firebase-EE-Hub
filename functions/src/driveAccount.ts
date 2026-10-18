@@ -1,6 +1,6 @@
 // The Google account that creates Drive folders, reads essay history,
-// exports Sheets, and sends reminder mail. The refresh token stays in the
-// function environment. Firestore stores only the mailbox confirmed from that token.
+// exports Sheets, and sends reminder mail. The refresh token stays in
+// Secret Manager. Firestore stores only the mailbox confirmed from that token.
 
 import type { App } from './session';
 import {
