@@ -206,7 +206,8 @@ export async function saveCohortMember(app: App, cohortId: unknown, record: Doc,
     const existing = await app.store.getMember(cohort, currentId);
     if (original && !existing) throw new HubError('Cohort student not found. Refresh and try again.');
     if (!original && existing) throw new HubError('This student is already in the cohort.');
-    const stored = { ...(existing || {}), ...values, StudentId: values.StudentId };
+    const stored: Doc = { ...(existing || {}), ...values, StudentId: values.StudentId };
+    if (stored.eeActive === undefined || stored.eeActive === '') stored.eeActive = true;
     if (original && original !== values.StudentId) await app.store.removeMember(cohort, original);
     await app.store.setMember(cohort, values.StudentId, stored);
     return { studentId: values.StudentId };
@@ -244,6 +245,7 @@ export async function importCohortMembers(app: App, cohortId: unknown, records: 
       values.StudentId = studentId;
       values['Student Email'] = normalizeEmail(values['Student Email']);
       values['Year Group'] = Number(values['Year Group']);
+      if (values.eeActive === undefined || values.eeActive === '') values.eeActive = true;
       if (seen[studentId]) throw new HubError(`StudentId appears more than once in the import: ${studentId}`);
       if (existing[studentId]) throw new HubError(`StudentId is already in this cohort: ${studentId}`);
       seen[studentId] = true;

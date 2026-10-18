@@ -72,6 +72,34 @@ async function seed() {
     EEDoc: '',
     RPPFDoc: '',
     EEPoster: '',
+    eeActive: true,
+  });
+  await store.setWorkspace('2026', STUDENT, {
+    studentId: STUDENT,
+    subjectChoices: { choice1: 'English', choice2: 'History', interdisciplinary: false },
+    dynamicData: { 'Y10 GPA': 'Strong', HL: 'English, History', 'Academic Flag': '' },
+    pendingClear: false,
+    updatedAt: new Date().toISOString(),
+  });
+  await store.setToken('2026', 'tok-demo-1', {
+    id: 'tok-demo-1', cohortId: '2026', staffId: SUPERVISOR, eligibleSubjects: ['English', 'History'],
+    allocatedTo: STUDENT, assignedSubject: 'English', status: 'draft', createdAt: new Date().toISOString(),
+  });
+  await store.setToken('2026', 'tok-demo-2', {
+    id: 'tok-demo-2', cohortId: '2026', staffId: SUPERVISOR, eligibleSubjects: ['English', 'History'],
+    allocatedTo: '', assignedSubject: '', status: 'available', createdAt: new Date().toISOString(),
+  });
+  await store.setAllocationConfig('2026', {
+    primaryChoiceKey: 'choice1', secondaryChoiceKey: 'choice2', interdisciplinaryKey: 'interdisciplinary',
+    hlColumn: 'HL', supportColumn: 'Academic Flag',
+    columns: [
+      { key: 'Y10 GPA', showOnCard: true, filterable: false, sortable: true },
+      { key: 'HL', showOnCard: true, filterable: false, sortable: false },
+      { key: 'Academic Flag', showOnCard: true, filterable: true, sortable: false },
+    ],
+    detectedChoiceKeys: ['choice1', 'choice2', 'interdisciplinary'],
+    detectedDynamicKeys: ['Academic Flag', 'HL', 'Y10 GPA'],
+    lastWorkspaceSync: '', lastTokenSync: '', lastExport: '',
   });
 
   const phases = [
