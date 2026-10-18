@@ -716,9 +716,13 @@ async function placeDoc(drive: DriveClient, member: Doc, folderId: string, docNa
   }
 }
 
+function cohortStudentEmail(member: Doc): unknown {
+  return member['Student Email'];
+}
+
 function previewShares(member: Doc, options: { shareStudent: boolean; shareParent: boolean }): ShareResult[] {
   const shares: ShareResult[] = [];
-  if (options.shareStudent) shares.push(previewShare(member.StudentId, 'writer', 'student'));
+  if (options.shareStudent) shares.push(previewShare(cohortStudentEmail(member), 'writer', 'student'));
   if (options.shareParent) shares.push(previewShare(member['Family Email'], 'reader', 'parent'));
   return shares;
 }
@@ -731,7 +735,7 @@ function previewShare(email: unknown, role: string, who: string): ShareResult {
 
 async function applyShares(drive: DriveClient, fileId: string, member: Doc, options: { shareStudent: boolean; shareParent: boolean }): Promise<ShareResult[]> {
   const shares: ShareResult[] = [];
-  if (options.shareStudent) shares.push(await share(drive, fileId, member.StudentId, 'writer', 'student'));
+  if (options.shareStudent) shares.push(await share(drive, fileId, cohortStudentEmail(member), 'writer', 'student'));
   if (options.shareParent) shares.push(await share(drive, fileId, member['Family Email'], 'reader', 'parent'));
   return shares;
 }
