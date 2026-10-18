@@ -5809,7 +5809,7 @@
           <ol class="muted">
             <li>In Google Cloud Console, create an OAuth client (Desktop, or Web with redirect <code>http://127.0.0.1:8765/oauth/callback</code>). Set the consent screen to Internal and add the scopes below.</li>
             <li>On a computer that can sign in as the school account, run <code>npm run mint-google-oauth</code>.</li>
-            <li>Put the printed values in <code>functions/.env</code> and redeploy: <code>EE_GOOGLE_OAUTH_CLIENT_ID</code>, <code>EE_GOOGLE_OAUTH_CLIENT_SECRET</code>, <code>EE_GOOGLE_OAUTH_REFRESH_TOKEN</code>.</li>
+            <li>Store the printed values with <code>firebase functions:secrets:set</code> for <code>EE_GOOGLE_OAUTH_CLIENT_ID</code>, <code>EE_GOOGLE_OAUTH_CLIENT_SECRET</code>, and <code>EE_GOOGLE_OAUTH_REFRESH_TOKEN</code>, then redeploy. Do not put the refresh token in <code>functions/.env</code>.</li>
             <li>Check the connection. The mailbox shown here is the account that owns the refresh token.</li>
           </ol>
           ${scopes ? `<ul>${scopes}</ul>` : ''}

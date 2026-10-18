@@ -5,6 +5,9 @@ web/dist/
 .env
 web/.env.production
 functions/.env
+functions/.env.local
+functions/.env.*.local
+functions/.secret.local
 *.log
 .firebase/
 firestore-debug.log

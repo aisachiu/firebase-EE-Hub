@@ -10,6 +10,11 @@ import {
   googleConsentUrl,
   googleOAuthConfigured,
   googleOAuthParts,
+  googleOAuthSecrets,
+  OAUTH_CLIENT_ID,
+  OAUTH_CLIENT_SECRET,
+  OAUTH_REDIRECT_URI,
+  OAUTH_REFRESH_TOKEN,
   SHEETS_SCOPE,
 } from './googleAuth';
 import { HubError } from './util';
@@ -63,6 +68,54 @@ test('OAuth is not configured until the client id, secret, and refresh token are
   GOOGLE_SCOPES.forEach((scope) => assert.ok(decoded.includes(scope)));
   assert.equal(url.includes(CLIENT_SECRET), false);
   assert.equal(url.includes(REFRESH_TOKEN), false);
+});
+
+test('omitted source reads Secret Manager, then process.env for the emulator', async () => {
+  const names = [OAUTH_CLIENT_ID, OAUTH_CLIENT_SECRET, OAUTH_REFRESH_TOKEN, OAUTH_REDIRECT_URI];
+  const previous = Object.fromEntries(names.map((name) => [name, process.env[name]]));
+  const originals = googleOAuthSecrets.map((secret) => secret.value);
+  const secretValues = ['secret-client-id', 'secret-client-secret', 'secret-refresh-token'];
+  try {
+    googleOAuthSecrets.forEach((secret, index) => {
+      secret.value = () => secretValues[index];
+    });
+    process.env[OAUTH_CLIENT_ID] = 'stale-client-id';
+    process.env[OAUTH_CLIENT_SECRET] = 'stale-client-secret';
+    process.env[OAUTH_REFRESH_TOKEN] = 'stale-refresh-token';
+    process.env[OAUTH_REDIRECT_URI] = 'http://127.0.0.1:9999/oauth/callback';
+
+    const fromSecrets = googleOAuthParts();
+    assert.equal(fromSecrets.clientId, 'secret-client-id');
+    assert.equal(fromSecrets.clientSecret, 'secret-client-secret');
+    assert.equal(fromSecrets.refreshToken, 'secret-refresh-token');
+    assert.equal(fromSecrets.redirectUri, 'http://127.0.0.1:9999/oauth/callback');
+    assert.deepEqual(fromSecrets.missing, []);
+    const auth = await getGoogleAuth();
+    assert.equal(auth.credentials.refresh_token, 'secret-refresh-token');
+
+    const explicit = googleOAuthParts({});
+    assert.deepEqual(explicit.missing, [OAUTH_CLIENT_ID, OAUTH_CLIENT_SECRET, OAUTH_REFRESH_TOKEN]);
+    assert.equal(explicit.clientId, '');
+
+    googleOAuthSecrets.forEach((secret) => {
+      secret.value = () => {
+        throw new Error('secret is not mounted');
+      };
+    });
+    const fromEnv = googleOAuthParts();
+    assert.equal(fromEnv.clientId, 'stale-client-id');
+    assert.equal(fromEnv.clientSecret, 'stale-client-secret');
+    assert.equal(fromEnv.refreshToken, 'stale-refresh-token');
+    assert.equal(googleOAuthConfigured(), true);
+  } finally {
+    googleOAuthSecrets.forEach((secret, index) => {
+      secret.value = originals[index];
+    });
+    names.forEach((name) => {
+      if (previous[name] === undefined) delete process.env[name];
+      else process.env[name] = previous[name];
+    });
+  }
 });
 
 test('getGoogleAuth builds an OAuth client and refuses a partial configuration', async () => {

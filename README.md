@@ -77,7 +77,7 @@ VITE_FIREBASE_APP_ID=
 
 Do not set `VITE_USE_EMULATORS` for that build.
 
-3. Create `functions/.env` with `EE_TIMEZONE=Asia/Hong_Kong`. Drive folders, copied EE documents, spreadsheet export, and essay edit history all use one Workspace account (for VSA, `sec-ict@vsa.edu.hk`). The function signs in as that account with an OAuth refresh token. The client secret and refresh token stay in this file. Students and staff are never asked to connect Google. Enable the Google Drive API, Google Sheets API, and Gmail API on the Firebase project. The local demo can save a folder or template link; it cannot create or read Drive files until the refresh token is set. Email reminders use the same token; see Email notifications below.
+3. Create `functions/.env` with `EE_TIMEZONE=Asia/Hong_Kong`. Drive folders, copied EE documents, spreadsheet export, and essay edit history all use one Workspace account (for VSA, `sec-ict@vsa.edu.hk`). The function signs in as that account with an OAuth refresh token stored in Secret Manager (see Connect Google). Students and staff are never asked to connect Google. Enable the Google Drive API, Google Sheets API, and Gmail API on the Firebase project. The local demo can save a folder or template link; it cannot create or read Drive files until the refresh token is set. Email reminders use the same token; see Email notifications below.
 
 The student page shows an EE folder card and an EE document card with word-count changes and an edit heatmap. The heatmap uses the connected account (`https://www.googleapis.com/auth/drive`). The signed-in student or supervisor is not asked for a Drive scope. The file id is the EE document already saved on that student. If the connected account cannot open the document, the page says so. No access token is stored. Daily word totals are kept in `docWordLogs` so a later visit can show the change. The local demo cannot read a Google Doc until the OAuth refresh token is configured.
 
@@ -100,17 +100,29 @@ export EE_GOOGLE_OAUTH_CLIENT_SECRET=YOUR_CLIENT_SECRET
 npm run mint-google-oauth
 ```
 
-The script prints a consent URL, listens on `http://127.0.0.1:8765/oauth/callback`, and prints the refresh token. If you already have an authorization code, run `npm run mint-google-oauth -- --code=THE_CODE`. Google returns a refresh token only on the first consent with `prompt=consent`. If it does not, revoke the app at https://myaccount.google.com/permissions and run the script again.
+`npm run mint-google-oauth` stays on your machine. It prints a consent URL, listens on `http://127.0.0.1:8765/oauth/callback`, and prints the refresh token. It does not write `functions/.env`. If you already have an authorization code, run `npm run mint-google-oauth -- --code=THE_CODE`. Google returns a refresh token only on the first consent with `prompt=consent`. If it does not, revoke the app at https://myaccount.google.com/permissions and run the script again.
 
-Add the printed lines to `functions/.env` (do not commit that file):
+Store the client id, client secret, and refresh token in Secret Manager. `eeHub` and `notificationSweep` both bind those three secrets. `EE_TIMEZONE` stays in `functions/.env`.
 
 ```bash
-EE_GOOGLE_OAUTH_CLIENT_ID=
-EE_GOOGLE_OAUTH_CLIENT_SECRET=
-EE_GOOGLE_OAUTH_REFRESH_TOKEN=
+firebase functions:secrets:set EE_GOOGLE_OAUTH_CLIENT_ID
+firebase functions:secrets:set EE_GOOGLE_OAUTH_CLIENT_SECRET
+firebase functions:secrets:set EE_GOOGLE_OAUTH_REFRESH_TOKEN
 ```
 
-Redeploy `eeHub` and `notificationSweep`. Open Admin → Google account and choose **Check connection**. The page shows the mailbox on the refresh token. It does not ask for a different account, and it does not store the token in Firestore. Domain-wide delegation is not used. `EE_DRIVE_SERVICE_ACCOUNT_JSON`, `EE_GMAIL_SERVICE_ACCOUNT_JSON`, and `EE_GMAIL_SENDER` are ignored.
+Each command prompts for the value. Paste only the value after `=` from the mint script, not the `NAME=value` line. Deploy both functions, then remove the OAuth keys from `functions/.env`:
+
+```bash
+firebase deploy --only functions:eeHub,functions:notificationSweep
+```
+
+Delete `EE_GOOGLE_OAUTH_CLIENT_ID`, `EE_GOOGLE_OAUTH_CLIENT_SECRET`, and `EE_GOOGLE_OAUTH_REFRESH_TOKEN` from `functions/.env`. Leave `EE_TIMEZONE`. If those keys are already in the file, delete them before the deploy above. Cloud Run rejects a function that sets the same name as both a plain environment variable and a secret (`Secret environment variable overlaps non secret environment variable`). A deploy that still loads the refresh token from `functions/.env` can replace the live token with a stale copy. After the keys are gone, later deploys cannot do that.
+
+To remint, run `npm run mint-google-oauth` again, then `firebase functions:secrets:set EE_GOOGLE_OAUTH_REFRESH_TOKEN` with the new token, then redeploy `eeHub` and `notificationSweep`. The new version is not live until that deploy. Do not rely on `functions/.env` for the refresh token.
+
+The redirect URI is only for the local mint script. The default is `http://127.0.0.1:8765/oauth/callback`. The emulator does not mount Secret Manager unless you give it the values: export the same three names in the shell that starts the emulator, or put them in gitignored `functions/.secret.local` (or `functions/.env.local`). Do not put them in `functions/.env`.
+
+Open Admin → Google account and choose **Check connection**. The page shows the mailbox on the refresh token. It does not ask for a different account, and it does not store the token in Firestore. Domain-wide delegation is not used. `EE_DRIVE_SERVICE_ACCOUNT_JSON`, `EE_GMAIL_SERVICE_ACCOUNT_JSON`, and `EE_GMAIL_SENDER` are ignored.
 
 The cohort folder must be somewhere that connected account can edit. Existing folders owned by a personal My Drive are left where they are.
 
@@ -137,7 +149,7 @@ Coordinators own the cohort rules. Open Admin → Email notifications, or use Em
 
 Rules live in `notificationRules`. Supervisor overlays live in `notificationOverlays`. `notificationSends` records each send, keyed by rule, task, and trigger day, so the morning job does not repeat a reminder. Admin → Email notifications shows that log. A supervisor sees mail from their own reminders. When the student is one of the recipients, the same send is written to the audit log and appears in that student’s activity. Callable methods on `eeHub`: `listNotificationDesk`, `saveNotificationRule`, `deleteNotificationRule`, `setNotificationRuleEnabled`, `saveNotificationOverlay`, `deleteNotificationOverlay`, `setNotificationOverlayEnabled`, `previewNotificationSweep`, `previewNotificationRule`, `runNotificationSweep`, `sendNotificationRule`, and `sendNotificationTest`.
 
-Sending uses the Gmail API as the connected Google account. It does not use SMTP, and it does not use a service account. The same refresh token from Connect Google above is enough. Add this to `functions/.env` (do not commit that file):
+Sending uses the Gmail API as the connected Google account. It does not use SMTP, and it does not use a service account. The same Secret Manager refresh token from Connect Google above is enough. Add this to `functions/.env` (do not commit that file):
 
 ```bash
 EE_TIMEZONE=Asia/Hong_Kong
