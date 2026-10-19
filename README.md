@@ -4,6 +4,56 @@ Firebase version of the [VSA Extended Essay hub](https://github.com/aisachiu/GAS
 
 Students see My EE, resources, and help. Staff see My Students, messages, and notes. Coordinators and admins also see Admin. Milestone ownership, phase prerequisites, tickets, and milestone forms are enforced in the function. The browser cannot write Firestore directly.
 
+## Web app
+
+The browser UI is a Vite app in `web/`. `web/index.html` is the shell. Screens live in ES modules under `web/src/`. `web/src/main.js` owns Firebase Auth and `window.eeCall`. View modules call that. They do not talk to Cloud Functions on their own.
+
+| Folder | Owns |
+| --- | --- |
+| `web/src/shell.js` | Top bar, role tabs, sign-in |
+| `web/src/router.js` | Path matching, history, role guards |
+| `web/src/styles/` | CSS |
+| `web/src/shared/` | API helper, HTML escaping, tables, checks, forms, resources, messages |
+| `web/src/student/` | My EE, journey, activity, milestone editing, help |
+| `web/src/staff/` | My Students, messages, notes |
+| `web/src/admin/` | Cohorts, sheets, students, pathway, email, assignments, users, subjects, forms, resources, FAQs |
+| `web/src/allocation/` | Allocation desk, cohort tokens, settings |
+
+One change should stay inside the `web/src/<area>/` folder that owns the screen. Shared widgets (sortable tables, name filters, multi-select, checks) belong in `web/src/shared/`.
+
+Navigation uses the History API. Refresh, share, and back/forward reopen the same screen. A role that cannot open a path is sent to that role’s home. No error is shown. `/` does the same. Unknown paths do too.
+
+| Path | Who | Screen |
+| --- | --- | --- |
+| `/` | any signed-in role | That role’s home |
+| `/my-ee` | student | My EE |
+| `/resources` | student or staff | Resources |
+| `/help` | student | Help |
+| `/my-students` | staff | My Students |
+| `/messages` | supervisor or coordinator | Messages |
+| `/notes` | supervisor or coordinator | Notes |
+| `/allocation` | coordinator | Allocation dashboard |
+| `/allocation/tokens` | coordinator | Cohort tokens |
+| `/allocation/settings` | coordinator | Allocation settings |
+| `/admin` | coordinator | Cohorts (canonical `/admin/cohorts`) |
+| `/admin/cohorts` | coordinator | Cohorts |
+| `/admin/google` | coordinator | Google account |
+| `/admin/sheets` | coordinator | Sheets |
+| `/admin/students` | coordinator | Students in cohorts |
+| `/admin/pathway` | coordinator | Phases & milestones |
+| `/admin/email` | coordinator | Email notifications |
+| `/admin/assignments` | coordinator | Assignments |
+| `/admin/student-users` | coordinator | Student users |
+| `/admin/staff-users` | coordinator | Staff users |
+| `/admin/quotas` | coordinator | EE quotas |
+| `/admin/subjects` | coordinator | Subjects |
+| `/admin/forms` | coordinator | Milestone forms |
+| `/admin/resources` | coordinator | Resource records |
+| `/admin/faqs` | coordinator | FAQs |
+| `/admin/categories` | coordinator | Message categories |
+
+`/admin/allocation-settings` opens Allocation settings. The address bar becomes `/allocation/settings`. Messages are hidden while Acting as is Staff browse. Allocation and Admin require a coordinator or admin.
+
 ## Local app
 
 Java is required for the Firestore emulator.
