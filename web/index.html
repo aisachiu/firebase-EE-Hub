@@ -709,8 +709,13 @@
       .alloc-map { display: grid; grid-template-columns: minmax(140px, 180px) minmax(0, 1fr); gap: 8px; align-items: center; margin-bottom: 10px; }
       .support-badge { padding: 1px 6px; border-radius: 3px; background: var(--coral); color: white; font-size: 10px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; }
       .info-badge { padding: 1px 6px; border-radius: 3px; background: var(--green-soft); color: #0d7a5f; font-size: 10px; font-weight: 700; }
+      .quota-layout { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 16px; align-items: start; }
+      .quota-table input[data-quota] { width: 72px; padding: 6px 8px; }
+      .quota-subjects, .quota-pick { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
+      .quota-subjects { gap: 4px; }
+      .sort-button { border: 0; padding: 0; background: transparent; color: inherit; font: inherit; font-weight: 700; cursor: pointer; }
       @container (max-width: 860px) {
-        .alloc-layout, .alloc-config, .alloc-filters { grid-template-columns: 1fr; }
+        .alloc-layout, .alloc-config, .alloc-filters, .quota-layout { grid-template-columns: 1fr; }
         .alloc-side { position: static; }
         .alloc-head { display: none; }
         .alloc-row { grid-template-columns: 1fr; }
@@ -745,6 +750,14 @@
         allocationSelected: [],
         allocationSubjects: {},
         allocationSheetUrl: '',
+        staffPane: 'records',
+        quotaRows: [],
+        quotaSubjects: [],
+        quotaCohorts: [],
+        quotaSelected: [],
+        quotaSort: 'name',
+        quotaDir: 1,
+        tokenEditId: '',
         adminData: null,
         editingRecord: null,
         originalKey: '',
@@ -4307,7 +4320,7 @@
         advanceScene();
         const main = document.getElementById('main');
         const planner = state.adminEntity === 'pathway' || state.adminEntity === 'phases' || state.adminEntity === 'milestoneTemplates' || state.adminEntity === 'templateDesigner';
-        main.classList.toggle('plan-wide', planner);
+        main.classList.toggle('plan-wide', planner || (state.adminEntity === 'staffUsers' && state.staffPane === 'quotas'));
         main.innerHTML = `<div class="page-head"><div><p class="eyebrow">Administration</p><h1>Admin</h1><p class="lede">Manage the records that power the EE Hub.</p></div></div>
           <nav class="subnav" aria-label="Admin sections">${adminSections.map(function(section) {
             return `<button type="button" data-admin-entity="${section[0]}" aria-current="${state.adminEntity === section[0] ? 'page' : 'false'}">${section[1]}</button>`;
@@ -4369,6 +4382,10 @@
           renderAssignmentManager(target);
           return;
         }
+        if (state.adminEntity === 'staffUsers' && state.staffPane === 'quotas') {
+          renderStaffQuotas(target);
+          return;
+        }
         if (state.adminEntity === 'cohortMembers') {
           callServer('getCohorts').then(function(cohorts) {
             const current = cohorts.some(function(cohort) { return cohort.id === state.cohortId; }) ? state.cohortId : (cohorts[0] ? cohorts[0].id : '');
@@ -4398,6 +4415,10 @@
 
       function refreshAdminSectionSilently() {
         if (state.adminEntity === 'pathway' || state.adminEntity === 'emailNotifications' || state.adminEntity === 'driveAccount' || state.adminEntity === 'sheetSync') return;
+        if (state.adminEntity === 'staffUsers' && state.staffPane === 'quotas') {
+          renderStaffQuotas(document.getElementById('admin-content'));
+          return;
+        }
         if (state.adminEntity === 'cohortMembers') {
           callServer('getCohortMembersForAdmin', state.cohortId).then(renderAdminData).catch(showError);
           return;
@@ -5709,13 +5730,15 @@
         if (entity === 'cohortMembers') state.selectedMemberIds = [];
         const isCohortMembers = entity === 'cohortMembers';
         const addLabel = singularSection(sectionLabel(entity));
-        target.innerHTML = `${entity === 'ticketCategories' ? '<p class="lede">These names are the choices a student sees when they send a message. Who they message sends it to that student\'s supervisor or to the EE Coordinator.</p>' : ''}<div class="toolbar"><button type="button" class="button" id="new-record">Add ${escapeHtml(addLabel)}</button>${isCohortMembers ? '<button type="button" class="button secondary" id="open-roster-import">Import CSV / paste</button><button type="button" class="button secondary" id="create-selected-users" disabled>Add selected as users</button><label><input type="checkbox" id="select-all-members"> Select all</label><span id="selected-count" class="muted">0 selected</span>' : ''}<span class="muted">${records.length} record${records.length === 1 ? '' : 's'}</span></div>
+        const staffNav = entity === 'staffUsers' ? staffSectionNav() : '';
+        target.innerHTML = `${staffNav}${entity === 'ticketCategories' ? '<p class="lede">These names are the choices a student sees when they send a message. Who they message sends it to that student\'s supervisor or to the EE Coordinator.</p>' : ''}<div class="toolbar"><button type="button" class="button" id="new-record">Add ${escapeHtml(addLabel)}</button>${isCohortMembers ? '<button type="button" class="button secondary" id="open-roster-import">Import CSV / paste</button><button type="button" class="button secondary" id="create-selected-users" disabled>Add selected as users</button><label><input type="checkbox" id="select-all-members"> Select all</label><span id="selected-count" class="muted">0 selected</span>' : ''}<span class="muted">${records.length} record${records.length === 1 ? '' : 's'}</span></div>
           ${state.status ? `<p class="status">${escapeHtml(state.status)}</p>` : ''}
           ${records.length ? `<div class="table-wrap"><table><thead><tr>${isCohortMembers ? '<th><span class="sr-only">Select</span></th>' : ''}${columns.map(function(field) { return `<th>${escapeHtml(field.label || field.name)}</th>`; }).join('')}<th>Actions</th></tr></thead><tbody>${records.map(function(record, index) {
             return `<tr>${isCohortMembers ? `<td><input type="checkbox" data-select-member value="${escapeHtml(record.StudentId)}" ${record.hasStudentIdConflict ? 'disabled title="Resolve Student ID conflicts first"' : ''}></td>` : ''}${columns.map(function(field) { return `<td>${escapeHtml(displayField(field, record))}</td>`; }).join('')}<td><div class="actions"><button type="button" class="link-button" data-edit="${index}" ${record.hasStudentIdConflict ? 'disabled title="Reconcile duplicate Student ID values first"' : ''}>Edit</button><button type="button" class="link-button" data-delete="${index}">Delete</button></div>${record.hasStudentIdConflict ? '<div class="notice">Duplicate Student ID values disagree.</div>' : ''}</td></tr>`;
           }).join('')}</tbody></table></div>` : '<div class="empty">No records yet.</div>'}
           <div id="roster-import-panel"></div><div id="record-editor"></div>`;
         document.getElementById('new-record').addEventListener('click', function() { openEditor(null); });
+        if (entity === 'staffUsers') bindStaffPane(target);
         if (isCohortMembers) {
           document.getElementById('open-roster-import').addEventListener('click', openRosterImport);
           document.getElementById('create-selected-users').addEventListener('click', createSelectedUsers);
@@ -7038,14 +7061,367 @@
         host.innerHTML = `<section class="notify-card"><h2>Today, ${escapeHtml(result.today || '')}</h2><p class="muted">${result.considered || 0} ready, ${result.skipped || 0} skipped.${result.dryRun ? ' Nothing was sent.' : ''}</p>${rows}</section>`;
       }
 
+      function staffSectionNav() {
+        const pane = state.staffPane === 'quotas' ? 'quotas' : 'records';
+        return `<nav class="subnav" aria-label="Staff users"><button type="button" data-staff-pane="records" aria-current="${pane === 'records' ? 'page' : 'false'}">Staff records</button><button type="button" data-staff-pane="quotas" aria-current="${pane === 'quotas' ? 'page' : 'false'}">EE quotas</button></nav>`;
+      }
+
+      function bindStaffPane(root) {
+        root.querySelectorAll('[data-staff-pane]').forEach(function(button) {
+          button.addEventListener('click', function() {
+            state.staffPane = button.dataset.staffPane === 'quotas' ? 'quotas' : 'records';
+            const main = document.getElementById('main');
+            if (main) main.classList.toggle('plan-wide', state.staffPane === 'quotas');
+            loadAdminSection();
+          });
+        });
+      }
+
+      function renderStaffQuotas(target) {
+        if (!target) return;
+        const main = document.getElementById('main');
+        if (main) main.classList.add('plan-wide');
+        target.innerHTML = staffSectionNav() + loadingLine('Loading staff quotas...');
+        bindStaffPane(target);
+        Promise.all([callServer('getStaffQuotaSheet'), callServer('getCohorts')]).then(function(results) {
+          if (state.adminEntity !== 'staffUsers' || state.staffPane !== 'quotas') return;
+          const sheet = results[0] || {};
+          state.quotaSubjects = sheet.subjects || [];
+          state.quotaRows = (sheet.staff || []).map(function(person) {
+            return {
+              email: person.email,
+              displayName: person.displayName || person.email,
+              department: person.department || '',
+              quota: person.quota === '' || person.quota === undefined || person.quota === null ? '' : String(person.quota),
+              subjects: (person.subjects || []).slice(),
+            };
+          });
+          state.quotaCohorts = results[1] || [];
+          state.quotaSelected = state.quotaSelected.filter(function(email) {
+            return state.quotaRows.some(function(row) { return row.email === email; });
+          });
+          if (state.quotaCohorts.length && !state.quotaCohorts.some(function(cohort) { return cohort.id === state.cohortId; })) {
+            state.cohortId = state.quotaCohorts[0].id;
+          }
+          paintStaffQuotas();
+        }).catch(showError);
+      }
+
+      function sortedQuotaRows() {
+        const rows = state.quotaRows.slice();
+        const dir = state.quotaDir === -1 ? -1 : 1;
+        rows.sort(function(left, right) {
+          const primary = state.quotaSort === 'department'
+            ? (left.department || '\uffff').toLowerCase().localeCompare((right.department || '\uffff').toLowerCase())
+            : left.displayName.toLowerCase().localeCompare(right.displayName.toLowerCase());
+          return primary * dir || left.displayName.toLowerCase().localeCompare(right.displayName.toLowerCase());
+        });
+        return rows;
+      }
+
+      function paintStaffQuotas() {
+        const target = document.getElementById('admin-content');
+        if (!target || state.staffPane !== 'quotas') return;
+        const focused = document.activeElement && document.activeElement.getAttribute ? document.activeElement.getAttribute('data-quota') : '';
+        const rows = sortedQuotaRows();
+        const selectedCount = state.quotaSelected.length;
+        const sortMark = function(key) {
+          if (state.quotaSort !== key) return '';
+          return state.quotaDir === -1 ? ' ↓' : ' ↑';
+        };
+        target.innerHTML = `${staffSectionNav()}
+          <p class="lede">EE subjects on the staff record are the standing list of what someone can supervise. Quota is how many supervisor tokens to create for a cohort. Applying tokens adds missing slots and leaves draft or committed tokens in place.</p>
+          <div class="alloc-batch">
+            <label><input type="checkbox" id="quota-select-all" ${rows.length && rows.every(function(row) { return state.quotaSelected.indexOf(row.email) >= 0; }) ? 'checked' : ''}> Select all</label>
+            <span class="muted">${selectedCount} selected</span>
+            <label for="quota-bulk">Quota for selected</label>
+            <input id="quota-bulk" inputmode="numeric" style="width:72px" placeholder="0">
+            <button type="button" class="button secondary" id="quota-apply-bulk">Apply quota</button>
+            <button type="button" class="button" id="quota-save">Save quotas</button>
+          </div>
+          <div class="quota-pick" role="group" aria-label="Subjects to assign">${state.quotaSubjects.length ? state.quotaSubjects.map(function(subject) {
+            return `<label class="check-option"><input type="checkbox" data-quota-subject="${escapeHtml(subject)}"> ${escapeHtml(subject)}</label>`;
+          }).join('') : '<span class="muted">Add active subjects under Admin → Subjects.</span>'}
+            <button type="button" class="button secondary" id="quota-add-subjects">Add subjects to selected</button>
+            <button type="button" class="button secondary" id="quota-remove-subjects">Remove subjects from selected</button>
+          </div>
+          <div class="quota-layout"><div class="table-wrap"><table class="quota-table"><thead><tr>
+            <th><span class="sr-only">Select</span></th>
+            <th><button type="button" class="sort-button" data-quota-sort="name">Display name${sortMark('name')}</button></th>
+            <th><button type="button" class="sort-button" data-quota-sort="department">Primary department${sortMark('department')}</button></th>
+            <th>Quota</th>
+            <th>EE subjects</th>
+          </tr></thead><tbody>${rows.length ? rows.map(function(row) {
+            return `<tr>
+              <td><input type="checkbox" data-quota-pick="${escapeHtml(row.email)}" ${state.quotaSelected.indexOf(row.email) >= 0 ? 'checked' : ''} aria-label="Select ${escapeHtml(row.displayName)}"></td>
+              <td><strong>${escapeHtml(row.displayName)}</strong><div class="muted">${escapeHtml(row.email)}</div></td>
+              <td>${escapeHtml(row.department || '—')}</td>
+              <td><input data-quota="${escapeHtml(row.email)}" inputmode="numeric" value="${escapeHtml(row.quota)}" aria-label="Quota for ${escapeHtml(row.displayName)}"></td>
+              <td><div class="quota-subjects">${row.subjects.length ? row.subjects.map(function(subject) {
+                return `<button type="button" class="subject-chip on" data-quota-remove="${escapeHtml(row.email)}" data-subject="${escapeHtml(subject)}">${escapeHtml(subject)} ×</button>`;
+              }).join('') : '<span class="muted">No subjects</span>'}</div></td>
+            </tr>`;
+          }).join('') : '<tr><td colspan="5"><div class="empty">No staff users yet.</div></td></tr>'}</tbody></table></div>
+          <aside class="alloc-side"><header><h2>Subject capacity</h2></header><div id="quota-dashboard"></div>
+            <footer>
+              <label for="quota-cohort">Cohort</label>
+              <select id="quota-cohort">${state.quotaCohorts.map(function(cohort) {
+                return `<option value="${escapeHtml(cohort.id)}" ${cohort.id === state.cohortId ? 'selected' : ''}>${escapeHtml(cohort.name)}</option>`;
+              }).join('')}</select>
+              ${state.quotaCohorts.length ? '' : '<p class="notice">Create a cohort before generating tokens.</p>'}
+              <div class="toolbar"><button type="button" class="button secondary" id="quota-export">Export token sheet</button><button type="button" class="button" id="quota-ingest">Apply tokens to cohort</button></div>
+              <p id="quota-export-result" class="muted"></p>
+              <button type="button" class="link-button" id="quota-open-tokens">Open cohort allocation tokens</button>
+            </footer>
+          </aside></div>`;
+        bindStaffPane(target);
+        bindStaffQuotas();
+        paintQuotaDashboard();
+        if (focused) {
+          const input = target.querySelector('[data-quota="' + cssEscape(focused) + '"]');
+          if (input) input.focus();
+        }
+      }
+
+      function paintQuotaDashboard() {
+        const host = document.getElementById('quota-dashboard');
+        if (!host) return;
+        const capacity = clientQuotaCapacity(state.quotaRows);
+        const lines = capacity.subjects.length ? capacity.subjects.map(function(item) {
+          return `<div class="alloc-load"><p><strong>${escapeHtml(item.subject)}</strong> <span class="muted">${item.capacity} spot${item.capacity === 1 ? '' : 's'}</span></p></div>`;
+        }).join('') : '<div class="alloc-load"><p class="muted">Enter a quota and subject to see capacity.</p></div>';
+        host.innerHTML = `${lines}${capacity.untied ? `<div class="alloc-load"><p class="muted">${capacity.untied} spot${capacity.untied === 1 ? '' : 's'} ${capacity.untied === 1 ? 'is' : 'are'} not tied to a subject.</p></div>` : ''}<div class="alloc-load"><p>Total teacher quota <strong>${capacity.total}</strong></p><p class="muted">This is each teacher’s quota added once. Subject spots above can overlap.</p></div>`;
+      }
+
+      function clientQuotaCapacity(rows) {
+        let total = 0;
+        let untied = 0;
+        const groups = {};
+        const labels = {};
+        rows.forEach(function(row) {
+          const quota = row.quota === '' ? 0 : Number(row.quota);
+          const spots = Number.isInteger(quota) && quota > 0 ? quota : 0;
+          total += spots;
+          const seen = {};
+          const subjects = [];
+          (row.subjects || []).forEach(function(subject) {
+            const name = String(subject || '').trim();
+            const key = name.toLowerCase();
+            if (!name || seen[key]) return;
+            seen[key] = true;
+            subjects.push(name);
+          });
+          if (spots && !subjects.length) untied += spots;
+          if (!spots) return;
+          subjects.forEach(function(subject) {
+            const key = subject.toLowerCase();
+            labels[key] = labels[key] || subject;
+            groups[key] = (groups[key] || 0) + spots;
+          });
+        });
+        return {
+          total: total,
+          untied: untied,
+          subjects: Object.keys(groups).sort(function(left, right) { return labels[left].localeCompare(labels[right]); }).map(function(key) {
+            return { subject: labels[key], capacity: groups[key] };
+          }),
+        };
+      }
+
+      function bindStaffQuotas() {
+        const selectAll = document.getElementById('quota-select-all');
+        if (selectAll) selectAll.addEventListener('change', function(event) {
+          state.quotaSelected = event.target.checked ? state.quotaRows.map(function(row) { return row.email; }) : [];
+          paintStaffQuotas();
+        });
+        document.querySelectorAll('[data-quota-pick]').forEach(function(box) {
+          box.addEventListener('change', function() {
+            const email = box.getAttribute('data-quota-pick');
+            state.quotaSelected = box.checked
+              ? state.quotaSelected.concat([email]).filter(function(item, index, list) { return list.indexOf(item) === index; })
+              : state.quotaSelected.filter(function(item) { return item !== email; });
+            const count = document.querySelector('.alloc-batch .muted');
+            if (count) count.textContent = state.quotaSelected.length + ' selected';
+            if (selectAll) selectAll.checked = state.quotaRows.length > 0 && state.quotaSelected.length === state.quotaRows.length;
+          });
+        });
+        document.querySelectorAll('[data-quota]').forEach(function(input) {
+          input.addEventListener('input', function() {
+            const row = state.quotaRows.find(function(item) { return item.email === input.getAttribute('data-quota'); });
+            if (row) row.quota = input.value.trim();
+            paintQuotaDashboard();
+          });
+          input.addEventListener('keydown', function(event) {
+            if (event.key !== 'Enter' && event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+            if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+              if (event.target.selectionStart !== event.target.selectionEnd) return;
+            }
+            event.preventDefault();
+            const inputs = Array.from(document.querySelectorAll('[data-quota]'));
+            const index = inputs.indexOf(input);
+            const next = inputs[event.key === 'ArrowUp' ? index - 1 : index + 1];
+            if (next) next.focus();
+          });
+        });
+        document.querySelectorAll('[data-quota-sort]').forEach(function(button) {
+          button.addEventListener('click', function() {
+            const key = button.getAttribute('data-quota-sort');
+            state.quotaDir = state.quotaSort === key ? -state.quotaDir : 1;
+            state.quotaSort = key;
+            paintStaffQuotas();
+          });
+        });
+        document.querySelectorAll('[data-quota-remove]').forEach(function(button) {
+          button.addEventListener('click', function() {
+            const row = state.quotaRows.find(function(item) { return item.email === button.getAttribute('data-quota-remove'); });
+            const subject = button.getAttribute('data-subject');
+            if (!row) return;
+            row.subjects = row.subjects.filter(function(item) { return item.toLowerCase() !== String(subject || '').toLowerCase(); });
+            paintStaffQuotas();
+          });
+        });
+        const bulk = document.getElementById('quota-apply-bulk');
+        if (bulk) bulk.addEventListener('click', function() {
+          const value = document.getElementById('quota-bulk').value.trim();
+          if (!state.quotaSelected.length) { showError(new Error('Select at least one staff member.')); return; }
+          if (value !== '' && (!Number.isInteger(Number(value)) || Number(value) < 0)) {
+            showError(new Error('Quota must be a whole number, or blank.'));
+            return;
+          }
+          state.quotaRows.forEach(function(row) {
+            if (state.quotaSelected.indexOf(row.email) >= 0) row.quota = value;
+          });
+          paintStaffQuotas();
+        });
+        const addSubjects = document.getElementById('quota-add-subjects');
+        if (addSubjects) addSubjects.addEventListener('click', function() { changeSelectedSubjects(true); });
+        const removeSubjects = document.getElementById('quota-remove-subjects');
+        if (removeSubjects) removeSubjects.addEventListener('click', function() { changeSelectedSubjects(false); });
+        const save = document.getElementById('quota-save');
+        if (save) save.addEventListener('click', function() {
+          save.disabled = true;
+          saveQuotaRows().then(function(result) {
+            save.disabled = false;
+            showSuccess('Saved quotas for ' + result.updated + ' staff.');
+          }).catch(function(error) { save.disabled = false; showError(error); });
+        });
+        const cohort = document.getElementById('quota-cohort');
+        if (cohort) cohort.addEventListener('change', function(event) { state.cohortId = event.target.value; });
+        const exportButton = document.getElementById('quota-export');
+        if (exportButton) exportButton.addEventListener('click', exportQuotaSheet);
+        const ingest = document.getElementById('quota-ingest');
+        if (ingest) ingest.addEventListener('click', applyQuotaTokens);
+        const openTokens = document.getElementById('quota-open-tokens');
+        if (openTokens) openTokens.addEventListener('click', function() { openAllocationTokens(); });
+      }
+
+      function checkedQuotaSubjects() {
+        return Array.from(document.querySelectorAll('[data-quota-subject]:checked')).map(function(box) {
+          return box.getAttribute('data-quota-subject');
+        });
+      }
+
+      function changeSelectedSubjects(add) {
+        const subjects = checkedQuotaSubjects();
+        if (!state.quotaSelected.length) { showError(new Error('Select at least one staff member.')); return; }
+        if (!subjects.length) { showError(new Error('Choose at least one subject.')); return; }
+        state.quotaRows.forEach(function(row) {
+          if (state.quotaSelected.indexOf(row.email) < 0) return;
+          if (add) {
+            subjects.forEach(function(subject) {
+              if (!row.subjects.some(function(item) { return item.toLowerCase() === subject.toLowerCase(); })) row.subjects.push(subject);
+            });
+          } else {
+            row.subjects = row.subjects.filter(function(item) {
+              return !subjects.some(function(subject) { return subject.toLowerCase() === item.toLowerCase(); });
+            });
+          }
+        });
+        paintStaffQuotas();
+      }
+
+      function quotaPayload() {
+        return state.quotaRows.map(function(row) {
+          return { email: row.email, quota: row.quota === '' ? '' : Number(row.quota), subjects: row.subjects.slice() };
+        });
+      }
+
+      function saveQuotaRows() {
+        return callServer('saveStaffQuotas', quotaPayload());
+      }
+
+      function exportQuotaSheet() {
+        if (!state.cohortId) { showError(new Error('Choose a cohort.')); return; }
+        const button = document.getElementById('quota-export');
+        if (button) button.disabled = true;
+        saveQuotaRows().then(function() {
+          return callServer('exportStaffQuotaSheet', state.cohortId);
+        }).then(function(exported) {
+          if (button) button.disabled = false;
+          const url = safeUrl(exported.url);
+          const host = document.getElementById('quota-export-result');
+          if (host) {
+            host.innerHTML = url
+              ? `<a href="${escapeHtml(url)}" target="_blank" rel="noopener">${escapeHtml(exported.title || 'Open token sheet')}</a>`
+              : escapeHtml(exported.shareProblem || 'Export finished.');
+          }
+          showSuccess(exported.shared ? 'Token sheet created. Existing cohort tokens were not changed.' : 'Token sheet created. ' + (exported.shareProblem || ''));
+        }).catch(function(error) {
+          if (button) button.disabled = false;
+          showError(error);
+        });
+      }
+
+      function applyQuotaTokens() {
+        if (!state.cohortId) { showError(new Error('Choose a cohort.')); return; }
+        const button = document.getElementById('quota-ingest');
+        if (button) button.disabled = true;
+        saveQuotaRows().then(function() {
+          return callServer('previewStaffQuotaTokens', state.cohortId);
+        }).then(function(preview) {
+          const summary = preview.creating + ' tokens will be created. ' + preview.writing + ' open slots will take the new subject list. Draft and committed tokens stay in place.';
+          const warnings = (preview.warnings || []).slice(0, 8).join('\n');
+          if (!window.confirm(summary + (warnings ? '\n\n' + warnings : '') + '\n\nApply tokens to cohort ' + state.cohortId + '?')) return null;
+          return callServer('applyStaffQuotaTokens', state.cohortId);
+        }).then(function(result) {
+          if (button) button.disabled = false;
+          if (!result) return;
+          showSuccess('Applied tokens to cohort ' + result.cohortId + '. ' + result.creating + ' created.');
+        }).catch(function(error) {
+          if (button) button.disabled = false;
+          showError(error);
+        });
+      }
+
+      function openStaffQuotas() {
+        state.section = 'admin';
+        state.view = 'admin';
+        state.adminEntity = 'staffUsers';
+        state.staffPane = 'quotas';
+        renderShell();
+      }
+
+      function openAllocationTokens() {
+        state.section = 'allocation';
+        state.view = 'allocation';
+        state.allocationView = 'tokens';
+        renderShell();
+      }
+
       function renderAllocation() {
         advanceScene();
         const main = document.getElementById('main');
         main.classList.add('plan-wide');
-        const view = state.allocationView === 'settings' ? 'settings' : 'dashboard';
+        const view = state.allocationView === 'settings' || state.allocationView === 'tokens' ? state.allocationView : 'dashboard';
         state.allocationView = view;
-        main.innerHTML = `<div class="page-head"><div><p class="eyebrow">Allocation</p><h1>${view === 'settings' ? 'Allocation settings' : 'Supervisor allocation'}</h1><p class="lede">${view === 'settings' ? 'Ingest student choices and staff tokens, then choose what the dashboard shows.' : 'Draft a supervisor for each active student. Publish writes the supervisor and subject onto the live roster.'}</p></div></div>
-          <nav class="subnav" aria-label="Allocation"><button type="button" data-alloc-view="dashboard" aria-current="${view === 'dashboard' ? 'page' : 'false'}">Dashboard</button><button type="button" data-alloc-view="settings" aria-current="${view === 'settings' ? 'page' : 'false'}">Settings</button></nav>
+        const heading = view === 'settings' ? 'Allocation settings' : view === 'tokens' ? 'Cohort allocation tokens' : 'Supervisor allocation';
+        const lede = view === 'settings'
+          ? 'Ingest student choices and staff tokens, then choose what the dashboard shows.'
+          : view === 'tokens'
+            ? 'Add, edit, or remove the supervisor tokens already on a cohort. Generating tokens from EE quotas will not replace these.'
+            : 'Draft a supervisor for each active student. Publish writes the supervisor and subject onto the live roster.';
+        main.innerHTML = `<div class="page-head"><div><p class="eyebrow">Allocation</p><h1>${heading}</h1><p class="lede">${lede}</p></div></div>
+          <nav class="subnav" aria-label="Allocation"><button type="button" data-alloc-view="dashboard" aria-current="${view === 'dashboard' ? 'page' : 'false'}">Dashboard</button><button type="button" data-alloc-view="tokens" aria-current="${view === 'tokens' ? 'page' : 'false'}">Cohort tokens</button><button type="button" data-alloc-view="settings" aria-current="${view === 'settings' ? 'page' : 'false'}">Settings</button></nav>
           <div id="alloc-body">${loadingLine('Loading allocation...')}</div>`;
         main.querySelectorAll('[data-alloc-view]').forEach(function(button) {
           button.addEventListener('click', function() {
@@ -7078,6 +7454,10 @@
         const target = document.getElementById('alloc-body');
         const desk = state.allocationDesk;
         if (!target || !desk) return;
+        if (state.allocationView === 'tokens') {
+          paintCohortTokens(target);
+          return;
+        }
         target.innerHTML = state.allocationView === 'settings' ? allocationSettingsMarkup(desk) : allocationDashboardMarkup(desk);
         bindAllocation(target, desk);
       }
@@ -7122,7 +7502,7 @@
           </div>
           <aside class="alloc-side">
             <header><h2>Supervisor token load</h2></header>
-            ${supervisors.length ? supervisors.map(allocationLoadMarkup).join('') : '<div class="empty">No tokens yet. Ingest staff tokens from Settings.</div>'}
+            ${supervisors.length ? supervisors.map(allocationLoadMarkup).join('') : '<div class="empty">No tokens yet. Build them in Staff users → EE quotas, or ingest a token sheet from Settings.</div>'}
             <footer>
               <p class="muted">Allocations stay in draft until they are published to the hub.</p>
               <button type="button" class="button" id="alloc-publish" ${publish.blocked || (!publish.drafts && !publish.clears) ? 'disabled' : ''}>Publish allocations to hub</button>
@@ -7183,7 +7563,7 @@
               <label class="field" for="alloc-sheet-url">Spreadsheet link</label>
               <input id="alloc-sheet-url" value="${escapeHtml(state.allocationSheetUrl)}" placeholder="https://docs.google.com/spreadsheets/d/...">
               <div class="field"><span class="alloc-kicker">1. Workspace data (COHORTDATA: ${escapeHtml(state.cohortId)})</span><button type="button" class="button secondary" id="alloc-ingest-workspace">Ingest student data</button><div class="alloc-sync">${settings.lastWorkspaceSync ? 'Last sync: ' + escapeHtml(allocationWhen(settings.lastWorkspaceSync)) : 'Not ingested yet'}</div></div>
-              <div class="field"><span class="alloc-kicker">2. Supervisor quotas (SUPERVISORTOKENS: ${escapeHtml(state.cohortId)})</span><button type="button" class="button secondary" id="alloc-ingest-tokens">Ingest staff tokens</button><div class="alloc-sync">${settings.lastTokenSync ? 'Last sync: ' + escapeHtml(allocationWhen(settings.lastTokenSync)) : 'Not ingested yet'}</div></div>
+              <div class="field"><span class="alloc-kicker">2. Supervisor quotas (SUPERVISORTOKENS: ${escapeHtml(state.cohortId)})</span><button type="button" class="button secondary" id="alloc-ingest-tokens">Ingest staff tokens</button><div class="alloc-sync">${settings.lastTokenSync ? 'Last sync: ' + escapeHtml(allocationWhen(settings.lastTokenSync)) : 'Not ingested yet'}</div><p class="muted">Build the same sheet from Staff users → EE quotas. Applying there uses this top-up and leaves draft and committed tokens in place.</p><button type="button" class="button secondary" id="alloc-open-quotas">Open EE quotas</button></div>
               <div class="field"><span class="alloc-kicker">3. Allocation output</span><button type="button" class="button secondary" id="alloc-export">Export drafts to Sheets</button><div class="alloc-sync" id="alloc-export-result">${settings.lastExport ? 'Last export: ' + escapeHtml(allocationWhen(settings.lastExport)) : 'Not exported yet'}</div></div>
             </section>
             <section class="alloc-panel"><h2>Token summary</h2>
@@ -7221,6 +7601,7 @@
           state.cohortId = event.target.value;
           state.allocationSelected = [];
           state.allocationSubjects = {};
+          state.tokenEditId = '';
           loadAllocation();
         });
         target.querySelectorAll('[data-alloc-status]').forEach(function(button) {
@@ -7290,6 +7671,119 @@
         if (exportButton) exportButton.addEventListener('click', exportAllocations);
         const save = document.getElementById('alloc-save-config');
         if (save) save.addEventListener('click', saveAllocationSettings);
+        const openQuotas = document.getElementById('alloc-open-quotas');
+        if (openQuotas) openQuotas.addEventListener('click', openStaffQuotas);
+      }
+
+      let cohortTokenLoad = 0;
+
+      function paintCohortTokens(target) {
+        const load = ++cohortTokenLoad;
+        target.innerHTML = `<div class="toolbar"><label for="alloc-cohort">Cohort</label><select id="alloc-cohort">${state.allocationCohorts.map(function(cohort) {
+          return `<option value="${escapeHtml(cohort.id)}" ${cohort.id === state.cohortId ? 'selected' : ''}>${escapeHtml(cohort.name)}</option>`;
+        }).join('')}</select><button type="button" class="button secondary" id="alloc-open-quotas">Edit EE quotas</button></div>${loadingLine('Loading cohort tokens...')}`;
+        bindAllocation(target, state.allocationDesk);
+        callServer('listCohortTokens', state.cohortId).then(function(board) {
+          if (load !== cohortTokenLoad || state.allocationView !== 'tokens') return;
+          const host = document.getElementById('alloc-body');
+          if (!host) return;
+          host.innerHTML = cohortTokensMarkup(board);
+          bindAllocation(host, state.allocationDesk);
+          bindCohortTokens(board);
+        }).catch(showError);
+      }
+
+      function cohortTokensMarkup(board) {
+        const tokens = board.tokens || [];
+        const subjects = board.subjects || [];
+        return `<div class="toolbar"><label for="alloc-cohort">Cohort</label><select id="alloc-cohort">${state.allocationCohorts.map(function(cohort) {
+          return `<option value="${escapeHtml(cohort.id)}" ${cohort.id === state.cohortId ? 'selected' : ''}>${escapeHtml(cohort.name)}</option>`;
+        }).join('')}</select><button type="button" class="button secondary" id="alloc-open-quotas">Edit EE quotas</button><span class="muted">${tokens.length} token${tokens.length === 1 ? '' : 's'}</span></div>
+          <p class="muted">These slots already belong to ${escapeHtml(board.cohortId)}. Adding tokens does not remove the ones here. A published token has to go back to draft on the dashboard before it can be deleted.</p>
+          <section class="alloc-panel"><h2>Add tokens</h2>
+            <div class="alloc-batch">
+              <label for="token-staff">Staff</label>
+              <select id="token-staff"><option value="">Choose staff</option>${(board.staff || []).map(function(person) {
+                return `<option value="${escapeHtml(person.email)}">${escapeHtml(person.displayName)}</option>`;
+              }).join('')}</select>
+              <label for="token-count">How many</label>
+              <input id="token-count" inputmode="numeric" value="1" style="width:72px">
+              <button type="button" class="button" id="token-add">Add tokens</button>
+            </div>
+            <div class="quota-pick">${subjects.length ? subjects.map(function(subject) {
+              return `<label class="check-option"><input type="checkbox" data-new-token-subject="${escapeHtml(subject)}"> ${escapeHtml(subject)}</label>`;
+            }).join('') : '<span class="muted">No active subjects yet.</span>'}</div>
+          </section>
+          ${tokens.length ? `<div class="table-wrap"><table><thead><tr><th>Staff</th><th>EE subjects</th><th>Status</th><th>Student</th><th>Assigned subject</th><th></th></tr></thead><tbody>${tokens.map(function(token) {
+            const editing = state.tokenEditId === token.id;
+            const choices = subjects.slice();
+            (token.eligibleSubjects || []).forEach(function(subject) {
+              if (!choices.some(function(item) { return item.toLowerCase() === subject.toLowerCase(); })) choices.push(subject);
+            });
+            const subjectCell = editing
+              ? `<div class="quota-pick">${choices.map(function(subject) {
+                const on = (token.eligibleSubjects || []).some(function(item) { return item.toLowerCase() === subject.toLowerCase(); });
+                return `<label class="check-option"><input type="checkbox" data-token-subject="${escapeHtml(subject)}" ${on ? 'checked' : ''}> ${escapeHtml(subject)}</label>`;
+              }).join('')}</div>`
+              : escapeHtml((token.eligibleSubjects || []).join(', ') || 'None');
+            return `<tr>
+              <td><strong>${escapeHtml(token.staffName)}</strong><div class="muted">${escapeHtml(token.staffId)}</div></td>
+              <td>${subjectCell}</td>
+              <td>${escapeHtml(token.status)}</td>
+              <td>${escapeHtml(token.allocatedTo || '—')}</td>
+              <td>${escapeHtml(token.assignedSubject || '—')}</td>
+              <td><div class="actions">${editing ? `<button type="button" class="link-button" data-token-save="${escapeHtml(token.id)}">Save</button>` : `<button type="button" class="link-button" data-token-edit="${escapeHtml(token.id)}">Edit</button>`}${token.status === 'committed' ? '' : `<button type="button" class="link-button" data-token-delete="${escapeHtml(token.id)}">Delete</button>`}</div></td>
+            </tr>`;
+          }).join('')}</tbody></table></div>` : '<div class="empty">This cohort has no tokens yet. Add them here, or generate them from EE quotas.</div>'}`;
+      }
+
+      function bindCohortTokens(board) {
+        const add = document.getElementById('token-add');
+        if (add) add.addEventListener('click', function() {
+          const staffId = document.getElementById('token-staff').value;
+          const count = document.getElementById('token-count').value;
+          const subjects = Array.from(document.querySelectorAll('[data-new-token-subject]:checked')).map(function(box) {
+            return box.getAttribute('data-new-token-subject');
+          });
+          add.disabled = true;
+          callServer('addCohortTokens', state.cohortId, staffId, subjects, count).then(function(result) {
+            state.tokenEditId = '';
+            showSuccess('Added ' + result.created + ' token' + (result.created === 1 ? '' : 's') + '.');
+            loadAllocation();
+          }).catch(function(error) { add.disabled = false; showError(error); });
+        });
+        document.querySelectorAll('[data-token-edit]').forEach(function(button) {
+          button.addEventListener('click', function() {
+            state.tokenEditId = button.getAttribute('data-token-edit');
+            paintCohortTokens(document.getElementById('alloc-body'));
+          });
+        });
+        document.querySelectorAll('[data-token-save]').forEach(function(button) {
+          button.addEventListener('click', function() {
+            const id = button.getAttribute('data-token-save');
+            const subjects = Array.from(document.querySelectorAll('[data-token-subject]:checked')).map(function(box) {
+              return box.getAttribute('data-token-subject');
+            });
+            callServer('updateCohortToken', state.cohortId, id, subjects).then(function() {
+              state.tokenEditId = '';
+              showSuccess('Token updated.');
+              loadAllocation();
+            }).catch(showError);
+          });
+        });
+        document.querySelectorAll('[data-token-delete]').forEach(function(button) {
+          button.addEventListener('click', function() {
+            const id = button.getAttribute('data-token-delete');
+            const token = (board.tokens || []).find(function(item) { return item.id === id; });
+            const who = token ? token.staffName : 'this staff member';
+            if (!window.confirm('Delete this token for ' + who + '?')) return;
+            callServer('deleteCohortToken', state.cohortId, id).then(function() {
+              state.tokenEditId = '';
+              showSuccess('Token deleted.');
+              loadAllocation();
+            }).catch(showError);
+          });
+        });
       }
 
       function assignAllocationBatch() {

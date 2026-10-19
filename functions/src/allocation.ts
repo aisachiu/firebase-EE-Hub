@@ -23,12 +23,15 @@ import {
   planReopen,
   planTokenTopUp,
   settingsFromDoc,
+  staffQuotaTokenRows,
   tokenFromDoc,
+  tokenSheetRows,
   TokenRecord,
+  uniqueSubjects,
   workspaceFromDoc,
   WorkspaceRecord,
 } from './allocationPure';
-import { Doc, HubError, normalizeEmail, nowIso, shortId, text } from './util';
+import { Doc, HubError, normalizeEmail, nowIso, shortId, text, toBoolean } from './util';
 
 export interface AllocationIngestResult {
   cohortId: string;
@@ -255,6 +258,203 @@ export async function exportAllocationDrafts(app: App, cohortId: unknown, deps?:
   });
 }
 
+export async function getStaffQuotaSheet(app: App) {
+  await requireAdmin(app, 'GET_STAFF_QUOTA_SHEET');
+  const [staff, subjects] = await Promise.all([
+    app.store.list(COLLECTIONS.staffUsers),
+    activeSubjectNames(app),
+  ]);
+  const rows = staff
+    .map((person) => ({
+      email: normalizeEmail(person.EMAIL),
+      displayName: text(person.DisplayName),
+      department: text(person['Primary Department']),
+      quota: person.EEQuota === '' || person.EEQuota === undefined || person.EEQuota === null ? '' : person.EEQuota,
+      subjects: uniqueSubjects(person.EESubjects),
+    }))
+    .filter((person) => person.email)
+    .sort((left, right) => left.displayName.localeCompare(right.displayName) || left.email.localeCompare(right.email));
+  return { staff: rows, subjects };
+}
+
+export async function saveStaffQuotas(app: App, rows: unknown) {
+  const user = await requireAdmin(app, 'SAVE_STAFF_QUOTAS');
+  const incoming = quotaEdits(rows);
+  return audited(app, user, 'SAVE_STAFF_QUOTAS', { staff: incoming.length }, async () => {
+    for (const row of incoming) {
+      const existing = await app.store.get(COLLECTIONS.staffUsers, row.email);
+      if (!existing) throw new HubError(`${row.email} is not a staff user.`);
+      existing.EEQuota = row.quota;
+      existing.EESubjects = row.subjects.join(', ');
+      await app.store.set(COLLECTIONS.staffUsers, row.email, existing);
+    }
+    return { updated: incoming.length };
+  });
+}
+
+export async function previewStaffQuotaTokens(app: App, cohortId: unknown): Promise<AllocationIngestResult> {
+  await requireAdmin(app, 'PREVIEW_STAFF_QUOTA_TOKENS');
+  const cohort = await requireCohort(app, text(cohortId));
+  return (await prepareStaffQuota(app, cohort.id)).preview;
+}
+
+export async function applyStaffQuotaTokens(app: App, cohortId: unknown): Promise<AllocationIngestResult> {
+  const user = await requireAdmin(app, 'APPLY_STAFF_QUOTA_TOKENS');
+  const cohort = text(cohortId);
+  return audited(app, user, 'APPLY_STAFF_QUOTA_TOKENS', { cohortId: cohort }, async () => {
+    const prepared = await prepareStaffQuota(app, cohort);
+    await app.store.applyAllocationOps(prepared.ops);
+    return prepared.preview;
+  });
+}
+
+export async function exportStaffQuotaSheet(app: App, cohortId: unknown, deps?: ExportDeps) {
+  const user = await requireAdmin(app, 'EXPORT_STAFF_QUOTA_SHEET');
+  const cohort = await requireCohort(app, text(cohortId));
+  const parsed = staffQuotaTokenRows(await app.store.list(COLLECTIONS.staffUsers));
+  if (!parsed.rows.length) throw new HubError('Set a quota on at least one staff member before exporting tokens.');
+  const grid: SheetGrid = {
+    title: sheetTabTitle(`SUPERVISORTOKENS: ${cohort.id}`),
+    rows: tokenSheetRows(parsed.rows),
+  };
+  return audited(app, user, 'EXPORT_STAFF_QUOTA_SHEET', { cohortId: cohort.id, staff: parsed.rows.length }, async () => {
+    const owner = deps?.workbook ? normalizeEmail(deps.actorEmail) || user.email : (await requireDriveActor(app)).actorEmail;
+    const workbook = deps?.workbook || await openGoogleWorkbook();
+    const title = `EE Hub supervisor tokens ${cohort.id} ${(deps?.now || new Date()).toISOString().slice(0, 10)}`;
+    const created = await workbook.create(title, [grid]);
+    let shared = normalizeEmail(owner) === user.email;
+    let shareProblem = '';
+    if (!shared) {
+      try {
+        await workbook.share(created.spreadsheetId, user.email);
+        shared = true;
+      } catch (error) {
+        shareProblem = error instanceof Error ? error.message : 'The spreadsheet could not be shared.';
+      }
+    }
+    return { ...created, shared, shareProblem, owner, title, warnings: parsed.warnings };
+  });
+}
+
+export async function listCohortTokens(app: App, cohortId: unknown) {
+  await requireAdmin(app, 'LIST_COHORT_TOKENS');
+  const cohort = await requireCohort(app, text(cohortId));
+  const [tokenDocs, staff, subjects] = await Promise.all([
+    app.store.listTokens(cohort.id),
+    app.store.list(COLLECTIONS.staffUsers),
+    activeSubjectNames(app),
+  ]);
+  const names = new Map(staff.map((person) => [normalizeEmail(person.EMAIL), text(person.DisplayName) || normalizeEmail(person.EMAIL)]));
+  const tokens = tokensFrom(tokenDocs, cohort.id)
+    .map((token) => ({
+      ...token,
+      staffName: names.get(token.staffId) || token.staffId,
+    }))
+    .sort((left, right) => left.staffName.localeCompare(right.staffName) || left.status.localeCompare(right.status) || left.id.localeCompare(right.id));
+  return {
+    cohortId: cohort.id,
+    tokens,
+    staff: staff
+      .map((person) => ({ email: normalizeEmail(person.EMAIL), displayName: text(person.DisplayName) || normalizeEmail(person.EMAIL) }))
+      .filter((person) => person.email)
+      .sort((left, right) => left.displayName.localeCompare(right.displayName)),
+    subjects,
+  };
+}
+
+export async function addCohortTokens(app: App, cohortId: unknown, staffId: unknown, subjects: unknown, count: unknown) {
+  const user = await requireAdmin(app, 'ADD_COHORT_TOKENS');
+  const cohort = await requireCohort(app, text(cohortId));
+  const email = normalizeEmail(staffId);
+  const eligibleSubjects = uniqueSubjects(subjects);
+  const slots = typeof count === 'number' ? count : Number(text(count));
+  if (!email) throw new HubError('Choose a staff member.');
+  if (!eligibleSubjects.length) throw new HubError('Choose at least one EE subject.');
+  if (!Number.isInteger(slots) || slots < 1 || slots > 100) throw new HubError('Add between 1 and 100 tokens.');
+  return audited(app, user, 'ADD_COHORT_TOKENS', { cohortId: cohort.id, staffId: email, count: slots }, async () => {
+    const staff = await app.store.get(COLLECTIONS.staffUsers, email);
+    if (!staff) throw new HubError(`${email} is not a staff user.`);
+    const existing = tokensFrom(await app.store.listTokens(cohort.id), cohort.id);
+    const taken = new Set(existing.map((token) => token.id));
+    const now = nowIso();
+    const created: TokenRecord[] = [];
+    for (let index = 0; index < slots; index += 1) {
+      let id = shortId('tok');
+      while (taken.has(id)) id = shortId('tok');
+      taken.add(id);
+      const token: TokenRecord = {
+        id,
+        cohortId: cohort.id,
+        staffId: email,
+        eligibleSubjects,
+        allocatedTo: '',
+        assignedSubject: '',
+        status: 'available',
+        createdAt: now,
+      };
+      await app.store.setToken(cohort.id, id, token);
+      created.push(token);
+    }
+    return { created: created.length };
+  });
+}
+
+export async function updateCohortToken(app: App, cohortId: unknown, tokenId: unknown, subjects: unknown) {
+  const user = await requireAdmin(app, 'UPDATE_COHORT_TOKEN');
+  const cohort = await requireCohort(app, text(cohortId));
+  const id = text(tokenId);
+  const eligibleSubjects = uniqueSubjects(subjects);
+  if (!id) throw new HubError('Choose a token.');
+  if (!eligibleSubjects.length) throw new HubError('Choose at least one EE subject.');
+  return audited(app, user, 'UPDATE_COHORT_TOKEN', { cohortId: cohort.id, tokenId: id }, async () => {
+    const existing = tokenFromDoc({ ...(await app.store.getToken(cohort.id, id) || {}), cohortId: cohort.id });
+    if (!existing) throw new HubError('Token not found.');
+    await app.store.setToken(cohort.id, existing.id, { ...existing, eligibleSubjects });
+    return { id: existing.id, eligibleSubjects };
+  });
+}
+
+export async function deleteCohortToken(app: App, cohortId: unknown, tokenId: unknown) {
+  const user = await requireAdmin(app, 'DELETE_COHORT_TOKEN');
+  const cohort = await requireCohort(app, text(cohortId));
+  const id = text(tokenId);
+  if (!id) throw new HubError('Choose a token.');
+  return audited(app, user, 'DELETE_COHORT_TOKEN', { cohortId: cohort.id, tokenId: id }, async () => {
+    const existing = tokenFromDoc({ ...(await app.store.getToken(cohort.id, id) || {}), cohortId: cohort.id });
+    if (!existing) throw new HubError('Token not found.');
+    if (existing.status === 'committed') throw new HubError('This token is published. Return it to draft on the allocation dashboard before deleting it.');
+    await app.store.removeToken(cohort.id, existing.id);
+    return { deleted: true, id: existing.id };
+  });
+}
+
+async function prepareStaffQuota(app: App, cohortId: string) {
+  const cohort = await requireCohort(app, cohortId);
+  const parsed = staffQuotaTokenRows(await app.store.list(COLLECTIONS.staffUsers));
+  if (!parsed.rows.length) throw new HubError('Set a quota on at least one staff member before generating tokens.');
+  const existing = tokensFrom(await app.store.listTokens(cohort.id), cohort.id);
+  const taken = new Set(existing.map((token) => token.id));
+  const now = nowIso();
+  const plan = planTokenTopUp(existing, parsed.rows, cohort.id, now, () => {
+    let id = shortId('tok');
+    while (taken.has(id)) id = shortId('tok');
+    taken.add(id);
+    return id;
+  });
+  const settings = settingsFromDoc(await app.store.getAllocationConfig(cohort.id));
+  const ops: AllocationOp[] = plan.create.map((token) => ({ kind: 'token' as const, cohortId: cohort.id, id: token.id, data: token }));
+  plan.eligibleUpdates.forEach((update) => {
+    const token = existing.find((item) => item.id === update.id);
+    if (!token) return;
+    ops.push({ kind: 'token', cohortId: cohort.id, id: token.id, data: { ...token, eligibleSubjects: update.eligibleSubjects } });
+  });
+  ops.push({ kind: 'config', cohortId: cohort.id, data: { ...settings, lastTokenSync: now } });
+  return {
+    ops,
+    preview: ingestPreview(cohort.id, 'tokens', '', parsed.rows.length, plan.eligibleUpdates.length, 0, plan.create.length, parsed.warnings.concat(plan.warnings)),
+  };
+}
+
 async function prepareIngest(app: App, cohortId: unknown, source: unknown, kindValue: unknown, deps?: IngestDeps) {
   const cohort = await requireCohort(app, text(cohortId));
   const kind = ingestKind(kindValue);
@@ -365,6 +565,44 @@ function subjectMap(value: unknown): Record<string, string> {
 function sheetSource(source: unknown): string {
   if (source && typeof source === 'object') return text((source as Doc).url || (source as Doc).source);
   return text(source);
+}
+
+function quotaEdits(value: unknown): { email: string; quota: number | ''; subjects: string[] }[] {
+  if (!Array.isArray(value) || !value.length) throw new HubError('Add at least one staff quota.');
+  if (value.length > 500) throw new HubError('Save no more than 500 staff quotas at a time.');
+  const seen = new Set<string>();
+  return value.map((item) => {
+    const row = item && typeof item === 'object' ? item as Doc : {};
+    const email = normalizeEmail(row.email || row.staffId);
+    if (!email) throw new HubError('Each quota row needs a staff email.');
+    if (seen.has(email)) throw new HubError(`${email} is listed more than once.`);
+    seen.add(email);
+    const quota = readQuota(row.quota === undefined ? row.EEQuota : row.quota);
+    const subjects = uniqueSubjects(row.subjects === undefined ? row.EESubjects : row.subjects);
+    if (subjects.length > 40) throw new HubError(`${email} has too many EE subjects.`);
+    subjects.forEach((subject) => {
+      if (subject.length > 80) throw new HubError('An EE subject name is too long.');
+    });
+    return { email, quota, subjects };
+  });
+}
+
+function readQuota(value: unknown): number | '' {
+  if (value === '' || value === null || value === undefined) return '';
+  const quota = typeof value === 'number' ? value : Number(text(value));
+  if (!Number.isInteger(quota) || quota < 0 || quota > 200) throw new HubError('Quota must be a whole number from 0 to 200, or left blank.');
+  return quota;
+}
+
+async function activeSubjectNames(app: App): Promise<string[]> {
+  const subjects = await app.store.list(COLLECTIONS.subjects);
+  const names: string[] = [];
+  subjects.forEach((subject) => {
+    const active = subject.Active === '' || subject.Active === undefined || toBoolean(subject.Active);
+    const name = text(subject.Name);
+    if (active && name && !names.some((item) => item.toLowerCase() === name.toLowerCase())) names.push(name);
+  });
+  return names;
 }
 
 function ingestKind(value: unknown): 'workspace' | 'tokens' {

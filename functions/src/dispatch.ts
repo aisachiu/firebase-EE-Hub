@@ -56,15 +56,24 @@ import {
 } from './notifications';
 import { App } from './session';
 import {
+  addCohortTokens,
   applyAllocationIngest,
+  applyStaffQuotaTokens,
   batchDraftAllocations,
   commitAllocations,
+  deleteCohortToken,
   draftAllocation,
   exportAllocationDrafts,
+  exportStaffQuotaSheet,
   getAllocationDesk,
+  getStaffQuotaSheet,
+  listCohortTokens,
   previewAllocationIngest,
+  previewStaffQuotaTokens,
   reopenAllocation,
   saveAllocationConfig,
+  saveStaffQuotas,
+  updateCohortToken,
 } from './allocation';
 import { applySheetIngest, exportSheetCollections, listSheetCollections, previewSheetIngest } from './sheetSync';
 import { HubError, text } from './util';
@@ -149,6 +158,15 @@ export async function dispatch(app: App, method: string, args: unknown[]): Promi
     case 'previewAllocationIngest': return previewAllocationIngest(app, args[0], args[1], args[2]);
     case 'applyAllocationIngest': return applyAllocationIngest(app, args[0], args[1], args[2]);
     case 'exportAllocationDrafts': return exportAllocationDrafts(app, args[0]);
+    case 'getStaffQuotaSheet': return getStaffQuotaSheet(app);
+    case 'saveStaffQuotas': return saveStaffQuotas(app, args[0]);
+    case 'previewStaffQuotaTokens': return previewStaffQuotaTokens(app, args[0]);
+    case 'applyStaffQuotaTokens': return applyStaffQuotaTokens(app, args[0]);
+    case 'exportStaffQuotaSheet': return exportStaffQuotaSheet(app, args[0]);
+    case 'listCohortTokens': return listCohortTokens(app, args[0]);
+    case 'addCohortTokens': return addCohortTokens(app, args[0], args[1], args[2], args[3]);
+    case 'updateCohortToken': return updateCohortToken(app, args[0], args[1], args[2]);
+    case 'deleteCohortToken': return deleteCohortToken(app, args[0], args[1]);
     default: throw new HubError('Unknown EE Hub request.');
   }
 }
