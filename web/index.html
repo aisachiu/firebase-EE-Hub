@@ -724,6 +724,17 @@
       .quota-subjects, .quota-pick { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
       .quota-subjects { gap: 4px; }
       .sort-button { border: 0; padding: 0; background: transparent; color: inherit; font: inherit; font-weight: 700; cursor: pointer; }
+      th .sort-button, .alloc-head .sort-button { letter-spacing: .06em; text-transform: uppercase; }
+      th .sort-button:hover, .alloc-head .sort-button:hover, .sort-button:hover { color: var(--ink); }
+      .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+      .table-header { margin: 0 0 12px; background: var(--surface); border: 1px solid var(--line); }
+      .table-header-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px; }
+      .table-header-bar h2 { margin: 0; font-size: 15px; }
+      .table-header-body { padding: 0 10px 8px; }
+      .table-header-body[hidden] { display: none; }
+      .table-header .alloc-filters, .table-header .alloc-batch { margin-bottom: 8px; }
+      .drive-panel.editor { margin-top: 0; padding: 0; background: transparent; border-top: 0; }
+      .form-panel.resource-modal { width: min(1100px, 100%); }
       @container (max-width: 860px) {
         .alloc-layout, .alloc-config, .alloc-filters, .quota-layout { grid-template-columns: 1fr; }
         .alloc-side { position: static; }
@@ -757,6 +768,9 @@
         allocationStatus: 'all',
         allocationSupport: 'all',
         allocationSort: 'name',
+        allocationSortDir: 1,
+        adminTableSort: {},
+        adminHeaderOpen: {},
         allocationSelected: [],
         allocationSubjects: {},
         allocationSheetUrl: '',
@@ -4713,6 +4727,7 @@
           }).join('')}</nav><div id="admin-content">${loadingLine('Loading...')}</div>`;
         main.querySelectorAll('[data-admin-entity]').forEach(function(button) {
           button.addEventListener('click', function() {
+            closeMemberEditor();
             if (button.dataset.adminEntity === 'allocationSettings') {
               state.section = 'allocation';
               state.view = 'allocation';
@@ -4720,7 +4735,6 @@
               renderShell();
               return;
             }
-            closeMemberEditor();
             state.adminEntity = button.dataset.adminEntity;
             state.editingRecord = null;
             state.noticeEdit = null;
@@ -6031,10 +6045,11 @@
           if (!cohorts.length) { target.innerHTML = '<div class="empty">Create a cohort before assigning milestone templates.</div>'; return; }
           const current = cohorts.some(function(cohort) { return cohort.id === state.cohortId; }) ? state.cohortId : cohorts[0].id;
           state.cohortId = current;
-          target.innerHTML = `<div class="toolbar"><label for="assignment-cohort">Cohort</label><select id="assignment-cohort">${cohorts.map(function(cohort) {
+          target.innerHTML = `${collapsibleHeader('assignment-selection', 'Cohort and selection', `<div class="toolbar"><label for="assignment-cohort">Cohort</label><select id="assignment-cohort">${cohorts.map(function(cohort) {
             return `<option value="${escapeHtml(cohort.id)}" ${cohort.id === current ? 'selected' : ''}>${escapeHtml(cohort.name)}</option>`;
-          }).join('')}</select><label for="baseline-anchor">Baseline anchor date</label><input id="baseline-anchor" type="date"><button type="button" class="button" id="assign-milestones">Assign selected</button><label><input type="checkbox" id="select-all-assignment"> Select all</label><span id="assignment-count" class="muted">0 selected</span></div>
+          }).join('')}</select><label for="baseline-anchor">Baseline anchor date</label><input id="baseline-anchor" type="date"><button type="button" class="button" id="assign-milestones">Assign selected</button><label><input type="checkbox" id="select-all-assignment"> Select all</label><span id="assignment-count" class="muted">${state.assignmentStudentIds.length} selected</span></div>`)}
             ${state.status ? `<p class="status">${escapeHtml(state.status)}</p>` : ''}<div id="assignment-roster">${loadingLine('Loading students...')}</div>`;
+          bindCollapsibleHeaders(target);
           document.getElementById('assignment-cohort').addEventListener('change', function(event) {
             state.cohortId = event.target.value;
             state.assignmentStudentIds = [];
@@ -6047,48 +6062,89 @@
 
       function loadAssignmentRoster(cohortId) {
         callServer('getCohortMembersForAdmin', cohortId).then(function(result) {
-          const target = document.getElementById('assignment-roster');
-          if (!target) return;
-          const records = result.records || [];
-          target.innerHTML = records.length ? `<div class="table-wrap"><table><thead><tr><th>Select</th><th>Student</th><th>Year Group</th><th>Anchor Date</th><th>Action</th></tr></thead><tbody>${records.map(function(record, index) {
-            return `<tr><td><input type="checkbox" data-assignment-student="${index}" value="${escapeHtml(record.StudentId)}"></td><td>${escapeHtml(record['Display Name'])}<br><small>${escapeHtml(record.StudentId)}</small></td><td>${escapeHtml(record['Year Group'])}</td><td><input type="date" data-anchor-student="${index}" value="${escapeHtml(String(record.Anchor_Date || '').slice(0, 10))}"></td><td><button type="button" class="link-button" data-sync-student="${index}">Save &amp; sync</button></td></tr>`;
-          }).join('')}</tbody></table></div>` : '<div class="empty">No students are listed in this cohort.</div>';
-          target.querySelectorAll('[data-assignment-student]').forEach(function(input) {
-            input.addEventListener('change', function() {
-              state.assignmentStudentIds = Array.from(target.querySelectorAll('[data-assignment-student]:checked')).map(function(item) { return item.value; });
-              const count = document.getElementById('assignment-count');
-              if (count) count.textContent = state.assignmentStudentIds.length + ' selected';
-            });
+          if (state.cohortId !== cohortId || state.adminEntity !== 'assignments') return;
+          state.assignmentRoster = result.records || [];
+          state.assignmentRosterCohort = cohortId;
+          paintAssignmentRoster(cohortId);
+        }).catch(showError);
+      }
+
+      function paintAssignmentRoster(cohortId) {
+        const target = document.getElementById('assignment-roster');
+        if (!target || state.assignmentRosterCohort !== cohortId) return;
+        const records = state.assignmentRoster || [];
+        const tableId = 'assignments';
+        const sorted = sortedRows(tableId, records.map(function(record, index) { return { record: record, index: index }; }), function(item, key) {
+          if (key === 'student') return item.record['Display Name'] || '';
+          if (key === 'year') return item.record['Year Group'] || '';
+          if (key === 'anchor') return String(item.record.Anchor_Date || '').slice(0, 10);
+          return '';
+        });
+        target.innerHTML = records.length ? `<div class="table-wrap"><table><thead><tr><th>Select</th>${sortableHeader(tableId, 'student', 'Student')}${sortableHeader(tableId, 'year', 'Year Group')}${sortableHeader(tableId, 'anchor', 'Anchor Date')}<th>Action</th></tr></thead><tbody>${sorted.map(function(item) {
+          const record = item.record;
+          const index = item.index;
+          const checked = state.assignmentStudentIds.indexOf(record.StudentId) >= 0;
+          return `<tr><td><input type="checkbox" data-assignment-student="${index}" value="${escapeHtml(record.StudentId)}" ${checked ? 'checked' : ''}></td><td>${escapeHtml(record['Display Name'])}<br><small>${escapeHtml(record.StudentId)}</small></td><td>${escapeHtml(record['Year Group'])}</td><td>${escapeHtml(String(record.Anchor_Date || '').slice(0, 10))}</td><td><button type="button" class="link-button" data-edit-assignment="${index}">Edit</button></td></tr>`;
+        }).join('')}</tbody></table></div>` : '<div class="empty">No students are listed in this cohort.</div>';
+        bindSortableHeaders(target, function() { paintAssignmentRoster(cohortId); });
+        target.querySelectorAll('[data-assignment-student]').forEach(function(input) {
+          input.addEventListener('change', function() {
+            state.assignmentStudentIds = Array.from(target.querySelectorAll('[data-assignment-student]:checked')).map(function(item) { return item.value; });
+            const count = document.getElementById('assignment-count');
+            if (count) count.textContent = state.assignmentStudentIds.length + ' selected';
+            const selectAllBox = document.getElementById('select-all-assignment');
+            if (selectAllBox) selectAllBox.checked = records.length > 0 && state.assignmentStudentIds.length === records.length;
           });
-          const selectAll = document.getElementById('select-all-assignment');
-          if (selectAll) selectAll.addEventListener('change', function() {
+        });
+        const selectAll = document.getElementById('select-all-assignment');
+        if (selectAll) {
+          selectAll.checked = records.length > 0 && records.every(function(record) { return state.assignmentStudentIds.indexOf(record.StudentId) >= 0; });
+          selectAll.onchange = function() {
             target.querySelectorAll('[data-assignment-student]').forEach(function(input) { input.checked = selectAll.checked; });
             state.assignmentStudentIds = selectAll.checked ? records.map(function(record) { return record.StudentId; }) : [];
             const count = document.getElementById('assignment-count');
             if (count) count.textContent = state.assignmentStudentIds.length + ' selected';
+          };
+        }
+        target.querySelectorAll('[data-edit-assignment]').forEach(function(button) {
+          button.addEventListener('click', function() {
+            openAssignmentEditor(cohortId, records[Number(button.dataset.editAssignment)]);
           });
-          target.querySelectorAll('[data-sync-student]').forEach(function(button) {
-            button.addEventListener('click', function() {
-              const index = Number(button.dataset.syncStudent);
-              const dateInput = target.querySelector('[data-anchor-student="' + index + '"]');
-              const row = button.closest('tr');
-              button.disabled = true;
-              markSync(row, 'pending');
-              runMutation('saveStudentAnchorAndSync', [cohortId, records[index].StudentId, dateInput.value], {
-                key: 'anchor-date:' + records[index].StudentId
-              }).then(function(result) {
-                state.status = 'Updated ' + result.updated + ' system due dates.';
-                markSync(row, 'confirmed');
-                button.disabled = false;
-                showSuccess(state.status);
-              }).catch(function(error) {
-                button.disabled = false;
-                markSync(row, 'rejected');
-                showError(error, row);
-              });
-            });
+        });
+      }
+
+      function openAssignmentEditor(cohortId, record) {
+        if (!record) return;
+        const name = record['Display Name'] || record.StudentId || 'student';
+        const date = String(record.Anchor_Date || '').slice(0, 10);
+        openAdminDialog('assignment-anchor', `<div class="form-panel" role="dialog" aria-modal="true" aria-labelledby="assignment-editor-title"><div class="toolbar"><h2 id="assignment-editor-title">Edit ${escapeHtml(name)}</h2><button type="button" class="button secondary" data-close-admin-dialog>Close</button></div>
+          <form id="assignment-anchor-form"><div class="field"><label for="assignment-anchor-date">Anchor date</label><input id="assignment-anchor-date" type="date" value="${escapeHtml(date)}"></div>
+          <p class="notice error" id="assignment-anchor-error" hidden></p>
+          <div class="toolbar"><button class="button" type="submit">Save &amp; sync</button><button class="button secondary" type="button" data-close-admin-dialog>Cancel</button></div></form></div>`);
+        const form = document.getElementById('assignment-anchor-form');
+        if (!form) return;
+        form.addEventListener('submit', function(event) {
+          event.preventDefault();
+          const input = document.getElementById('assignment-anchor-date');
+          const submit = form.querySelector('[type="submit"]');
+          const errorNode = document.getElementById('assignment-anchor-error');
+          if (errorNode) { errorNode.hidden = true; errorNode.textContent = ''; }
+          if (submit) submit.disabled = true;
+          runMutation('saveStudentAnchorAndSync', [cohortId, record.StudentId, input ? input.value : ''], {
+            key: 'anchor-date:' + record.StudentId
+          }).then(function(result) {
+            state.status = 'Updated ' + result.updated + ' system due dates.';
+            closeAdminDialog();
+            showSuccess(state.status);
+            loadAssignmentRoster(cohortId);
+          }).catch(function(error) {
+            if (submit) submit.disabled = false;
+            if (errorNode) {
+              errorNode.hidden = false;
+              errorNode.textContent = error && error.message ? error.message : String(error);
+            } else showError(error);
           });
-        }).catch(showError);
+        });
       }
 
       function assignSelectedStudents() {
@@ -6105,7 +6161,196 @@
         }).catch(function(error) { button.disabled = false; showError(error); });
       }
 
-      function renderAdminData(data) {
+      function adminSortState(tableId) {
+        if (!state.adminTableSort[tableId]) state.adminTableSort[tableId] = { key: '', dir: 1 };
+        return state.adminTableSort[tableId];
+      }
+
+      function toggleAdminSort(tableId, key) {
+        const sort = adminSortState(tableId);
+        if (sort.key === key) sort.dir = sort.dir === 1 ? -1 : 1;
+        else {
+          sort.key = key;
+          sort.dir = 1;
+        }
+      }
+
+      function sortGlyph(tableId, key) {
+        const sort = adminSortState(tableId);
+        if (sort.key !== key) return '';
+        return sort.dir === -1 ? ' ↓' : ' ↑';
+      }
+
+      function ariaSortValue(tableId, key) {
+        const sort = adminSortState(tableId);
+        if (sort.key !== key) return 'none';
+        return sort.dir === -1 ? 'descending' : 'ascending';
+      }
+
+      function sortableHeader(tableId, key, label) {
+        return `<th scope="col" aria-sort="${ariaSortValue(tableId, key)}"><button type="button" class="sort-button" data-sort-table="${escapeHtml(tableId)}" data-sort-key="${escapeHtml(key)}">${escapeHtml(label)}${sortGlyph(tableId, key)}</button></th>`;
+      }
+
+      function bindSortableHeaders(root, onSort) {
+        if (!root) return;
+        root.querySelectorAll('[data-sort-table]').forEach(function(button) {
+          button.addEventListener('click', function() {
+            toggleAdminSort(button.getAttribute('data-sort-table'), button.getAttribute('data-sort-key'));
+            onSort();
+          });
+        });
+      }
+
+      function isSortEmpty(value) {
+        return value === null || value === undefined || value === '';
+      }
+
+      function sortNumber(value) {
+        if (typeof value === 'number' && isFinite(value)) return value;
+        if (typeof value === 'boolean') return value ? 1 : 0;
+        if (typeof value === 'string' && /^-?\d+(\.\d+)?$/.test(value.trim())) return Number(value.trim());
+        return null;
+      }
+
+      function sortTime(value) {
+        if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}/.test(value)) return null;
+        const time = Date.parse(value);
+        return isNaN(time) ? null : time;
+      }
+
+      function compareSortValues(left, right, dir) {
+        const direction = dir === -1 ? -1 : 1;
+        if (isSortEmpty(left) && isSortEmpty(right)) return 0;
+        if (isSortEmpty(left)) return 1;
+        if (isSortEmpty(right)) return -1;
+        const aNum = sortNumber(left);
+        const bNum = sortNumber(right);
+        if (aNum !== null && bNum !== null) return (aNum - bNum) * direction;
+        const aTime = sortTime(left);
+        const bTime = sortTime(right);
+        if (aTime !== null && bTime !== null) return (aTime - bTime) * direction;
+        return String(left).toLowerCase().localeCompare(String(right).toLowerCase(), undefined, { numeric: true, sensitivity: 'base' }) * direction;
+      }
+
+      function sortByKey(items, getValue, dir) {
+        return items.slice().sort(function(left, right) {
+          return compareSortValues(getValue(left), getValue(right), dir);
+        });
+      }
+
+      function sortedRows(tableId, rows, valueOf) {
+        const sort = adminSortState(tableId);
+        if (!sort.key) return rows.slice();
+        return sortByKey(rows, function(row) { return valueOf(row, sort.key); }, sort.dir);
+      }
+
+      function headerOpen(id) {
+        if (!Object.prototype.hasOwnProperty.call(state.adminHeaderOpen, id)) return true;
+        return state.adminHeaderOpen[id] !== false;
+      }
+
+      function collapsibleHeader(id, title, bodyHtml) {
+        const open = headerOpen(id);
+        return `<section class="table-header" data-table-header="${escapeHtml(id)}">
+          <div class="table-header-bar"><h2>${escapeHtml(title)}</h2><button type="button" class="button secondary" data-toggle-header="${escapeHtml(id)}" aria-expanded="${open ? 'true' : 'false'}">${open ? 'Hide' : 'Show'}</button></div>
+          <div class="table-header-body"${open ? '' : ' hidden'}>${bodyHtml}</div>
+        </section>`;
+      }
+
+      function bindCollapsibleHeaders(root) {
+        if (!root) return;
+        root.querySelectorAll('[data-toggle-header]').forEach(function(button) {
+          button.addEventListener('click', function() {
+            const id = button.getAttribute('data-toggle-header');
+            const open = !headerOpen(id);
+            state.adminHeaderOpen[id] = open;
+            const section = button.closest('[data-table-header]');
+            const body = section ? section.querySelector('.table-header-body') : null;
+            if (body) body.hidden = !open;
+            button.setAttribute('aria-expanded', open ? 'true' : 'false');
+            button.textContent = open ? 'Hide' : 'Show';
+          });
+        });
+      }
+
+      function listingDialogKind(kind) {
+        return kind === 'admin-record' || kind === 'notice-rule' || kind === 'cohort-token' || kind === 'assignment-anchor';
+      }
+
+      function adminDialogKind() {
+        const dialog = document.getElementById('form-dialog');
+        return dialog && !dialog.hidden ? (dialog.dataset.editor || '') : '';
+      }
+
+      function onAdminDialogKeydown(event) {
+        if (event.key !== 'Escape') return;
+        if (!listingDialogKind(adminDialogKind())) return;
+        event.preventDefault();
+        closeAdminDialog();
+      }
+
+      function closeAdminDialog() {
+        const dialog = document.getElementById('form-dialog');
+        const kind = adminDialogKind();
+        if (!listingDialogKind(kind)) {
+          memberEditorReturn = null;
+          return;
+        }
+        document.removeEventListener('keydown', onAdminDialogKeydown);
+        if (kind === 'admin-record') {
+          state.editingRecord = null;
+          state.originalKey = '';
+        } else if (kind === 'notice-rule') state.noticeEdit = null;
+        else if (kind === 'cohort-token') state.tokenEditId = '';
+        dialog.hidden = true;
+        dialog.innerHTML = '';
+        delete dialog.dataset.editor;
+        dialog.onclick = null;
+        const back = memberEditorReturn;
+        memberEditorReturn = null;
+        if (back && typeof back.focus === 'function' && document.contains(back)) back.focus();
+      }
+
+      function openAdminDialog(kind, markup) {
+        const dialog = document.getElementById('form-dialog');
+        if (!dialog) return;
+        const active = document.activeElement;
+        if (active && active !== document.body && !dialog.contains(active)) memberEditorReturn = active;
+        dialog.hidden = false;
+        dialog.dataset.editor = kind;
+        dialog.innerHTML = markup;
+        dialog.onclick = function(event) {
+          if (event.target === dialog) closeAdminDialog();
+        };
+        dialog.querySelectorAll('[data-close-admin-dialog]').forEach(function(button) {
+          button.addEventListener('click', closeAdminDialog);
+        });
+        document.removeEventListener('keydown', onAdminDialogKeydown);
+        document.addEventListener('keydown', onAdminDialogKeydown);
+        const first = dialog.querySelector('input:not([disabled]), select:not([disabled]), textarea:not([disabled])')
+          || dialog.querySelector('button:not([disabled])');
+        if (first) first.focus();
+      }
+
+      function closeMemberEditor() {
+        if (listingDialogKind(adminDialogKind())) closeAdminDialog();
+        else memberEditorReturn = null;
+      }
+
+      function adminFieldSortValue(field, record) {
+        const value = record[field.name];
+        if (field.type === 'checkbox' || typeof value === 'boolean') return toBoolean(value) ? 1 : 0;
+        if (field.type === 'number') {
+          if (value === '' || value === null || value === undefined) return '';
+          const number = Number(value);
+          return isNaN(number) ? '' : number;
+        }
+        if (field.type === 'date') return String(value || '').slice(0, 10);
+        if (field.type === 'select' || (field.options && field.options.length)) return displayField(field, record);
+        return value === null || value === undefined ? '' : value;
+      }
+
+      function renderAdminData(data, options) {
         state.adminData = data;
         const target = document.getElementById('admin-records') || document.getElementById('admin-content');
         if (!target) return;
@@ -6113,17 +6358,32 @@
         const schemaFields = data.schema && data.schema.fields ? data.schema.fields : (data.headers || []).map(function(name) { return { name: name }; });
         const records = data.records || [];
         const columns = schemaFields.filter(function(field) { return field.table !== false; });
-        if (entity === 'cohortMembers') state.selectedMemberIds = [];
+        const preserveSelection = !!(options && options.preserveSelection);
+        if (entity === 'cohortMembers' && !preserveSelection) state.selectedMemberIds = [];
         const isCohortMembers = entity === 'cohortMembers';
         const addLabel = singularSection(sectionLabel(entity));
         const staffNav = entity === 'staffUsers' ? staffSectionNav() : '';
-        target.innerHTML = `${staffNav}${entity === 'ticketCategories' ? '<p class="lede">These names are the choices a student sees when they send a message. Who they message sends it to that student\'s supervisor or to the EE Coordinator.</p>' : ''}<div class="toolbar"><button type="button" class="button" id="new-record">Add ${escapeHtml(addLabel)}</button>${isCohortMembers ? '<button type="button" class="button secondary" id="open-roster-import">Import CSV / paste</button><button type="button" class="button secondary" id="create-selected-users" disabled>Add selected as users</button><label><input type="checkbox" id="select-all-members"> Select all</label><span id="selected-count" class="muted">0 selected</span>' : ''}<span class="muted">${records.length} record${records.length === 1 ? '' : 's'}</span></div>
+        const tableId = 'admin:' + entity;
+        const indexed = records.map(function(record, index) { return { record: record, index: index }; });
+        const sorted = sortedRows(tableId, indexed, function(item, key) {
+          const field = columns.filter(function(column) { return column.name === key; })[0];
+          return field ? adminFieldSortValue(field, item.record) : '';
+        });
+        const selectionHeader = isCohortMembers ? collapsibleHeader('cohort-member-selection', 'Selection and import', '<div class="toolbar"><button type="button" class="button secondary" id="open-roster-import">Import CSV / paste</button><button type="button" class="button secondary" id="create-selected-users" disabled>Add selected as users</button><label><input type="checkbox" id="select-all-members"> Select all</label><span id="selected-count" class="muted">0 selected</span></div>') : '';
+        const categoryNote = entity === 'ticketCategories' ? '<p class="lede">These names are the choices a student sees when they send a message. Who they message sends it to that student\'s supervisor or to the EE Coordinator.</p>' : '';
+        target.innerHTML = `${staffNav}${categoryNote}<div class="toolbar"><button type="button" class="button" id="new-record">Add ${escapeHtml(addLabel)}</button><span class="muted">${records.length} record${records.length === 1 ? '' : 's'}</span></div>
+          ${selectionHeader}
           ${state.status ? `<p class="status">${escapeHtml(state.status)}</p>` : ''}
-          ${records.length ? `<div class="table-wrap"><table><thead><tr>${isCohortMembers ? '<th><span class="sr-only">Select</span></th>' : ''}${columns.map(function(field) { return `<th>${escapeHtml(field.label || field.name)}</th>`; }).join('')}<th>Actions</th></tr></thead><tbody>${records.map(function(record, index) {
-            return `<tr>${isCohortMembers ? `<td><input type="checkbox" data-select-member value="${escapeHtml(record.StudentId)}" ${record.hasStudentIdConflict ? 'disabled title="Resolve Student ID conflicts first"' : ''}></td>` : ''}${columns.map(function(field) { return `<td>${escapeHtml(displayField(field, record))}</td>`; }).join('')}<td><div class="actions"><button type="button" class="link-button" data-edit="${index}" ${record.hasStudentIdConflict ? 'disabled title="Reconcile duplicate Student ID values first"' : ''}>Edit</button><button type="button" class="link-button" data-delete="${index}">Delete</button></div>${record.hasStudentIdConflict ? '<div class="notice">Duplicate Student ID values disagree.</div>' : ''}</td></tr>`;
+          ${records.length ? `<div class="table-wrap"><table><thead><tr>${isCohortMembers ? '<th scope="col"><span class="sr-only">Select</span></th>' : ''}${columns.map(function(field) { return sortableHeader(tableId, field.name, field.label || field.name); }).join('')}<th scope="col">Actions</th></tr></thead><tbody>${sorted.map(function(item) {
+            const record = item.record;
+            const index = item.index;
+            const selected = isCohortMembers && state.selectedMemberIds.indexOf(record.StudentId) >= 0;
+            return `<tr>${isCohortMembers ? `<td><input type="checkbox" data-select-member value="${escapeHtml(record.StudentId)}" ${selected ? 'checked' : ''} ${record.hasStudentIdConflict ? 'disabled title="Resolve Student ID conflicts first"' : ''}></td>` : ''}${columns.map(function(field) { return `<td>${escapeHtml(displayField(field, record))}</td>`; }).join('')}<td><div class="actions"><button type="button" class="link-button" data-edit="${index}" ${record.hasStudentIdConflict ? 'disabled title="Reconcile duplicate Student ID values first"' : ''}>Edit</button><button type="button" class="link-button" data-delete="${index}">Delete</button></div>${record.hasStudentIdConflict ? '<div class="notice">Duplicate Student ID values disagree.</div>' : ''}</td></tr>`;
           }).join('')}</tbody></table></div>` : '<div class="empty">No records yet.</div>'}
-          <div id="roster-import-panel"></div><div id="record-editor"></div>`;
+          <div id="roster-import-panel"></div>`;
         document.getElementById('new-record').addEventListener('click', function() { openEditor(null); });
+        bindSortableHeaders(target, function() { renderAdminData(state.adminData, { preserveSelection: true }); });
+        bindCollapsibleHeaders(target);
         if (entity === 'staffUsers') bindStaffPane(target);
         if (isCohortMembers) {
           document.getElementById('open-roster-import').addEventListener('click', openRosterImport);
@@ -6139,6 +6399,7 @@
               updateSelectedCount();
             });
           });
+          updateSelectedCount();
         }
         target.querySelectorAll('[data-edit]').forEach(function(button) {
           button.addEventListener('click', function() { openEditor(records[Number(button.dataset.edit)]); });
@@ -6146,7 +6407,7 @@
         target.querySelectorAll('[data-delete]').forEach(function(button) {
           button.addEventListener('click', function() { removeRecord(records[Number(button.dataset.delete)]); });
         });
-        if (state.editingRecord) openEditor(state.editingRecord.record, true);
+        if (state.editingRecord && adminDialogKind() !== 'admin-record') openEditor(state.editingRecord.record, true);
         updateDriveNamePreview();
       }
 
@@ -6314,8 +6575,7 @@
       function renderDriveFolderPanel() {
         const panel = document.getElementById('drive-folder-panel');
         if (!panel) return;
-        panel.innerHTML = `<h2>Drive folders</h2>
-          <p class="muted">Create one folder per selected student inside the cohort folder. Folders and copied documents are created by the Google account connected in Admin → Google account. Keep the cohort folder where that account can edit. The folder and EE document are shared with the Student Email on the cohort record. No email is sent. A copy of the EE document template is placed in each folder and saved on that student.</p>
+        panel.innerHTML = collapsibleHeader('drive-folders', 'Drive folders', `<p class="muted">Create one folder per selected student inside the cohort folder. Folders and copied documents are created by the Google account connected in Admin → Google account. Keep the cohort folder where that account can edit. The folder and EE document are shared with the Student Email on the cohort record. No email is sent. A copy of the EE document template is placed in each folder and saved on that student.</p>
           <p class="muted" id="drive-actor-label">Checking the connected Google account…</p>
           <div class="form-grid">
             <div class="field wide"><label for="drive-root-url">Cohort folder</label>
@@ -6335,7 +6595,8 @@
           <label class="field check"><input type="checkbox" id="drive-share-student" checked> Share with the Student Email as editor</label>
           <label class="field check"><input type="checkbox" id="drive-share-parent"> Share with the parent as viewer</label>
           <div class="toolbar"><button type="button" class="button secondary" id="check-drive-folders" disabled>Check selected</button><button type="button" class="button" id="update-drive-folders" disabled>Create or update selected</button></div>
-          <div id="drive-folder-results"></div>`;
+          <div id="drive-folder-results"></div>`);
+        bindCollapsibleHeaders(panel);
         document.getElementById('save-drive-root').addEventListener('click', saveDriveRootFromForm);
         document.getElementById('check-drive-folders').addEventListener('click', function() { runDriveFolderJob(true); });
         document.getElementById('update-drive-folders').addEventListener('click', function() { runDriveFolderJob(false); });
@@ -6670,53 +6931,7 @@
 
       let memberEditorReturn = null;
 
-      function onMemberEditorKeydown(event) {
-        if (event.key !== 'Escape') return;
-        const dialog = document.getElementById('form-dialog');
-        if (!dialog || dialog.hidden || dialog.dataset.editor !== 'cohort-member') return;
-        event.preventDefault();
-        closeMemberEditor();
-      }
-
-      function closeMemberEditor() {
-        document.removeEventListener('keydown', onMemberEditorKeydown);
-        const dialog = document.getElementById('form-dialog');
-        const open = !!(dialog && dialog.dataset.editor === 'cohort-member' && !dialog.hidden);
-        if (!open) {
-          memberEditorReturn = null;
-          return;
-        }
-        state.editingRecord = null;
-        state.originalKey = '';
-        dialog.hidden = true;
-        dialog.innerHTML = '';
-        delete dialog.dataset.editor;
-        dialog.onclick = null;
-        const back = memberEditorReturn;
-        memberEditorReturn = null;
-        if (back && typeof back.focus === 'function' && document.contains(back)) back.focus();
-      }
-
-      function openMemberEditorDialog(markup) {
-        const dialog = document.getElementById('form-dialog');
-        if (!dialog) return;
-        const active = document.activeElement;
-        if (active && active !== document.body && !dialog.contains(active)) memberEditorReturn = active;
-        dialog.hidden = false;
-        dialog.dataset.editor = 'cohort-member';
-        dialog.innerHTML = markup;
-        dialog.onclick = function(event) {
-          if (event.target === dialog) closeMemberEditor();
-        };
-        const closeButton = document.getElementById('close-member-editor');
-        if (closeButton) closeButton.addEventListener('click', closeMemberEditor);
-        document.removeEventListener('keydown', onMemberEditorKeydown);
-        document.addEventListener('keydown', onMemberEditorKeydown);
-        const first = dialog.querySelector('input:not([disabled]), select:not([disabled]), textarea:not([disabled])');
-        if (first) first.focus();
-      }
-
-      function openEditor(record, preserve, phaseOptionsLoaded) {
+      function openEditor(record, preserve) {
         if (state.adminEntity === 'resources') {
           openResourceEditor(record, preserve);
           return;
@@ -6728,35 +6943,23 @@
         const editing = !!record || !!(preserve && state.originalKey);
         const source = record || (state.editingRecord && state.editingRecord.record) || null;
         state.originalKey = editing ? keyValue(entity, source) : '';
-        const useModal = entity === 'cohortMembers';
         const studentName = source ? (source['Display Name'] || source.StudentId || '') : '';
-        const title = useModal ? (editing ? ('Edit ' + (studentName || 'student')) : 'Add student') : (editing ? 'Edit record' : 'Add record');
+        const noun = singularSection(sectionLabel(entity));
+        const title = entity === 'cohortMembers'
+          ? (editing ? ('Edit ' + (studentName || 'student')) : 'Add student')
+          : (editing ? 'Edit ' + noun : 'Add ' + noun);
         const formFields = fields.filter(function(field) { return field.form !== false; }).map(function(field) {
           return fieldMarkup(field, source ? source[field.name] : undefined, editing);
         }).join('');
         const formMarkup = `${entity === 'studentUsers' && !editing ? '<div id="cohort-import"></div>' : ''}
           <form id="record-form"><div class="form-grid">${formFields}</div>
-            ${useModal ? '<p class="notice error" id="member-save-error" hidden></p>' : ''}
+            <p class="notice error" id="member-save-error" hidden></p>
             <div class="toolbar"><button class="button" type="submit">Save</button><button class="button secondary" type="button" id="cancel-edit">Cancel</button></div></form>`;
-        if (useModal) {
-          openMemberEditorDialog(`<div class="form-panel member-editor" role="dialog" aria-modal="true" aria-labelledby="member-editor-title"><div class="toolbar"><h2 id="member-editor-title">${escapeHtml(title)}</h2><button type="button" class="button secondary" id="close-member-editor">Close</button></div>${formMarkup}</div>`);
-        } else {
-          const editor = document.getElementById('record-editor');
-          if (!editor) return;
-          editor.innerHTML = `<section class="editor"><h2>${escapeHtml(title)}</h2>${formMarkup}</section>`;
-        }
+        openAdminDialog('admin-record', `<div class="form-panel member-editor" role="dialog" aria-modal="true" aria-labelledby="record-editor-title"><div class="toolbar"><h2 id="record-editor-title">${escapeHtml(title)}</h2><button type="button" class="button secondary" data-close-admin-dialog>Close</button></div>${formMarkup}</div>`);
         const form = document.getElementById('record-form');
         if (!form) return;
         form.addEventListener('submit', saveForm);
-        document.getElementById('cancel-edit').addEventListener('click', function() {
-          if (useModal) closeMemberEditor();
-          else {
-            state.editingRecord = null;
-            state.originalKey = '';
-            const editor = document.getElementById('record-editor');
-            if (editor) editor.innerHTML = '';
-          }
-        });
+        document.getElementById('cancel-edit').addEventListener('click', closeAdminDialog);
         if (entity === 'studentUsers' && !editing) renderCohortImport();
       }
 
@@ -6771,8 +6974,7 @@
         };
         const audience = value('Audience', 'all');
         const format = String(value('Body Format', 'plain') || 'plain').toLowerCase();
-        const editor = document.getElementById('record-editor');
-        editor.innerHTML = `<section class="editor"><h2>${editing ? 'Edit resource' : 'Add resource'}</h2>
+        openAdminDialog('admin-record', `<div class="form-panel member-editor resource-modal" role="dialog" aria-modal="true" aria-labelledby="record-editor-title"><div class="toolbar"><h2 id="record-editor-title">${editing ? 'Edit resource' : 'Add resource'}</h2><button type="button" class="button secondary" data-close-admin-dialog>Close</button></div>
           <form id="record-form">${editing ? `<input type="hidden" data-field="Resource ID" value="${escapeHtml(source['Resource ID'] || '')}">` : ''}<div class="resource-editor-layout"><div class="resource-editor-fields"><div class="form-grid">
             <div class="field"><label>Title *</label><input data-field="Title" value="${escapeHtml(value('Title', ''))}" required></div>
             <div class="field"><label>Category</label><input data-field="Category" value="${escapeHtml(value('Category', ''))}"></div>
@@ -6792,18 +6994,15 @@
           <label class="field check"><input type="checkbox" id="live-preview" checked> Live preview</label>
           <p class="notice error" id="resource-save-error" hidden></p></div>
           <aside class="resource-preview"><p class="eyebrow">Preview</p><div id="resource-preview-card"></div></aside></div>
-          <div class="toolbar"><button class="button" type="submit">Save</button><button class="button secondary" type="button" id="cancel-edit">Cancel</button></div></form></section>`;
+          <div class="toolbar"><button class="button" type="submit">Save</button><button class="button secondary" type="button" id="cancel-edit">Cancel</button></div></form></div>`);
         const form = document.getElementById('record-form');
+        if (!form) return;
         form.addEventListener('submit', saveForm);
-        document.getElementById('cancel-edit').addEventListener('click', function() {
-          state.editingRecord = null;
-          state.originalKey = '';
-          document.getElementById('record-editor').innerHTML = '';
-        });
+        document.getElementById('cancel-edit').addEventListener('click', closeAdminDialog);
         const live = document.getElementById('live-preview');
         function paintResourcePreview() {
           const card = document.getElementById('resource-preview-card');
-          if (!card || !live.checked) return;
+          if (!card || !live || !live.checked) return;
           const draft = {};
           form.querySelectorAll('[data-field]').forEach(function(input) {
             draft[input.dataset.field] = input.type === 'checkbox' ? input.checked : input.value;
@@ -6816,7 +7015,7 @@
         }
         form.addEventListener('input', paintResourcePreview);
         form.addEventListener('change', paintResourcePreview);
-        live.addEventListener('change', paintResourcePreview);
+        if (live) live.addEventListener('change', paintResourcePreview);
         paintResourcePreview();
       }
 
@@ -6905,7 +7104,7 @@
         request.then(function(result) {
           state.status = result && result.auditWarning ? 'Saved, but the completion audit entry could not be written. Check AUDIT_LOGS.' : 'Saved.';
           memberEditorReturn = null;
-          if (entity === 'cohortMembers') closeMemberEditor();
+          if (adminDialogKind() === 'admin-record') closeAdminDialog();
           else {
             state.editingRecord = null;
             state.originalKey = '';
@@ -7063,16 +7262,18 @@
           ? '<button type="button" class="button" id="notice-send-today">Send today’s emails</button>'
           : '';
         target.innerHTML = `<div class="notify-desk">${head}${mailLine}
-          <div class="toolbar">
+          ${collapsibleHeader('notice-filters', 'Filters', `<div class="toolbar">
             <label for="notice-cohort">Cohort</label><select id="notice-cohort">${noticeOptions(desk.cohorts || [], state.noticeCohortId, 'id', 'name')}</select>
             <label for="notice-milestone">Milestone</label><select id="notice-milestone"><option value="">All milestones</option>${noticeOptions(milestones, state.noticeMilestoneId, 'milestoneId', 'title')}${milestoneKnown ? '' : `<option value="${escapeHtml(state.noticeMilestoneId)}" selected>${escapeHtml(state.noticeMilestoneId)}</option>`}</select>
             <button type="button" class="button secondary" id="notice-preview">Preview today</button>${sendToday}
-          </div>
+          </div>`)}
           ${noticeSectionMarkup('rule', editRules, editOverlays, actor, canSend)}
           ${noticeSectionMarkup('overlay', editRules, editOverlays, actor, canSend)}
           ${noticeLogMarkup()}
           <div id="notice-preview-result"></div>
         </div>`;
+        bindCollapsibleHeaders(target);
+        bindSortableHeaders(target, function() { paintEmailDesk(target, back); });
         bindEmailDesk(target, back);
       }
 
@@ -7085,9 +7286,27 @@
         return status || 'Sent';
       }
 
+      function noticeSortValue(row, key) {
+        if (key === 'milestone') return row.milestoneTitle || '';
+        if (key === 'when') {
+          if (row.when === 'before') return -(Number(row.days) || 0);
+          if (row.when === 'after') return Number(row.days) || 0;
+          if (row.when === 'on') return 0;
+          return row.timingLabel || row.timing || '';
+        }
+        if (key === 'who') return row.audienceLabel || '';
+        if (key === 'students') return noticeStudentName(row.studentId);
+        if (key === 'on') return row.enabled ? 1 : 0;
+        if (key === 'sent') return row.sentAt || '';
+        if (key === 'student') return row.studentName || row.studentId || '';
+        if (key === 'to') return (row.recipients || []).join(', ');
+        if (key === 'status') return row.status || '';
+        return '';
+      }
+
       function noticeLogMarkup() {
-        const rows = (state.noticeDesk && state.noticeDesk.sends) || [];
-        const body = rows.length ? `<div class="table-wrap"><table class="notify-table"><thead><tr><th>When</th><th>Student</th><th>Milestone</th><th>To</th><th>Status</th></tr></thead><tbody>${rows.map(function(row) {
+        const rows = sortedRows('notice-log', (state.noticeDesk && state.noticeDesk.sends) || [], noticeSortValue);
+        const body = rows.length ? `<div class="table-wrap"><table class="notify-table"><thead><tr>${sortableHeader('notice-log', 'sent', 'When')}${sortableHeader('notice-log', 'student', 'Student')}${sortableHeader('notice-log', 'milestone', 'Milestone')}${sortableHeader('notice-log', 'to', 'To')}${sortableHeader('notice-log', 'status', 'Status')}</tr></thead><tbody>${rows.map(function(row) {
           const who = row.ruleKind === 'overlay' ? 'Supervisor reminder' : 'Cohort rule';
           const detail = [who, row.timing, row.audienceLabel, row.subject].filter(Boolean).join(' · ');
           return `<tr><td>${escapeHtml(formatActivityWhen(row.sentAt))}</td><td>${escapeHtml(row.studentName || row.studentId || '—')}</td><td><strong>${escapeHtml(row.milestoneTitle || row.milestoneId)}</strong><div class="notify-meta">${escapeHtml(detail)}</div>${row.error ? `<div class="notify-meta">${escapeHtml(row.error)}</div>` : ''}</td><td>${escapeHtml((row.recipients || []).join(', ') || '—')}</td><td>${escapeHtml(noticeStatusLabel(row.status))}</td></tr>`;
@@ -7109,15 +7328,15 @@
           : (editRules
             ? 'These apply to every student in the cohort. Choose the days before or after the due date, and who receives the email.'
             : 'Cohort rules are set by the coordinator. This view is read-only.');
-        const editing = state.noticeEdit && state.noticeEdit.kind === kind;
         const empty = overlay
           ? 'No extra reminders for this filter.'
           : 'No cohort rules for this filter.';
+        const tableId = overlay ? 'notice-overlay' : 'notice-rule';
+        const sorted = sortedRows(tableId, rows, noticeSortValue);
         return `<section class="notify-card${overlay ? ' overlay' : ''}" aria-labelledby="notice-${kind}-heading">
           <div class="toolbar"><h2 id="notice-${kind}-heading">${title}</h2>${canCreate ? `<button type="button" class="button" data-notice-new="${kind}">${overlay ? 'New reminder' : 'New rule'}</button>` : ''}</div>
           <p class="muted">${intro}</p>
-          ${editing ? noticeEditorMarkup(kind, actor) : ''}
-          ${rows.length ? `<div class="table-wrap"><table class="notify-table"><thead><tr><th>Milestone</th><th>When</th><th>Who receives it</th>${overlay ? '<th>Students</th>' : ''}<th>On</th><th></th></tr></thead><tbody>${rows.map(function(row) { return noticeRowMarkup(row, kind, editRules, editOverlays, actor, canSend); }).join('')}</tbody></table></div>` : `<div class="empty">${empty}</div>`}
+          ${sorted.length ? `<div class="table-wrap"><table class="notify-table"><thead><tr>${sortableHeader(tableId, 'milestone', 'Milestone')}${sortableHeader(tableId, 'when', 'When')}${sortableHeader(tableId, 'who', 'Who receives it')}${overlay ? sortableHeader(tableId, 'students', 'Students') : ''}${sortableHeader(tableId, 'on', 'On')}<th></th></tr></thead><tbody>${sorted.map(function(row) { return noticeRowMarkup(row, kind, editRules, editOverlays, actor, canSend); }).join('')}</tbody></table></div>` : `<div class="empty">${empty}</div>`}
         </section>`;
       }
 
@@ -7159,8 +7378,7 @@
           }).join('')}</select></div>`
           : '';
         const milestone = noticeMilestone(current.milestoneId);
-        return `<section class="editor notify-form"><h3>${edit.id === 'new' ? (kind === 'overlay' ? 'New reminder' : 'New rule') : 'Edit reminder'}</h3>
-          <div class="form-grid">
+        return `<div class="form-grid">
             <div class="field"><label for="notice-form-milestone">Milestone</label><select id="notice-form-milestone">${noticeOptions(state.noticeDesk.milestones || [], current.milestoneId, 'milestoneId', 'title')}</select></div>
             <div class="field"><label for="notice-when">When</label><select id="notice-when">
               <option value="before" ${current.when === 'before' ? 'selected' : ''}>Before the due date</option>
@@ -7176,25 +7394,51 @@
             <label class="field check"><input type="checkbox" id="notice-enabled" ${current.enabled ? 'checked' : ''}> On</label>
             <div class="field wide"><label for="notice-note">Note in the email</label><textarea id="notice-note" maxlength="1000">${escapeHtml(current.note || '')}</textarea><p class="muted" id="notice-hint">${escapeHtml(noticeHint(current.audience, milestone ? milestone.mOwner : 'student'))}</p></div>
           </div>
-          <div class="toolbar"><button type="button" class="button" id="notice-save">Save</button><button type="button" class="button secondary" id="notice-cancel">Cancel</button></div>
-        </section>`;
+          <div class="toolbar"><button type="button" class="button" id="notice-save">Save</button><button type="button" class="button secondary" id="notice-cancel">Cancel</button></div>`;
+      }
+
+      function openNoticeEditor(target, back) {
+        const edit = state.noticeEdit;
+        if (!edit || !state.noticeDesk) return;
+        const actor = state.noticeDesk.actorEmail || '';
+        const title = edit.id === 'new' ? (edit.kind === 'overlay' ? 'New reminder' : 'New rule') : 'Edit reminder';
+        openAdminDialog('notice-rule', `<div class="form-panel member-editor" role="dialog" aria-modal="true" aria-labelledby="notice-editor-title"><div class="toolbar"><h2 id="notice-editor-title">${escapeHtml(title)}</h2><button type="button" class="button secondary" data-close-admin-dialog>Close</button></div>${noticeEditorMarkup(edit.kind, actor)}</div>`);
+        const cancel = document.getElementById('notice-cancel');
+        if (cancel) cancel.addEventListener('click', closeAdminDialog);
+        const save = document.getElementById('notice-save');
+        if (save) save.addEventListener('click', function() { saveNoticeEditor(target, back, save); });
+        syncNoticeDays();
+        const when = document.getElementById('notice-when');
+        const audience = document.getElementById('notice-audience');
+        const formMilestone = document.getElementById('notice-form-milestone');
+        if (when) when.addEventListener('change', syncNoticeDays);
+        function refreshHint() {
+          const hint = document.getElementById('notice-hint');
+          const selected = formMilestone ? noticeMilestone(formMilestone.value) : null;
+          if (hint && audience) hint.textContent = noticeHint(audience.value, selected ? selected.mOwner : 'student');
+        }
+        if (audience) audience.addEventListener('change', refreshHint);
+        if (formMilestone) formMilestone.addEventListener('change', refreshHint);
       }
 
       function bindEmailDesk(target, back) {
         const cohort = document.getElementById('notice-cohort');
         const milestone = document.getElementById('notice-milestone');
         if (cohort) cohort.addEventListener('change', function() {
+          if (adminDialogKind() === 'notice-rule') closeAdminDialog();
           state.noticeCohortId = cohort.value;
           state.noticeEdit = null;
           renderEmailDesk(target, { back: back });
         });
         if (milestone) milestone.addEventListener('change', function() {
+          if (adminDialogKind() === 'notice-rule') closeAdminDialog();
           state.noticeMilestoneId = milestone.value;
           state.noticeEdit = null;
           renderEmailDesk(target, { back: back });
         });
         const backButton = document.getElementById('email-desk-back');
         if (backButton) backButton.addEventListener('click', function() {
+          if (adminDialogKind() === 'notice-rule') closeAdminDialog();
           state.emailDesk = false;
           state.noticeEdit = null;
           renderStaffHome();
@@ -7202,15 +7446,13 @@
         target.querySelectorAll('[data-notice-new]').forEach(function(button) {
           button.addEventListener('click', function() {
             state.noticeEdit = { kind: button.dataset.noticeNew, id: 'new' };
-            paintEmailDesk(target, back);
-            const field = document.getElementById('notice-form-milestone');
-            if (field) field.focus();
+            openNoticeEditor(target, back);
           });
         });
         target.querySelectorAll('[data-notice-edit]').forEach(function(button) {
           button.addEventListener('click', function() {
             state.noticeEdit = { kind: button.dataset.noticeEdit, id: button.dataset.noticeId };
-            paintEmailDesk(target, back);
+            openNoticeEditor(target, back);
           });
         });
         target.querySelectorAll('[data-notice-delete]').forEach(function(button) {
@@ -7221,6 +7463,7 @@
             const method = kind === 'overlay' ? 'deleteNotificationOverlay' : 'deleteNotificationRule';
             callServer(method, button.dataset.noticeId).then(function() {
               showSuccess('Deleted.');
+              if (adminDialogKind() === 'notice-rule') closeAdminDialog();
               state.noticeEdit = null;
               renderEmailDesk(target, { back: back });
             }).catch(showError);
@@ -7278,25 +7521,6 @@
             showError(error);
           });
         });
-        const cancel = document.getElementById('notice-cancel');
-        if (cancel) cancel.addEventListener('click', function() {
-          state.noticeEdit = null;
-          paintEmailDesk(target, back);
-        });
-        const save = document.getElementById('notice-save');
-        if (save) save.addEventListener('click', function() { saveNoticeEditor(target, back, save); });
-        syncNoticeDays();
-        const when = document.getElementById('notice-when');
-        const audience = document.getElementById('notice-audience');
-        const formMilestone = document.getElementById('notice-form-milestone');
-        if (when) when.addEventListener('change', syncNoticeDays);
-        function refreshHint() {
-          const hint = document.getElementById('notice-hint');
-          const selected = formMilestone ? noticeMilestone(formMilestone.value) : null;
-          if (hint && audience) hint.textContent = noticeHint(audience.value, selected ? selected.mOwner : 'student');
-        }
-        if (audience) audience.addEventListener('change', refreshHint);
-        if (formMilestone) formMilestone.addEventListener('change', refreshHint);
       }
 
       function syncNoticeDays() {
@@ -7331,7 +7555,7 @@
         const method = edit.kind === 'overlay' ? 'saveNotificationOverlay' : 'saveNotificationRule';
         callServer(method, payload).then(function() {
           showSuccess('Saved.');
-          state.noticeEdit = null;
+          closeAdminDialog();
           renderEmailDesk(target, { back: back });
         }).catch(function(error) {
           button.disabled = false;
@@ -7357,9 +7581,11 @@
       }
 
       function openNoticeSend(kind, ruleId, target, back) {
+        if (listingDialogKind(adminDialogKind())) closeAdminDialog();
         const dialog = document.getElementById('form-dialog');
         if (!dialog) return;
         dialog.hidden = false;
+        delete dialog.dataset.editor;
         dialog.innerHTML = '<div class="form-panel notify-send-panel" role="dialog" aria-modal="true" aria-labelledby="notice-send-title"><div class="toolbar"><h2 id="notice-send-title">Preview and send</h2><button type="button" class="button secondary" id="notice-send-close">Close</button></div><p class="muted">Checking who would be emailed today…</p></div>';
         const close = document.getElementById('notice-send-close');
         if (close) close.addEventListener('click', closeNoticeSend);
@@ -7496,11 +7722,13 @@
       function sortedQuotaRows() {
         const rows = state.quotaRows.slice();
         const dir = state.quotaDir === -1 ? -1 : 1;
+        const valueOf = function(row) {
+          if (state.quotaSort === 'department') return row.department || '';
+          if (state.quotaSort === 'quota') return row.quota === '' ? '' : Number(row.quota);
+          return row.displayName || '';
+        };
         rows.sort(function(left, right) {
-          const primary = state.quotaSort === 'department'
-            ? (left.department || '\uffff').toLowerCase().localeCompare((right.department || '\uffff').toLowerCase())
-            : left.displayName.toLowerCase().localeCompare(right.displayName.toLowerCase());
-          return primary * dir || left.displayName.toLowerCase().localeCompare(right.displayName.toLowerCase());
+          return compareSortValues(valueOf(left), valueOf(right), dir) || left.displayName.toLowerCase().localeCompare(right.displayName.toLowerCase());
         });
         return rows;
       }
@@ -7515,9 +7743,13 @@
           if (state.quotaSort !== key) return '';
           return state.quotaDir === -1 ? ' ↓' : ' ↑';
         };
+        const quotaAria = function(key) {
+          if (state.quotaSort !== key) return 'none';
+          return state.quotaDir === -1 ? 'descending' : 'ascending';
+        };
         target.innerHTML = `${staffSectionNav()}
           <p class="lede">EE subjects on the staff record are the standing list of what someone can supervise. Quota is how many supervisor tokens to create for a cohort. Applying tokens adds missing slots and leaves draft or committed tokens in place.</p>
-          <div class="alloc-batch">
+          ${collapsibleHeader('quota-selection', 'Selection', `<div class="alloc-batch">
             <label><input type="checkbox" id="quota-select-all" ${rows.length && rows.every(function(row) { return state.quotaSelected.indexOf(row.email) >= 0; }) ? 'checked' : ''}> Select all</label>
             <span class="muted">${selectedCount} selected</span>
             <label for="quota-bulk">Quota for selected</label>
@@ -7530,12 +7762,12 @@
           }).join('') : '<span class="muted">Add active subjects under Admin → Subjects.</span>'}
             <button type="button" class="button secondary" id="quota-add-subjects">Add subjects to selected</button>
             <button type="button" class="button secondary" id="quota-remove-subjects">Remove subjects from selected</button>
-          </div>
+          </div>`)}
           <div class="quota-layout"><div class="table-wrap"><table class="quota-table"><thead><tr>
             <th><span class="sr-only">Select</span></th>
-            <th><button type="button" class="sort-button" data-quota-sort="name">Display name${sortMark('name')}</button></th>
-            <th><button type="button" class="sort-button" data-quota-sort="department">Primary department${sortMark('department')}</button></th>
-            <th>Quota</th>
+            <th scope="col" aria-sort="${quotaAria('name')}"><button type="button" class="sort-button" data-quota-sort="name">Display name${sortMark('name')}</button></th>
+            <th scope="col" aria-sort="${quotaAria('department')}"><button type="button" class="sort-button" data-quota-sort="department">Primary department${sortMark('department')}</button></th>
+            <th scope="col" aria-sort="${quotaAria('quota')}"><button type="button" class="sort-button" data-quota-sort="quota">Quota${sortMark('quota')}</button></th>
             <th>EE subjects</th>
           </tr></thead><tbody>${rows.length ? rows.map(function(row) {
             return `<tr>
@@ -7561,6 +7793,7 @@
             </footer>
           </aside></div>`;
         bindStaffPane(target);
+        bindCollapsibleHeaders(target);
         bindStaffQuotas();
         paintQuotaDashboard();
         if (focused) {
@@ -7855,11 +8088,17 @@
         const openSupervisors = supervisors.filter(function(person) { return person.available > 0; });
         const publish = desk.publish || { drafts: 0, clears: 0, blocked: 0 };
         const summary = desk.summary || { staffCount: 0, tokenCount: 0, activeStudents: 0, buffer: 0 };
-        return `<div class="toolbar"><label for="alloc-cohort">Cohort</label><select id="alloc-cohort">${state.allocationCohorts.map(function(cohort) {
+        const sortHeader = function(key, label) {
+          const active = state.allocationSort === key;
+          const mark = !active ? '' : state.allocationSortDir === -1 ? ' ↓' : ' ↑';
+          const aria = !active ? 'none' : state.allocationSortDir === -1 ? 'descending' : 'ascending';
+          return `<div role="columnheader" aria-sort="${aria}"><button type="button" class="sort-button" data-alloc-sort="${escapeHtml(key)}">${escapeHtml(label)}${mark}</button></div>`;
+        };
+        return `<div class="alloc-layout"><div>
+            ${collapsibleHeader('alloc-filters', 'Filters and selection', `<div class="toolbar"><label for="alloc-cohort">Cohort</label><select id="alloc-cohort">${state.allocationCohorts.map(function(cohort) {
           return `<option value="${escapeHtml(cohort.id)}" ${cohort.id === state.cohortId ? 'selected' : ''}>${escapeHtml(cohort.name)}</option>`;
         }).join('')}</select><span class="muted">${summary.activeStudents} active students · ${summary.tokenCount} tokens · ${summary.buffer >= 0 ? '+' + summary.buffer + ' buffer' : 'short by ' + (-summary.buffer)}</span></div>
-          ${desk.warnings && desk.warnings.length ? `<p class="notice">${escapeHtml(desk.warnings[0])}</p>` : ''}
-          <div class="alloc-layout"><div>
+            ${desk.warnings && desk.warnings.length ? `<p class="notice">${escapeHtml(desk.warnings[0])}</p>` : ''}
             <div class="alloc-filters">
               <div><span class="alloc-kicker">Status</span><div class="view-toggle" role="group" aria-label="Status">
                 ${[['all', 'All'], ['unallocated', 'Unallocated'], ['draft', 'Drafted']].map(function(item) {
@@ -7867,7 +8106,7 @@
                 }).join('')}
               </div></div>
               <div><label for="alloc-support">Support flag</label><select id="alloc-support"><option value="all" ${state.allocationSupport === 'all' ? 'selected' : ''}>All students</option><option value="flagged" ${state.allocationSupport === 'flagged' ? 'selected' : ''}>Flagged only</option></select></div>
-              <div><label for="alloc-sort">Sort by</label><select id="alloc-sort"><option value="name" ${state.allocationSort === 'name' ? 'selected' : ''}>Name (A-Z)</option><option value="status" ${state.allocationSort === 'status' ? 'selected' : ''}>Status</option>${sortable.map(function(column) {
+              <div><label for="alloc-sort">Sort by</label><select id="alloc-sort"><option value="name" ${state.allocationSort === 'name' ? 'selected' : ''}>Name</option><option value="supervisor" ${state.allocationSort === 'supervisor' ? 'selected' : ''}>Supervisor</option><option value="subject" ${state.allocationSort === 'subject' ? 'selected' : ''}>Requested subjects</option><option value="status" ${state.allocationSort === 'status' ? 'selected' : ''}>Status</option>${sortable.map(function(column) {
                 return `<option value="${escapeHtml(column.key)}" ${state.allocationSort === column.key ? 'selected' : ''}>${escapeHtml(column.key)}</option>`;
               }).join('')}</select></div>
             </div>
@@ -7880,9 +8119,9 @@
               }).join('')}</select>
               <button type="button" class="button" id="alloc-batch-assign">Assign</button>
               <span class="muted">${state.allocationSelected.length} selected</span>
-            </div>
+            </div>`)}
             <div class="alloc-table">
-              <div class="alloc-head"><div></div><div>Student</div><div>Supervisor</div><div>Requested subjects</div></div>
+              <div class="alloc-head"><div></div>${sortHeader('name', 'Student')}${sortHeader('supervisor', 'Supervisor')}${sortHeader('subject', 'Requested subjects')}</div>
               ${students.length ? students.map(function(student) { return allocationRowMarkup(student, supervisors); }).join('') : '<div class="empty">No students in this view.</div>'}
             </div>
           </div>
@@ -7970,7 +8209,7 @@
             </section>
             <section class="alloc-panel"><h2>Dashboard fields</h2>
               <p class="muted">These columns were detected in the latest COHORTDATA import.</p>
-              ${columns.length ? `<div class="table-wrap"><table><thead><tr><th>Imported column</th><th>Show on card</th><th>Filterable</th><th>Sortable</th></tr></thead><tbody>${columns.map(function(key) {
+              ${columns.length ? `<div class="table-wrap"><table><thead><tr>${sortableHeader('alloc-columns', 'column', 'Imported column')}<th>Show on card</th><th>Filterable</th><th>Sortable</th></tr></thead><tbody>${sortedRows('alloc-columns', columns, function(key) { return key; }).map(function(key) {
                 const column = flags[key] || {};
                 return `<tr><td><code>${escapeHtml(key)}</code></td>${['showOnCard', 'filterable', 'sortable'].map(function(flag) {
                   return `<td><input type="checkbox" data-alloc-col="${escapeHtml(key)}" data-flag="${flag}" ${column[flag] ? 'checked' : ''} aria-label="${escapeHtml(flag + ' ' + key)}"></td>`;
@@ -7984,6 +8223,7 @@
       function bindAllocation(target, desk) {
         const cohort = document.getElementById('alloc-cohort');
         if (cohort) cohort.addEventListener('change', function(event) {
+          if (adminDialogKind() === 'cohort-token') closeAdminDialog();
           state.cohortId = event.target.value;
           state.allocationSelected = [];
           state.allocationSubjects = {};
@@ -7999,7 +8239,27 @@
         const support = document.getElementById('alloc-support');
         if (support) support.addEventListener('change', function(event) { state.allocationSupport = event.target.value; paintAllocation(); });
         const sort = document.getElementById('alloc-sort');
-        if (sort) sort.addEventListener('change', function(event) { state.allocationSort = event.target.value; paintAllocation(); });
+        if (sort) sort.addEventListener('change', function(event) {
+          state.allocationSort = event.target.value;
+          state.allocationSortDir = 1;
+          paintAllocation();
+        });
+        bindCollapsibleHeaders(target);
+        bindSortableHeaders(target, function() {
+          captureAllocationColumns();
+          paintAllocation();
+        });
+        target.querySelectorAll('[data-alloc-sort]').forEach(function(button) {
+          button.addEventListener('click', function() {
+            const key = button.getAttribute('data-alloc-sort');
+            if (state.allocationSort === key) state.allocationSortDir = state.allocationSortDir === -1 ? 1 : -1;
+            else {
+              state.allocationSort = key;
+              state.allocationSortDir = 1;
+            }
+            paintAllocation();
+          });
+        });
         const selectAll = document.getElementById('alloc-select-all');
         if (selectAll) selectAll.addEventListener('change', function(event) {
           const visible = visibleAllocationStudents(desk).map(function(student) { return student.studentId; });
@@ -8080,14 +8340,21 @@
       }
 
       function cohortTokensMarkup(board) {
-        const tokens = board.tokens || [];
+        const tokens = sortedRows('cohort-tokens', board.tokens || [], function(token, key) {
+          if (key === 'staff') return token.staffName || '';
+          if (key === 'subjects') return (token.eligibleSubjects || []).join(', ');
+          if (key === 'status') return token.status || '';
+          if (key === 'student') return token.allocatedTo || '';
+          if (key === 'assigned') return token.assignedSubject || '';
+          return '';
+        });
         const subjects = board.subjects || [];
+        const tableId = 'cohort-tokens';
         return `<div class="toolbar"><label for="alloc-cohort">Cohort</label><select id="alloc-cohort">${state.allocationCohorts.map(function(cohort) {
           return `<option value="${escapeHtml(cohort.id)}" ${cohort.id === state.cohortId ? 'selected' : ''}>${escapeHtml(cohort.name)}</option>`;
         }).join('')}</select><button type="button" class="button secondary" id="alloc-open-quotas">Edit EE quotas</button><span class="muted">${tokens.length} token${tokens.length === 1 ? '' : 's'}</span></div>
           <p class="muted">These slots already belong to ${escapeHtml(board.cohortId)}. Adding tokens does not remove the ones here. A published token has to go back to draft on the dashboard before it can be deleted.</p>
-          <section class="alloc-panel"><h2>Add tokens</h2>
-            <div class="alloc-batch">
+          ${collapsibleHeader('token-add', 'Add tokens', `<div class="alloc-batch">
               <label for="token-staff">Staff</label>
               <select id="token-staff"><option value="">Choose staff</option>${(board.staff || []).map(function(person) {
                 return `<option value="${escapeHtml(person.email)}">${escapeHtml(person.displayName)}</option>`;
@@ -8098,29 +8365,59 @@
             </div>
             <div class="quota-pick">${subjects.length ? subjects.map(function(subject) {
               return `<label class="check-option"><input type="checkbox" data-new-token-subject="${escapeHtml(subject)}"> ${escapeHtml(subject)}</label>`;
-            }).join('') : '<span class="muted">No active subjects yet.</span>'}</div>
-          </section>
-          ${tokens.length ? `<div class="table-wrap"><table><thead><tr><th>Staff</th><th>EE subjects</th><th>Status</th><th>Student</th><th>Assigned subject</th><th></th></tr></thead><tbody>${tokens.map(function(token) {
-            const editing = state.tokenEditId === token.id;
-            const choices = subjects.slice();
-            (token.eligibleSubjects || []).forEach(function(subject) {
-              if (!choices.some(function(item) { return item.toLowerCase() === subject.toLowerCase(); })) choices.push(subject);
-            });
-            const subjectCell = editing
-              ? `<div class="quota-pick">${choices.map(function(subject) {
-                const on = (token.eligibleSubjects || []).some(function(item) { return item.toLowerCase() === subject.toLowerCase(); });
-                return `<label class="check-option"><input type="checkbox" data-token-subject="${escapeHtml(subject)}" ${on ? 'checked' : ''}> ${escapeHtml(subject)}</label>`;
-              }).join('')}</div>`
-              : escapeHtml((token.eligibleSubjects || []).join(', ') || 'None');
+            }).join('') : '<span class="muted">No active subjects yet.</span>'}</div>`)}
+          ${tokens.length ? `<div class="table-wrap"><table><thead><tr>${sortableHeader(tableId, 'staff', 'Staff')}${sortableHeader(tableId, 'subjects', 'EE subjects')}${sortableHeader(tableId, 'status', 'Status')}${sortableHeader(tableId, 'student', 'Student')}${sortableHeader(tableId, 'assigned', 'Assigned subject')}<th>Actions</th></tr></thead><tbody>${tokens.map(function(token) {
             return `<tr>
               <td><strong>${escapeHtml(token.staffName)}</strong><div class="muted">${escapeHtml(token.staffId)}</div></td>
-              <td>${subjectCell}</td>
+              <td>${escapeHtml((token.eligibleSubjects || []).join(', ') || 'None')}</td>
               <td>${escapeHtml(token.status)}</td>
               <td>${escapeHtml(token.allocatedTo || '—')}</td>
               <td>${escapeHtml(token.assignedSubject || '—')}</td>
-              <td><div class="actions">${editing ? `<button type="button" class="link-button" data-token-save="${escapeHtml(token.id)}">Save</button>` : `<button type="button" class="link-button" data-token-edit="${escapeHtml(token.id)}">Edit</button>`}${token.status === 'committed' ? '' : `<button type="button" class="link-button" data-token-delete="${escapeHtml(token.id)}">Delete</button>`}</div></td>
+              <td><div class="actions"><button type="button" class="link-button" data-token-edit="${escapeHtml(token.id)}">Edit</button>${token.status === 'committed' ? '' : `<button type="button" class="link-button" data-token-delete="${escapeHtml(token.id)}">Delete</button>`}</div></td>
             </tr>`;
           }).join('')}</tbody></table></div>` : '<div class="empty">This cohort has no tokens yet. Add them here, or generate them from EE quotas.</div>'}`;
+      }
+
+      function tokenSubjectChoices(token, board) {
+        const choices = (board.subjects || []).slice();
+        (token.eligibleSubjects || []).forEach(function(subject) {
+          if (!choices.some(function(item) { return item.toLowerCase() === subject.toLowerCase(); })) choices.push(subject);
+        });
+        return choices;
+      }
+
+      function openTokenEditor(token, board) {
+        if (!token) return;
+        state.tokenEditId = token.id;
+        const choices = tokenSubjectChoices(token, board);
+        openAdminDialog('cohort-token', `<div class="form-panel member-editor" role="dialog" aria-modal="true" aria-labelledby="token-editor-title"><div class="toolbar"><h2 id="token-editor-title">Edit token</h2><button type="button" class="button secondary" data-close-admin-dialog>Close</button></div>
+          <p class="muted">${escapeHtml(token.staffName)} · ${escapeHtml(token.staffId)}</p>
+          <div class="quota-pick" role="group" aria-label="EE subjects">${choices.length ? choices.map(function(subject) {
+            const on = (token.eligibleSubjects || []).some(function(item) { return item.toLowerCase() === subject.toLowerCase(); });
+            return `<label class="check-option"><input type="checkbox" data-token-subject="${escapeHtml(subject)}" ${on ? 'checked' : ''}> ${escapeHtml(subject)}</label>`;
+          }).join('') : '<span class="muted">No active subjects yet.</span>'}</div>
+          <p class="notice error" id="token-editor-error" hidden></p>
+          <div class="toolbar"><button type="button" class="button" id="token-editor-save">Save</button><button type="button" class="button secondary" data-close-admin-dialog>Cancel</button></div></div>`);
+        const save = document.getElementById('token-editor-save');
+        if (!save) return;
+        save.addEventListener('click', function() {
+          const picked = Array.from(document.querySelectorAll('[data-token-subject]:checked')).map(function(box) {
+            return box.getAttribute('data-token-subject');
+          });
+          save.disabled = true;
+          callServer('updateCohortToken', state.cohortId, token.id, picked).then(function() {
+            closeAdminDialog();
+            showSuccess('Token updated.');
+            loadAllocation();
+          }).catch(function(error) {
+            save.disabled = false;
+            const errorNode = document.getElementById('token-editor-error');
+            if (errorNode) {
+              errorNode.hidden = false;
+              errorNode.textContent = error && error.message ? error.message : String(error);
+            } else showError(error);
+          });
+        });
       }
 
       function bindCohortTokens(board) {
@@ -8140,21 +8437,8 @@
         });
         document.querySelectorAll('[data-token-edit]').forEach(function(button) {
           button.addEventListener('click', function() {
-            state.tokenEditId = button.getAttribute('data-token-edit');
-            paintCohortTokens(document.getElementById('alloc-body'));
-          });
-        });
-        document.querySelectorAll('[data-token-save]').forEach(function(button) {
-          button.addEventListener('click', function() {
-            const id = button.getAttribute('data-token-save');
-            const subjects = Array.from(document.querySelectorAll('[data-token-subject]:checked')).map(function(box) {
-              return box.getAttribute('data-token-subject');
-            });
-            callServer('updateCohortToken', state.cohortId, id, subjects).then(function() {
-              state.tokenEditId = '';
-              showSuccess('Token updated.');
-              loadAllocation();
-            }).catch(showError);
+            const token = (board.tokens || []).find(function(item) { return item.id === button.getAttribute('data-token-edit'); });
+            openTokenEditor(token, board);
           });
         });
         document.querySelectorAll('[data-token-delete]').forEach(function(button) {
@@ -8164,6 +8448,7 @@
             const who = token ? token.staffName : 'this staff member';
             if (!window.confirm('Delete this token for ' + who + '?')) return;
             callServer('deleteCohortToken', state.cohortId, id).then(function() {
+              if (state.tokenEditId === id) closeAdminDialog();
               state.tokenEditId = '';
               showSuccess('Token deleted.');
               loadAllocation();
@@ -8231,6 +8516,19 @@
         }).catch(showError);
       }
 
+      function captureAllocationColumns() {
+        const boxes = document.querySelectorAll('[data-alloc-col]');
+        if (!boxes.length || !state.allocationDesk || !state.allocationDesk.settings) return;
+        const columns = {};
+        boxes.forEach(function(box) {
+          const key = box.getAttribute('data-alloc-col');
+          const flag = box.getAttribute('data-flag');
+          if (!columns[key]) columns[key] = { key: key, showOnCard: false, filterable: false, sortable: false };
+          columns[key][flag] = box.checked;
+        });
+        state.allocationDesk.settings.columns = Object.keys(columns).map(function(key) { return columns[key]; });
+      }
+
       function saveAllocationSettings() {
         const columns = {};
         document.querySelectorAll('[data-alloc-col]').forEach(function(box) {
@@ -8260,15 +8558,17 @@
           if (state.allocationSupport === 'flagged' && !student.flags.needsSupport) return false;
           return true;
         });
+        const dir = state.allocationSortDir === -1 ? -1 : 1;
         rows.sort(function(left, right) {
-          const compared = allocationRank(left, state.allocationSort) < allocationRank(right, state.allocationSort) ? -1 : allocationRank(left, state.allocationSort) > allocationRank(right, state.allocationSort) ? 1 : 0;
-          return compared || left.sortName.localeCompare(right.sortName);
+          return compareSortValues(allocationRank(left, state.allocationSort), allocationRank(right, state.allocationSort), dir) || left.sortName.localeCompare(right.sortName);
         });
         return rows;
       }
 
       function allocationRank(student, key) {
         if (key === 'name') return student.sortName || '';
+        if (key === 'supervisor') return student.token && student.token.staffName ? student.token.staffName : '';
+        if (key === 'subject') return student.choices && student.choices.primary ? student.choices.primary : '';
         if (key === 'status') return student.flags.committed ? 2 : student.flags.drafted ? 1 : 0;
         const raw = student.dynamicData ? student.dynamicData[key] : '';
         const word = String(raw === undefined || raw === null ? '' : raw).toLowerCase();
