@@ -4,6 +4,7 @@ import { escapeHtml, formatCount, formatLastEdit, formatWordDelta, safeUrl } fro
 import { loadingLine } from '../shared/loading.js';
 import { advanceScene, isStale, sameScene } from '../shared/scene.js';
 import { state } from '../shared/state.js';
+import { requestPush } from '../router.js';
 import { paintTabDot, renderShell } from '../shell.js';
 import { formatActivityWhen, paintStudentActivity } from './activity.js';
 import {
@@ -278,6 +279,7 @@ export function renderUnreadNotices(tickets) {
 export function bindUnreadNotices(main, staff) {
   main.querySelectorAll('[data-open-unread]').forEach(function(button) {
     button.addEventListener('click', function() {
+      requestPush();
       state.focusTicket = button.dataset.openUnread;
       state.staffStudent = null;
       state.staffStudentHome = null;

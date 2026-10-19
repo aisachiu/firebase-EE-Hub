@@ -12,6 +12,7 @@ import { escapeHtml } from '../shared/html.js';
 import { loadingLine } from '../shared/loading.js';
 import { advanceScene } from '../shared/scene.js';
 import { state } from '../shared/state.js';
+import { requestPush, syncHistory } from '../router.js';
 import { renderShell } from '../shell.js';
 
 export const adminSections = [
@@ -34,6 +35,7 @@ export function renderAdmin() {
     }).join('')}</nav><div id="admin-content">${loadingLine('Loading...')}</div>`;
   main.querySelectorAll('[data-admin-entity]').forEach(function(button) {
     button.addEventListener('click', function() {
+      requestPush();
       closeMemberEditor();
       if (button.dataset.adminEntity === 'allocationSettings') {
         state.section = 'allocation';
@@ -50,6 +52,7 @@ export function renderAdmin() {
     });
   });
   loadAdminSection();
+  syncHistory();
 }
 
 export function loadAdminSection() {
@@ -134,6 +137,7 @@ export function refreshAdminSectionSilently() {
 }
 
 export function switchAdminSection(entity) {
+  requestPush();
   advanceScene();
   state.adminEntity = entity;
   state.editingRecord = null;

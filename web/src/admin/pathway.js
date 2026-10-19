@@ -1,4 +1,5 @@
 import { renderAdmin } from './sections.js';
+import { requestPush } from '../router.js';
 import { callServer, markSync } from '../shared/api.js';
 import { showError } from '../shared/feedback.js';
 import { cssEscape, escapeHtml, toBoolean } from '../shared/html.js';
@@ -601,6 +602,7 @@ export function pathwayRunAction(node) {
 }
 
 export function openEmailNotifications(milestoneId) {
+  requestPush();
   state.adminEntity = 'emailNotifications';
   state.noticeMilestoneId = milestoneId || '';
   state.noticeEdit = null;

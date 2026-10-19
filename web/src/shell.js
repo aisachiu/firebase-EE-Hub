@@ -12,12 +12,14 @@ import { state } from './shared/state.js';
 import { renderStaffTickets } from './staff/messages.js';
 import { mountNotesPanel, renderStaffNotes, setNotesOpen } from './staff/notes.js';
 import { hideListJourneyTip, renderStaffHome } from './staff/students.js';
+import { applyLocation, installHistory, requestPush, sectionTabs, syncHistory } from './router.js';
 import { renderStudentHelp } from './student/help.js';
 import { mountJourneyPanel, renderStudentSection, setJourneyOpen } from './student/home.js';
 
 export let booted = false;
 
 export function start() {
+  installHistory(function() { renderShell(); });
   const ready = window.eeAuthReady || Promise.resolve(window.eeUser || null);
   ready.then(function() {
     window.eeOnAuth = function(user) {
@@ -35,6 +37,7 @@ export function showSignIn() {
         return '<button type="button" class="button secondary" data-demo="' + escapeHtml(account.email) + '">' + escapeHtml(account.label) + '</button>';
       }).join('') + '</div><p class="muted">These demo accounts exist only when the local emulators are running.</p>'
     : '';
+  document.title = 'Sign in · EE Hub';
   document.getElementById('app').innerHTML = '<div class="shell"><p class="eyebrow">VSA EE Hub</p><h1>Sign in</h1><p class="lede">Use your school Google account. Your email must already be on the staff or student list.</p><p><button type="button" class="button" id="google-sign-in">Sign in with Google</button></p>' + demoHtml + '</div>';
   document.getElementById('google-sign-in').addEventListener('click', function() {
     window.eeSignIn().catch(function(error) { showFatal('Sign-in failed', error.message || 'Google sign-in did not complete.'); });
@@ -62,6 +65,7 @@ export function bootHub() {
     if (state.user.permissions && state.user.permissions.canAdmin) state.actingAs = 'coordinator';
     else if (state.user.permissions && state.user.permissions.isSupervisor) state.actingAs = 'supervisor';
     else state.actingAs = 'staff';
+    applyLocation();
     renderShell();
   }).catch(function(error) {
     booted = false;
@@ -78,21 +82,10 @@ export function renderShell() {
     state.staffTicketUnread = state.messageDesks[state.actingAs].unreadCount || 0;
     state.ticketBadgeFor = state.actingAs;
   }
-  const permissions = state.user.permissions || {};
   const staffJourney = !student && state.section === 'students' && !!state.staffStudentHome;
   const showJourney = student || staffJourney;
   const showNotes = staffJourney;
-  const tabs = student
-    ? [['home', 'My EE'], ['resources', 'Resources'], ['help', 'Help']]
-    : [['students', 'My Students'], ['resources', 'Resources']];
-  if (!student && (state.actingAs === 'supervisor' || state.actingAs === 'coordinator') && (permissions.isSupervisor || permissions.canAdmin)) {
-    tabs.splice(1, 0, ['tickets', 'Messages']);
-  }
-  if (!student && (permissions.isSupervisor || permissions.canAdmin)) {
-    const notesAt = tabs.some(function(tab) { return tab[0] === 'tickets'; }) ? 2 : 1;
-    tabs.splice(notesAt, 0, ['notes', 'Notes']);
-  }
-  if (permissions.canAdmin) tabs.push(['allocation', 'Allocation'], ['admin', 'Admin']);
+  const tabs = sectionTabs(state.user, state.actingAs);
   if (!tabs.some(function(tab) { return tab[0] === state.section; })) state.section = tabs[0][0];
   state.view = state.section;
   document.body.classList.toggle('has-journey', showJourney);
@@ -131,6 +124,7 @@ export function renderShell() {
   });
   document.querySelectorAll('[data-view]').forEach(function(button) {
     button.addEventListener('click', function() {
+      requestPush();
       state.section = button.dataset.view;
       state.view = state.section;
       state.emailDesk = false;
@@ -195,6 +189,7 @@ export function renderShell() {
       paintTabDot('tickets', state.staffTicketUnread, 'Messages');
     }).catch(function() { state.ticketBadgeFor = ''; });
   }
+  syncHistory();
 }
 
 export function tabLabel(tab) {

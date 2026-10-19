@@ -14,9 +14,11 @@ import {
   sortableHeader,
   sortedRows,
 } from '../shared/tables.js';
+import { requestPush, syncHistory } from '../router.js';
 import { renderShell } from '../shell.js';
 
 export function openAllocationTokens() {
+  requestPush();
   state.section = 'allocation';
   state.view = 'allocation';
   state.allocationView = 'tokens';
@@ -40,11 +42,13 @@ export function renderAllocation() {
     <div id="alloc-body">${loadingLine('Loading allocation...')}</div>`;
   main.querySelectorAll('[data-alloc-view]').forEach(function(button) {
     button.addEventListener('click', function() {
+      requestPush();
       state.allocationView = button.dataset.allocView;
       renderAllocation();
     });
   });
   loadAllocation();
+  syncHistory();
 }
 
 export function loadAllocation() {

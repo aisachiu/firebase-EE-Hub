@@ -18,6 +18,7 @@ import {
   sortedRows,
   staffNameMatch,
 } from '../shared/tables.js';
+import { requestPush, syncHistory } from '../router.js';
 import { renderShell } from '../shell.js';
 
 export function staffSectionNav() {
@@ -28,10 +29,12 @@ export function staffSectionNav() {
 export function bindStaffPane(root) {
   root.querySelectorAll('[data-staff-pane]').forEach(function(button) {
     button.addEventListener('click', function() {
+      requestPush();
       state.staffPane = button.dataset.staffPane === 'quotas' ? 'quotas' : 'records';
       const main = document.getElementById('main');
       if (main) main.classList.toggle('plan-wide', state.staffPane === 'quotas');
       loadAdminSection();
+      syncHistory();
     });
   });
 }
@@ -733,6 +736,7 @@ export function applyQuotaTokens() {
 }
 
 export function openStaffQuotas() {
+  requestPush();
   state.section = 'admin';
   state.view = 'admin';
   state.adminEntity = 'staffUsers';
