@@ -1,3 +1,6 @@
+import './styles/app.css';
+import { start } from './shell.js';
+
 import { initializeApp } from 'firebase/app';
 import { connectAuthEmulator, getAuth, GoogleAuthProvider, onAuthStateChanged, signInWithCredential, signInWithPopup, signOut } from 'firebase/auth';
 import { connectFunctionsEmulator, getFunctions, httpsCallable } from 'firebase/functions';
@@ -63,3 +66,5 @@ onAuthStateChanged(auth, function(user) {
   window.eeUser = user;
   if (typeof window.eeOnAuth === 'function') window.eeOnAuth(user);
 });
+
+start();
