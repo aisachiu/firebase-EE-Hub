@@ -108,6 +108,12 @@ function summarize(student: any, items: any[], templates: any[], returned: Recor
     waiting: waiting.slice(0, 3),
     urgency: waiting.length * 100 + behind + returnedCount,
     nextSupervisor,
+    assigned: items.filter((item) => item.templateId).map((item) => ({
+      templateId: item.templateId,
+      title: item.title || '',
+      status: item.status || 'Pending',
+      due: item.due ? String(item.due).slice(0, 10) : '',
+    })),
   };
 }
 
@@ -167,6 +173,7 @@ export async function getStaffHome(app: App, cohortId: unknown, viewAs: unknown)
     viewAs: view,
     viewerEmail: user.email,
     canAct: view !== 'staff',
+    canEditMilestones: view !== 'staff' && !!user.permissions?.canAdmin,
     phases,
     templates,
     supervisors: supervisorChoices(roster, await staffDirectory(app)),

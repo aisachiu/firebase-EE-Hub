@@ -76,6 +76,15 @@
       .actions { display: flex; gap: 8px; white-space: nowrap; }
       .link-button { border: 0; padding: 4px; color: var(--green); background: transparent; font-weight: 700; }
       .link-button:disabled { color: #84918c; cursor: not-allowed; }
+      .icon-button { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; margin: 0; padding: 0; border: 0; border-radius: 4px; color: var(--ink); background: transparent; }
+      .icon-button:hover, .icon-button:focus-visible { background: #e7f1f8; }
+      .step-title { display: inline-flex; align-items: center; gap: 2px; min-width: 0; }
+      .step-title h2, .step-title h3 { margin: 0; }
+      .student-pick { width: 18px; height: 18px; margin: 0; accent-color: var(--green); }
+      .card-tools { display: flex; justify-content: flex-end; margin: -2px 0 6px; }
+      .mass-fields { display: grid; gap: 12px; margin-top: 8px; }
+      .mass-field { display: grid; gap: 6px; }
+      .mass-hint { margin: 0; }
       .editor { margin-top: 14px; padding: 14px; background: #f8fafb; border-top: 3px solid var(--green); }
       .drive-panel { margin-bottom: 14px; }
       .drive-results { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 6px; }
@@ -580,6 +589,7 @@
       .student-list th, .student-list td { max-width: none; overflow-wrap: normal; vertical-align: middle; }
       .student-list th { background: #f8fafb; }
       .student-list tbody tr:hover td { background: #f8fafb; }
+      .student-list .pick-col { width: 44px; }
       .student-list .student-col { width: 22%; min-width: 190px; }
       .student-list .status-col { width: 16%; min-width: 148px; }
       .student-list button.name { border: 0; padding: 0; background: none; color: var(--ink); font-weight: 700; font-size: 15px; text-align: left; }
@@ -793,6 +803,7 @@
         staffTrack: 'all',
         staffMine: false,
         staffSupervisor: '',
+        staffSelected: [],
         staffPane: 'home',
         staffStudentHome: null,
         quote: 'A clear question is the start of a strong essay.',
@@ -1255,6 +1266,34 @@
         return null;
       }
 
+      function systemItemFor(home, milestoneId) {
+        return (home.actionItems || []).filter(function(entry) {
+          return entry.CreatorType === 'System' && entry.TemplateId === milestoneId;
+        })[0] || null;
+      }
+
+      function milestonePhaseId(template, item) {
+        return (item && item.PhaseId) || (template && template.phase) || '';
+      }
+
+      function milestoneTitleText(template, item) {
+        return (item && item.Title) || (template && template.title) || (template && template.milestoneId) || 'Milestone';
+      }
+
+      function milestoneDescriptionText(template, item) {
+        if (item) return item.Description || '';
+        return (template && template.description) || '';
+      }
+
+      function pencilIcon() {
+        return '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M11.2 1.6 14.4 4.8 5.2 14H2v-3.2zM3.1 11.9l.3 1.7 1.7.3 6.7-6.7-2-2z"/></svg>';
+      }
+
+      function milestoneEditButton(home, item, title) {
+        if (!home || !home.canUpdateMilestones || !item || !item.TaskId) return '';
+        return `<button type="button" class="icon-button" data-edit-milestone="${escapeHtml(item.TaskId)}" aria-label="${escapeHtml('Edit ' + title)}">${pencilIcon()}</button>`;
+      }
+
       function paintStudentPage(home) {
         const main = document.getElementById('main');
         main.classList.add('student-home');
@@ -1267,7 +1306,9 @@
         }).length;
         const done = (home.actionItems || []).filter(function(item) { return item.CreatorType === 'System' && item.Status === 'Completed'; }).length;
         const pageName = home.displayName || 'Student';
-        const hero = next ? `<section class="hero"><div><p class="eyebrow">${home.staffView ? 'Next step' : 'Your next step'}</p><h2>${escapeHtml(next.template.title)}</h2><p>${escapeHtml(next.template.description || 'Complete this milestone before the due date.')}</p></div><div>${next.item && next.item.DueDate ? `<div class="chip">${escapeHtml(String(next.item.DueDate).slice(0, 10))}</div>` : ''}${formButton(home, next)}</div></section>` : '<section class="hero"><div><p class="eyebrow">All caught up</p><h2>No action needed right now</h2><p>Open Journey to see what is coming.</p></div></section>';
+        const heroTitle = next ? milestoneTitleText(next.template, next.item) : '';
+        const heroDescription = next ? (milestoneDescriptionText(next.template, next.item) || 'Complete this milestone before the due date.') : '';
+        const hero = next ? `<section class="hero"><div><p class="eyebrow">${home.staffView ? 'Next step' : 'Your next step'}</p><h2>${escapeHtml(heroTitle)}</h2><p>${escapeHtml(heroDescription)}</p></div><div>${next.item && next.item.DueDate ? `<div class="chip">${escapeHtml(String(next.item.DueDate).slice(0, 10))}</div>` : ''}${formButton(home, next)}</div></section>` : '<section class="hero"><div><p class="eyebrow">All caught up</p><h2>No action needed right now</h2><p>Open Journey to see what is coming.</p></div></section>';
         main.innerHTML = `${staffStudentBar(home)}
           <div class="page-head"><div><h1>${escapeHtml(pageName)}'s EE</h1>${home.cohort ? `<p class="muted">Cohort ${escapeHtml(home.cohort)}</p>` : ''}</div></div>
           ${renderJourneyHero(journeyOverview(home))}
@@ -1414,18 +1455,15 @@
       function journeyOverview(home) {
         const current = nextIncomplete(home);
         const currentId = current && current.template ? current.template.milestoneId : '';
-        const items = home.actionItems || [];
         return (home.phases || []).map(function(phase, index) {
           const milestones = (home.templates || []).filter(function(template) {
-            return template.phase === phase.phaseId;
+            return milestonePhaseId(template, systemItemFor(home, template.milestoneId)) === phase.phaseId;
           }).map(function(template) {
-            const item = items.filter(function(entry) {
-              return entry.CreatorType === 'System' && entry.TemplateId === template.milestoneId;
-            })[0] || null;
+            const item = systemItemFor(home, template.milestoneId);
             const done = !!(item && item.Status === 'Completed');
             return {
               id: template.milestoneId,
-              title: template.title || template.milestoneId,
+              title: milestoneTitleText(template, item),
               type: template.type || '',
               due: item && item.DueDate ? String(item.DueDate).slice(0, 10) : '',
               done: done,
@@ -1624,7 +1662,7 @@
         const phaseTitle = {};
         phases.forEach(function(phase) { phaseTitle[phase.phaseId] = phase.phaseTitle || phase.phaseId; });
         const current = nextIncomplete(home);
-        const currentPhaseId = current && current.template ? current.template.phase : '';
+        const currentPhaseId = current && current.template ? milestonePhaseId(current.template, current.item) : '';
         const systemItems = items.filter(function(item) { return item.CreatorType === 'System'; });
         const doneCount = systemItems.filter(function(item) { return item.Status === 'Completed'; }).length;
         const total = templates.length || systemItems.length;
@@ -1635,7 +1673,7 @@
           <div class="journey-head"><div><p class="eyebrow">Extended Essay</p><h1>${home.staffView ? escapeHtml(home.displayName) : 'Your journey'}</h1></div><p class="journey-score"><strong>${doneCount}</strong> of ${total} done</p></div>
           <div class="journey-bar" role="img" aria-label="${doneCount} of ${total} milestones done"><span style="width:${percent}%"></span></div>
           <ol class="journey-path">${phases.map(function(phase) {
-            const phaseTemplates = templates.filter(function(template) { return template.phase === phase.phaseId; });
+            const phaseTemplates = templates.filter(function(template) { return milestonePhaseId(template, systemItemFor(home, template.milestoneId)) === phase.phaseId; });
             const phaseDone = phaseTemplates.filter(function(template) {
               return systemItems.some(function(item) { return item.TemplateId === template.milestoneId && item.Status === 'Completed'; });
             }).length;
@@ -1663,16 +1701,21 @@
         if (!current || !current.template) return `<section class="here-card"><p class="eyebrow">All caught up</p><h2>The official milestones are complete</h2><p>${home.canWriteTodos === false ? 'Nothing is waiting on you.' : 'Add a to-do if something still needs your attention.'}</p></section>`;
         if (zoom !== 'all' && zoom !== currentPhaseId) return '';
         const item = current.item;
-        const title = phaseTitle[current.template.phase] || current.template.phase;
+        const shownTitle = milestoneTitleText(current.template, item);
+        const shownPhase = milestonePhaseId(current.template, item);
+        const title = phaseTitle[shownPhase] || shownPhase;
         const due = item && item.DueDate ? shortDate(item.DueDate) : '';
         const actions = journeyActions(item, current.template);
-        const check = journeyCheck(item, 'Mark ' + current.template.title + ' done', !!(item && item.canUpdate));
-        return `<section class="here-card" data-task-id="${item ? escapeHtml(item.TaskId) : ''}"><p class="eyebrow">You are here · ${escapeHtml(title)}</p><div class="step-top">${check}<h2>${escapeHtml(current.template.title)}</h2></div><p>${escapeHtml(current.template.description || 'This is your next step.')}</p><div class="step-actions">${due ? `<span class="chip">${escapeHtml(due)}</span>` : ''}${actions || `<span class="chip">${escapeHtml(milestoneProgressLabel(item, current.template))}</span>`}</div></section>`;
+        const check = journeyCheck(item, 'Mark ' + shownTitle + ' done', !!(item && item.canUpdate));
+        const edit = milestoneEditButton(home, item, shownTitle);
+        return `<section class="here-card" data-task-id="${item ? escapeHtml(item.TaskId) : ''}"><p class="eyebrow">You are here · ${escapeHtml(title)}</p><div class="step-top">${check}<div class="step-title"><h2>${escapeHtml(shownTitle)}</h2>${edit}</div></div><p>${escapeHtml(milestoneDescriptionText(current.template, item) || 'This is your next step.')}</p><div class="step-actions">${due ? `<span class="chip">${escapeHtml(due)}</span>` : ''}${actions || `<span class="chip">${escapeHtml(milestoneProgressLabel(item, current.template))}</span>`}</div></section>`;
       }
 
       function renderJourneyPhase(home, phase, phaseTitle, current, zoom, currentPhaseId) {
         const detailed = zoom !== 'all' || phase.phaseId === currentPhaseId;
-        const milestones = (home.templates || []).filter(function(template) { return template.phase === phase.phaseId; });
+        const milestones = (home.templates || []).filter(function(template) {
+          return milestonePhaseId(template, systemItemFor(home, template.milestoneId)) === phase.phaseId;
+        });
         const todos = (home.actionItems || []).filter(function(item) {
           return item.CreatorType === 'Student' && (item.PhaseId === phase.phaseId || (!item.PhaseId && phase.phaseId === currentPhaseId));
         });
@@ -1684,7 +1727,7 @@
           rows.push({
             due: item && item.DueDate,
             title: template.title,
-            html: renderJourneyMilestone(template, item, detailed, current, zoom)
+            html: renderJourneyMilestone(home, template, item, detailed, current, zoom)
           });
         });
         if (showTodos) todos.forEach(function(item) {
@@ -1713,14 +1756,16 @@
         return `<input type="checkbox" class="rail-check" data-milestone-check ${checked ? 'checked' : ''} ${interactive ? '' : 'disabled'} aria-label="${escapeHtml(label)}">`;
       }
 
-      function renderJourneyMilestone(template, item, detailed, current, zoom) {
+      function renderJourneyMilestone(home, template, item, detailed, current, zoom) {
+        const title = milestoneTitleText(template, item);
         const status = item ? item.Status : 'Pending';
         const isHere = current && current.template.milestoneId === template.milestoneId && status !== 'Completed';
         const showActions = item && item.canUpdate && (zoom !== 'all' || status === 'Completed' || template.type === 'form');
         const due = item && item.DueDate ? shortDate(item.DueDate) : '';
         const closed = template.type === 'form' && item && item.formOpen === false ? ' · Form closed' : '';
-        const check = journeyCheck(item, 'Mark ' + template.title + ' done', !!(item && item.canUpdate));
-        return `<li class="step ${status === 'Completed' ? 'done' : ''} ${isHere ? 'here' : ''}" data-task-id="${item ? escapeHtml(item.TaskId) : ''}" data-creator-type="System">${check}<div><div class="step-top"><h3>${escapeHtml(template.title)}</h3><span class="muted">${escapeHtml(milestoneKind(template))}${due ? ' · ' + escapeHtml(due) : ''}${closed}</span></div>${detailed ? `<p class="muted">${escapeHtml(template.description || '')}</p>` : ''}${item && item.returnedComment ? `<p class="notice">Returned: ${escapeHtml(item.returnedComment)}</p>` : ''}<div class="step-actions"><span class="muted">${escapeHtml(milestoneProgressLabel(item, template))}</span>${showActions ? journeyActions(item, template) : ''}</div></div></li>`;
+        const check = journeyCheck(item, 'Mark ' + title + ' done', !!(item && item.canUpdate));
+        const edit = milestoneEditButton(home, item, title);
+        return `<li class="step ${status === 'Completed' ? 'done' : ''} ${isHere ? 'here' : ''}" data-task-id="${item ? escapeHtml(item.TaskId) : ''}" data-creator-type="System">${check}<div><div class="step-top"><div class="step-title"><h3>${escapeHtml(title)}</h3>${edit}</div><span class="muted">${escapeHtml(milestoneKind(template))}${due ? ' · ' + escapeHtml(due) : ''}${closed}</span></div>${detailed ? `<p class="muted">${escapeHtml(milestoneDescriptionText(template, item))}</p>` : ''}${item && item.returnedComment ? `<p class="notice">Returned: ${escapeHtml(item.returnedComment)}</p>` : ''}<div class="step-actions"><span class="muted">${escapeHtml(milestoneProgressLabel(item, template))}</span>${showActions ? journeyActions(item, template) : ''}</div></div></li>`;
       }
 
       function renderJourneyTodo(item) {
@@ -1956,6 +2001,11 @@
               paintStudentJourney(activeJourneyRecord() || home);
               showError(error);
             });
+          });
+        });
+        main.querySelectorAll('[data-edit-milestone]').forEach(function(button) {
+          button.addEventListener('click', function() {
+            openMilestoneEditor(home, button.dataset.editMilestone);
           });
         });
       }
@@ -2298,6 +2348,279 @@
         }).catch(showError);
       }
 
+      function milestoneOptionMarkup(values, selected) {
+        return values.map(function(option) {
+          const value = option[0];
+          const label = option[1];
+          return `<option value="${escapeHtml(value)}" ${value === selected ? 'selected' : ''}>${escapeHtml(label)}</option>`;
+        }).join('');
+      }
+
+      function phaseOptionMarkup(home, selected) {
+        const phases = (home.phases || []).slice();
+        const known = {};
+        phases.forEach(function(phase) { known[phase.phaseId] = true; });
+        if (selected && !known[selected]) phases.push({ phaseId: selected, phaseTitle: selected });
+        return milestoneOptionMarkup(phases.map(function(phase) {
+          return [phase.phaseId, phase.phaseTitle || phase.phaseId];
+        }), selected);
+      }
+
+      function statusOptionMarkup(selected) {
+        return milestoneOptionMarkup([
+          ['Pending', 'Pending'],
+          ['In Progress', 'In Progress'],
+          ['Completed', 'Completed']
+        ], selected || 'Pending');
+      }
+
+      function onMilestoneDialogKeydown(event) {
+        if (event.key !== 'Escape') return;
+        const dialog = document.getElementById('form-dialog');
+        if (!dialog || dialog.hidden || dialog.dataset.editor !== 'milestone-edit') return;
+        event.preventDefault();
+        closeMilestoneDialog();
+      }
+
+      function closeMilestoneDialog() {
+        document.removeEventListener('keydown', onMilestoneDialogKeydown);
+        const dialog = document.getElementById('form-dialog');
+        if (!dialog || dialog.dataset.editor !== 'milestone-edit') return;
+        dialog.hidden = true;
+        dialog.innerHTML = '';
+        delete dialog.dataset.editor;
+        dialog.onclick = null;
+      }
+
+      function openMilestoneDialog(markup) {
+        const dialog = document.getElementById('form-dialog');
+        if (!dialog) return;
+        dialog.hidden = false;
+        dialog.dataset.editor = 'milestone-edit';
+        dialog.innerHTML = markup;
+        dialog.onclick = function(event) {
+          if (event.target === dialog) closeMilestoneDialog();
+        };
+        dialog.querySelectorAll('[data-close-milestone]').forEach(function(button) {
+          button.addEventListener('click', closeMilestoneDialog);
+        });
+        document.removeEventListener('keydown', onMilestoneDialogKeydown);
+        document.addEventListener('keydown', onMilestoneDialogKeydown);
+        const first = dialog.querySelector('input:not([disabled]), select:not([disabled]), textarea:not([disabled])');
+        if (first) first.focus();
+      }
+
+      function milestoneDialogError(error) {
+        const node = document.getElementById('milestone-edit-error');
+        if (!node) {
+          showError(error);
+          return;
+        }
+        node.hidden = false;
+        node.textContent = error && error.message ? error.message : String(error);
+      }
+
+      function openMilestoneEditor(home, taskId) {
+        if (!home || !home.canUpdateMilestones || !taskId) return;
+        const item = (home.actionItems || []).filter(function(entry) {
+          return entry.TaskId === taskId && entry.CreatorType === 'System';
+        })[0];
+        if (!item) return;
+        const template = (home.templates || []).filter(function(entry) { return entry.milestoneId === item.TemplateId; })[0] || {};
+        const title = milestoneTitleText(template, item);
+        const due = item.DueDate ? String(item.DueDate).slice(0, 10) : '';
+        const phase = milestonePhaseId(template, item);
+        openMilestoneDialog(`<div class="form-panel" role="dialog" aria-modal="true" aria-labelledby="milestone-editor-title"><div class="toolbar"><h2 id="milestone-editor-title">Edit milestone</h2><button type="button" class="button secondary" data-close-milestone>Close</button></div>
+          <p class="muted">${escapeHtml(home.displayName || 'Student')} · ${escapeHtml(template.milestoneId || item.TemplateId || '')}</p>
+          <form id="milestone-edit-form"><div class="form-grid">
+            <div class="field wide"><label for="milestone-title">Title</label><input id="milestone-title" maxlength="500" required value="${escapeHtml(title)}"></div>
+            <div class="field wide"><label for="milestone-description">Description</label><textarea id="milestone-description" maxlength="8000">${escapeHtml(item.Description || '')}</textarea></div>
+            <div class="field"><label for="milestone-phase">Phase</label><select id="milestone-phase" required>${phaseOptionMarkup(home, phase)}</select></div>
+            <div class="field"><label for="milestone-status">Status</label><select id="milestone-status" required>${statusOptionMarkup(item.Status)}</select></div>
+            <div class="field"><label for="milestone-date">Due date</label><input id="milestone-date" type="date" value="${escapeHtml(due)}"></div>
+          </div>
+          <p class="notice error" id="milestone-edit-error" hidden></p>
+          <div class="toolbar"><button class="button" type="submit">Save</button><button class="button secondary" type="button" data-close-milestone>Cancel</button></div></form></div>`);
+        const form = document.getElementById('milestone-edit-form');
+        if (!form) return;
+        form.addEventListener('submit', function(event) {
+          event.preventDefault();
+          const errorNode = document.getElementById('milestone-edit-error');
+          if (errorNode) errorNode.hidden = true;
+          const button = form.querySelector('button[type="submit"]');
+          if (button) button.disabled = true;
+          const payload = {
+            title: document.getElementById('milestone-title').value,
+            description: document.getElementById('milestone-description').value,
+            phaseId: document.getElementById('milestone-phase').value,
+            status: document.getElementById('milestone-status').value,
+            dueDate: document.getElementById('milestone-date').value
+          };
+          runMutation('updateMilestoneAssignment', [taskId, home.email, home.cohort || '', state.actingAs, payload], {
+            key: 'milestone-edit:' + taskId
+          }).then(function() {
+            return callServer('getStaffStudentHome', home.email, home.cohort || '', state.actingAs);
+          }).then(function(fresh) {
+            state.staffStudentHome = fresh;
+            closeMilestoneDialog();
+            paintStudentJourney(fresh);
+            if (state.section === 'students') repaintStudentPage(fresh);
+            showSuccess('Milestone updated.');
+          }).catch(function(error) {
+            if (button) button.disabled = false;
+            milestoneDialogError(error);
+          });
+        });
+      }
+
+      function selectedStaffStudents(home) {
+        const chosen = {};
+        (state.staffSelected || []).forEach(function(email) { chosen[email] = true; });
+        return (home.students || []).filter(function(student) { return chosen[student.email]; });
+      }
+
+      function commonMilestoneChoices(home, students) {
+        if (!students.length) return [];
+        const counts = {};
+        students.forEach(function(student) {
+          const seen = {};
+          (student.assigned || []).forEach(function(item) {
+            const id = item && item.templateId;
+            if (!id || seen[id]) return;
+            seen[id] = true;
+            counts[id] = (counts[id] || 0) + 1;
+          });
+        });
+        const listed = {};
+        const choices = (home.templates || []).filter(function(template) {
+          listed[template.milestoneId] = true;
+          return counts[template.milestoneId] === students.length;
+        }).map(function(template) {
+          return { id: template.milestoneId, title: template.title || template.milestoneId };
+        });
+        Object.keys(counts).forEach(function(id) {
+          if (counts[id] === students.length && !listed[id]) choices.push({ id: id, title: id });
+        });
+        return choices;
+      }
+
+      function sharedAssignmentValues(students, templateId) {
+        const rows = [];
+        students.forEach(function(student) {
+          (student.assigned || []).forEach(function(item) {
+            if (item.templateId === templateId) rows.push(item);
+          });
+        });
+        if (!rows.length) return { status: '', due: '', uniformStatus: false, uniformDate: false };
+        const status = rows[0].status || '';
+        const due = String(rows[0].due || '').slice(0, 10);
+        return {
+          status: rows.every(function(row) { return (row.status || '') === status; }) ? status : '',
+          due: rows.every(function(row) { return String(row.due || '').slice(0, 10) === due; }) ? due : '',
+          uniformStatus: rows.every(function(row) { return (row.status || '') === status; }),
+          uniformDate: rows.every(function(row) { return String(row.due || '').slice(0, 10) === due; })
+        };
+      }
+
+      function selectedStudentSummary(students) {
+        const names = students.map(function(student) { return student.displayName || student.email; });
+        if (names.length <= 4) return names.join(', ');
+        return names.slice(0, 3).join(', ') + ', and ' + (names.length - 3) + ' more';
+      }
+
+      function openMassMilestoneEditor(home) {
+        const students = selectedStaffStudents(home);
+        if (!home || !home.canEditMilestones || !students.length) return;
+        const choices = commonMilestoneChoices(home, students);
+        const options = choices.length
+          ? '<option value="">Choose a milestone</option>' + choices.map(function(choice) {
+            return `<option value="${escapeHtml(choice.id)}">${escapeHtml(choice.title)}</option>`;
+          }).join('')
+          : '<option value="">No shared milestone</option>';
+        openMilestoneDialog(`<div class="form-panel" role="dialog" aria-modal="true" aria-labelledby="mass-milestone-title"><div class="toolbar"><h2 id="mass-milestone-title">Edit Milestones</h2><button type="button" class="button secondary" data-close-milestone>Close</button></div>
+          <p>${students.length} student${students.length === 1 ? '' : 's'} selected. ${escapeHtml(selectedStudentSummary(students))}</p>
+          <form id="mass-milestone-form">
+            <div class="field"><label for="mass-milestone">Milestone</label><select id="mass-milestone" required>${options}</select>
+              <p class="muted mass-hint" id="mass-milestone-hint">${choices.length ? 'Only milestones assigned to every selected student are listed.' : 'The selected students do not share a milestone.'}</p>
+            </div>
+            <div class="mass-fields">
+              <div class="mass-field">
+                <label class="check-option" for="mass-update-status"><input type="checkbox" id="mass-update-status"> Update status</label>
+                <select id="mass-status" disabled>${statusOptionMarkup('Pending')}</select>
+                <p class="muted mass-hint" id="mass-status-hint"></p>
+              </div>
+              <div class="mass-field">
+                <label class="check-option" for="mass-update-date"><input type="checkbox" id="mass-update-date"> Update due date</label>
+                <input id="mass-date" type="date" disabled>
+                <p class="muted mass-hint" id="mass-date-hint"></p>
+              </div>
+            </div>
+            <p class="notice error" id="milestone-edit-error" hidden></p>
+            <div class="toolbar"><button class="button" type="submit" id="save-mass-milestones" disabled>Save</button><button class="button secondary" type="button" data-close-milestone>Cancel</button></div>
+          </form></div>`);
+        const milestone = document.getElementById('mass-milestone');
+        const statusBox = document.getElementById('mass-update-status');
+        const dateBox = document.getElementById('mass-update-date');
+        const statusField = document.getElementById('mass-status');
+        const dateField = document.getElementById('mass-date');
+        const save = document.getElementById('save-mass-milestones');
+        function paintShared() {
+          const shared = sharedAssignmentValues(students, milestone.value);
+          if (shared.uniformStatus && shared.status) statusField.value = shared.status;
+          statusField.dataset.shared = shared.uniformStatus ? 'yes' : '';
+          dateField.value = shared.uniformDate ? shared.due : '';
+          document.getElementById('mass-status-hint').textContent = !milestone.value ? '' : (shared.uniformStatus ? '' : 'Status differs across the selected students.');
+          document.getElementById('mass-date-hint').textContent = !milestone.value ? '' : (shared.uniformDate ? '' : 'Due dates differ across the selected students.');
+        }
+        function syncMassFields() {
+          statusField.disabled = !statusBox.checked;
+          dateField.disabled = !dateBox.checked;
+          save.disabled = !milestone.value || (!statusBox.checked && !dateBox.checked);
+        }
+        milestone.addEventListener('change', function() {
+          paintShared();
+          syncMassFields();
+        });
+        statusBox.addEventListener('change', syncMassFields);
+        dateBox.addEventListener('change', syncMassFields);
+        document.getElementById('mass-milestone-form').addEventListener('submit', function(event) {
+          event.preventDefault();
+          const errorNode = document.getElementById('milestone-edit-error');
+          if (errorNode) errorNode.hidden = true;
+          if (!milestone.value) {
+            milestoneDialogError(new Error('Choose a milestone.'));
+            return;
+          }
+          if (!statusBox.checked && !dateBox.checked) {
+            milestoneDialogError(new Error('Choose the status, the due date, or both.'));
+            return;
+          }
+          if (dateBox.checked && !dateField.value) {
+            milestoneDialogError(new Error('Due date must be a valid date.'));
+            return;
+          }
+          save.disabled = true;
+          const payload = {
+            updateStatus: statusBox.checked,
+            status: statusField.value,
+            updateDate: dateBox.checked,
+            dueDate: dateField.value
+          };
+          const emails = students.map(function(student) { return student.email; });
+          runMutation('massUpdateMilestones', [home.cohortId || state.cohortId || '', emails, milestone.value, payload, state.actingAs], {
+            key: 'mass-milestones:' + (home.cohortId || '')
+          }).then(function(result) {
+            closeMilestoneDialog();
+            showSuccess('Updated ' + (result.students || emails.length) + ' student' + ((result.students || emails.length) === 1 ? '' : 's') + '.');
+            state.staffHome = null;
+            renderStaffHome();
+          }).catch(function(error) {
+            save.disabled = false;
+            milestoneDialogError(error);
+          });
+        });
+      }
+
       function renderStaffHome() {
         advanceScene();
         const main = document.getElementById('main');
@@ -2400,16 +2723,21 @@
         templates.forEach(function(template, index) {
           if (currentIndex < 0 && (segments[index] || 'o') !== 'd') currentIndex = index;
         });
+        const assignedByTemplate = {};
+        (student.assigned || []).forEach(function(item) {
+          if (item && item.templateId) assignedByTemplate[item.templateId] = item;
+        });
         const grouped = {};
         templates.forEach(function(template, index) {
           const segment = segments[index] || 'o';
           const phaseId = template.phase || '';
+          const assignment = assignedByTemplate[template.milestoneId];
           if (!grouped[phaseId]) grouped[phaseId] = [];
           grouped[phaseId].push({
             id: template.milestoneId,
-            title: template.title || template.milestoneId,
+            title: (assignment && assignment.title) || template.title || template.milestoneId,
             type: template.type || '',
-            due: dues[index] ? String(dues[index]).slice(0, 10) : '',
+            due: assignment && assignment.due ? String(assignment.due).slice(0, 10) : (dues[index] ? String(dues[index]).slice(0, 10) : ''),
             done: segment === 'd',
             here: index === currentIndex
           });
@@ -2484,9 +2812,14 @@
         return `<div class="list-journey is-expanded" role="img" aria-label="${escapeHtml(summary)}"><ol class="list-phases">${cards}</ol></div>`;
       }
 
-      function renderStaffStudentTiles(students, phaseName) {
+      function staffPickMarkup(student) {
+        const checked = (state.staffSelected || []).indexOf(student.email) >= 0;
+        return `<input type="checkbox" class="student-pick" data-select-student="${escapeHtml(student.email)}" ${checked ? 'checked' : ''} aria-label="${escapeHtml('Select ' + (student.displayName || 'student'))}">`;
+      }
+
+      function renderStaffStudentTiles(students, phaseName, canEdit) {
         return `<div class="sgrid">${students.map(function(student) {
-          return `<article class="scard"><button type="button" class="name" data-open-student="${escapeHtml(student.email)}">${escapeHtml(student.displayName)}</button>
+          return `<article class="scard">${canEdit ? `<div class="card-tools">${staffPickMarkup(student)}</div>` : ''}<button type="button" class="name" data-open-student="${escapeHtml(student.email)}">${escapeHtml(student.displayName)}</button>
               <div class="muted">${escapeHtml(student.subject || 'No subject yet')}${student.hrm ? ' · ' + escapeHtml(student.hrm) : ''}${student.surname ? ' · ' + escapeHtml(student.surname) : ''}</div>
               <div class="segs" aria-label="${student.done} of ${student.total} milestones">${student.segments.split('').map(function(segment) { return `<i class="${segment === 'o' ? '' : segment}"></i>`; }).join('')}</div>
               <div class="chips"><span class="chip">${escapeHtml(phaseName[student.phaseId] || student.phaseId || 'Phase')}</span><span class="chip ${student.behind ? 'bad' : 'ok'}">${student.behind ? student.behind + ' overdue' : 'On track'}</span>${student.waiting.length ? `<span class="chip bad">${student.waiting.length} waiting</span>` : ''}${student.returned ? `<span class="chip bad">Returned</span>` : ''}</div>
@@ -2495,11 +2828,13 @@
       }
 
       function renderStaffStudentList(home, students) {
+        const canEdit = !!home.canEditMilestones;
         const rows = students.map(function(student) {
-          return `<tr><td>${staffIdentityMarkup(student)}</td><td>${staffStatusMarkup(student)}</td><td>${renderListJourney(home, student)}</td></tr>`;
+          return `<tr>${canEdit ? `<td class="pick-col">${staffPickMarkup(student)}</td>` : ''}<td>${staffIdentityMarkup(student)}</td><td>${staffStatusMarkup(student)}</td><td>${renderListJourney(home, student)}</td></tr>`;
         }).join('');
         const expanded = state.staffJourneyExpanded === true;
-        return `<div class="table-wrap student-list"><table><thead><tr><th class="student-col" scope="col">Student</th><th class="status-col" scope="col">Status</th><th class="journey-col" scope="col"><span class="journey-col-head"><span>Journey progress</span><button type="button" class="journey-hero-toggle list-journey-toggle" data-list-journey-toggle aria-expanded="${expanded ? 'true' : 'false'}">${expanded ? 'Collapse' : 'Expand'}</button></span></th></tr></thead><tbody>${rows}</tbody></table></div>`;
+        const pickHead = canEdit ? '<th class="pick-col" scope="col"><span class="muted">Select</span></th>' : '';
+        return `<div class="table-wrap student-list"><table><thead><tr>${pickHead}<th class="student-col" scope="col">Student</th><th class="status-col" scope="col">Status</th><th class="journey-col" scope="col"><span class="journey-col-head"><span>Journey progress</span><button type="button" class="journey-hero-toggle list-journey-toggle" data-list-journey-toggle aria-expanded="${expanded ? 'true' : 'false'}">${expanded ? 'Collapse' : 'Expand'}</button></span></th></tr></thead><tbody>${rows}</tbody></table></div>`;
       }
 
       let listJourneyTipBound = false;
@@ -2572,8 +2907,14 @@
         if (state.user.permissions.canAdmin) roles.push(['coordinator', 'Coordinator']);
         if (state.user.permissions.isSupervisor) roles.push(['supervisor', 'Supervisor']);
         roles.push(['staff', 'Staff browse']);
+        const knownStudents = {};
+        (home.students || []).forEach(function(student) { knownStudents[student.email] = true; });
+        state.staffSelected = (state.staffSelected || []).filter(function(email) { return knownStudents[email]; });
+        const canEditMilestones = !!home.canEditMilestones;
         const students = visibleStaffStudents(home);
         const total = (home.students || []).length;
+        const visibleSelected = students.filter(function(student) { return state.staffSelected.indexOf(student.email) >= 0; }).length;
+        const allVisibleSelected = students.length > 0 && visibleSelected === students.length;
         const phaseName = {};
         (home.phases || []).forEach(function(phase) { phaseName[phase.phaseId] = phase.phaseTitle; });
         const supervisors = home.supervisors || [];
@@ -2604,6 +2945,7 @@
             <input id="staff-search" type="search" placeholder="Search students" value="${escapeHtml(state.staffQuery)}" aria-label="Search students">
             <span class="muted">${students.length}${students.length === total ? '' : ' of ' + total} students</span>
             <button type="button" class="button secondary" id="open-email-desk">Email reminders</button>
+            ${canEditMilestones ? `<label><input type="checkbox" class="student-pick" id="staff-select-visible" ${allVisibleSelected ? 'checked' : ''} ${students.length ? '' : 'disabled'} aria-label="Select all students in this list"> Select all</label><span class="muted" id="staff-selected-count">${state.staffSelected.length} selected</span><button type="button" class="button secondary" id="edit-milestones" ${state.staffSelected.length ? '' : 'disabled'}>Edit Milestones</button>` : ''}
             <div class="view-toggle" role="group" aria-label="Student layout">
               <button type="button" data-staff-layout="tile" aria-pressed="${layout === 'tile' ? 'true' : 'false'}">Tiles</button>
               <button type="button" data-staff-layout="list" aria-pressed="${layout === 'list' ? 'true' : 'false'}">List</button>
@@ -2611,7 +2953,7 @@
           </div>
           <div class="staff-board${home.viewAs === 'supervisor' ? '' : ' solo'}">
           ${supervisorNextList(home)}
-          ${students.length ? (layout === 'list' ? renderStaffStudentList(home, students) : renderStaffStudentTiles(students, phaseName)) : '<div class="empty">No students match this view.</div>'}
+          ${students.length ? (layout === 'list' ? renderStaffStudentList(home, students) : renderStaffStudentTiles(students, phaseName, canEditMilestones)) : '<div class="empty">No students match this view.</div>'}
           </div>`;
         bindUnreadNotices(main, true);
         document.getElementById('open-email-desk').addEventListener('click', function() {
@@ -2623,17 +2965,61 @@
         document.getElementById('staff-cohort').addEventListener('change', function(event) {
           state.cohortId = event.target.value;
           state.staffSupervisor = '';
+          state.staffSelected = [];
           state.staffHome = null;
           renderStaffHome();
         });
         document.getElementById('acting-as').addEventListener('change', function(event) {
           state.actingAs = event.target.value;
+          state.staffSelected = [];
           state.staffHome = null;
           state.staffStudent = null;
           state.staffStudentHome = null;
           state.ticketBadgeFor = '';
           renderShell();
         });
+        function syncStaffSelectionChrome() {
+          const count = document.getElementById('staff-selected-count');
+          if (count) count.textContent = state.staffSelected.length + ' selected';
+          const button = document.getElementById('edit-milestones');
+          if (button) button.disabled = !state.staffSelected.length;
+          const all = document.getElementById('staff-select-visible');
+          const boxes = main.querySelectorAll('[data-select-student]');
+          if (!all || !boxes.length) return;
+          let checked = 0;
+          boxes.forEach(function(box) { if (box.checked) checked += 1; });
+          all.checked = checked === boxes.length && checked > 0;
+          all.indeterminate = checked > 0 && checked < boxes.length;
+        }
+        main.querySelectorAll('[data-select-student]').forEach(function(box) {
+          box.addEventListener('change', function() {
+            const email = box.dataset.selectStudent;
+            if (box.checked) {
+              if (state.staffSelected.indexOf(email) < 0) state.staffSelected.push(email);
+            } else {
+              state.staffSelected = state.staffSelected.filter(function(item) { return item !== email; });
+            }
+            syncStaffSelectionChrome();
+          });
+        });
+        const selectVisible = document.getElementById('staff-select-visible');
+        if (selectVisible) {
+          syncStaffSelectionChrome();
+          selectVisible.addEventListener('change', function() {
+            const emails = {};
+            state.staffSelected.forEach(function(email) { emails[email] = true; });
+            students.forEach(function(student) {
+              if (selectVisible.checked) emails[student.email] = true;
+              else delete emails[student.email];
+            });
+            state.staffSelected = Object.keys(emails);
+            repaintFilters();
+            const again = document.getElementById('staff-select-visible');
+            if (again) again.focus();
+          });
+        }
+        const editMilestones = document.getElementById('edit-milestones');
+        if (editMilestones) editMilestones.addEventListener('click', function() { openMassMilestoneEditor(home); });
         function repaintFilters() { paintStaffCards(home); }
         document.getElementById('staff-sort').addEventListener('change', function(event) {
           state.staffSort = event.target.value;
