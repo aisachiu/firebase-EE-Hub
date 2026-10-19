@@ -72,6 +72,17 @@ test('a workbook becomes staff, roster, form answers, and messages', () => {
   assert.ok(plan.warnings.some((warning) => warning.includes('Notes')));
 });
 
+test('staff EE subjects import as a list and keep a name that contains a slash', () => {
+  const plan = planSheetImport([
+    grid('USERS-STAFF', ['EMAIL', 'DisplayName', 'EESubjects'], [
+      ['alex.chen@vsa.edu', 'Alex Chen', 'English, History'],
+      ['sam@vsa.edu', 'Sam Lee', '["Theatre / Film","Biology"]'],
+    ]),
+  ]);
+  assert.deepEqual(plan.docs.staffUsers[0].data.EESubjects, ['English', 'History']);
+  assert.deepEqual(plan.docs.staffUsers[1].data.EESubjects, ['Theatre / Film', 'Biology']);
+});
+
 test('content pages become resources when that resource id is new', () => {
   const plan = planSheetImport([
     grid('RESOURCES', ['Resource ID', 'Title', 'Published'], [

@@ -1,3 +1,4 @@
+import { activeSubjectNamesFrom, canonicalSubjectAssignment, parseSubjectCell } from './allocationPure';
 import { validatePhasePrerequisites } from './phaseRules';
 import { listCohorts, placementFromMember, requireCohort } from './roster';
 import { adminSchema, cohortSheetName, COLLECTIONS, docIdFor, fieldConfig, staffHasAdminAccess, tableConfig, tableHeaders, tableKey, validateRecordFields } from './schema';
@@ -39,7 +40,9 @@ export async function getAdminRecords(app: App, entity: string) {
   if (entity === 'cohortMembers') throw new HubError('Choose a cohort to manage its students.');
   const config = tableConfig(entity);
   if (config.internal) throw new HubError('Internal sheets cannot be managed through Admin.');
-  const schema = adminSchema(entity, await phases(app));
+  const phaseRows = await phases(app);
+  const subjectRows = entity === 'staffUsers' ? await app.store.list(COLLECTIONS.subjects) : [];
+  const schema = adminSchema(entity, phaseRows, subjectRows);
   const headers = tableHeaders(entity);
   if (entity === 'cohorts') {
     return {
@@ -91,11 +94,15 @@ export async function saveAdminRecord(app: App, entity: string, record: Doc, ori
     validatePhasePrerequisites(existing.map((phase) => ({ phaseId: text(phase.phaseId), prerequisitePhaseId: text(phase.prerequisitePhaseId) })), values.phaseId, text(values.prerequisitePhaseId), keyName);
   }
   if (entity === 'staffUsers') {
-    validateEmail(values.EMAIL, 'Staff email');
+    const email = validateEmail(values.EMAIL, 'Staff email');
+    if (!keyName) values.EMAIL = email;
     if (!toBoolean(values.isStaff) && !toBoolean(values.isSupervisor) && !toBoolean(values.isLead) && !toBoolean(values.isCoordinator) && !toBoolean(values.isAdmin)) {
       throw new HubError('Select at least one staff role.');
     }
     values.isStaff = true;
+    const active = activeSubjectNamesFrom(await app.store.list(COLLECTIONS.subjects));
+    const priorDoc = keyName ? await app.store.get(COLLECTIONS.staffUsers, keyName) : null;
+    values.EESubjects = canonicalSubjectAssignment(values.EESubjects, active, parseSubjectCell(priorDoc?.EESubjects));
   }
   if (entity === 'resources') {
     if (text(values.Body).length > 40000) throw new HubError('Body must be 40,000 characters or fewer.');

@@ -467,6 +467,56 @@ export function uniqueSubjects(value: unknown): string[] {
   return subjects;
 }
 
+/** Active subject names, one each, in alphabetical order. Blank Active counts as active. */
+export function activeSubjectNamesFrom(subjects: Doc[]): string[] {
+  const names: string[] = [];
+  subjects.forEach((subject) => {
+    const active = subject.Active === '' || subject.Active === undefined || toBoolean(subject.Active);
+    const name = text(subject.Name);
+    if (!active || !name) return;
+    if (names.some((item) => item.toLowerCase() === name.toLowerCase())) return;
+    names.push(name);
+  });
+  return names.sort((left, right) => left.localeCompare(right, 'en', { sensitivity: 'base' }));
+}
+
+/**
+ * Read EE subjects from a staff record or a sheet cell.
+ * Arrays stay intact, so a name like "History / Geography" is one subject.
+ * A JSON array string does too. Older comma-separated text still splits.
+ */
+export function parseSubjectCell(value: unknown): string[] {
+  if (Array.isArray(value)) return uniqueSubjects(value);
+  const raw = text(value);
+  if (raw.startsWith('[')) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return uniqueSubjects(parsed);
+    } catch {
+      // Not JSON. Fall through to the legacy comma-separated list.
+    }
+  }
+  return uniqueSubjects(raw);
+}
+
+/** Sheet cell for a subject list. Names that contain a list delimiter are written as JSON. */
+export function formatSubjectCell(value: unknown): string {
+  const subjects = parseSubjectCell(value);
+  if (subjects.some((name) => /[,;/|]/.test(name))) return JSON.stringify(subjects);
+  return subjects.join(', ');
+}
+
+/** Keep active subjects, plus names already stored so an inactive subject is not dropped by accident. */
+export function canonicalSubjectAssignment(incoming: unknown, active: string[], previous: string[] = []): string[] {
+  const activeMap = new Map(active.map((name) => [name.toLowerCase(), name]));
+  const previousMap = new Map(previous.map((name) => [name.toLowerCase(), name]));
+  return parseSubjectCell(incoming).map((name) => {
+    const canonical = activeMap.get(name.toLowerCase()) || previousMap.get(name.toLowerCase());
+    if (!canonical) throw new HubError(`${name} is not an active subject.`);
+    return canonical;
+  });
+}
+
 export interface QuotaCapacity {
   totalQuota: number;
   untiedQuota: number;
@@ -511,7 +561,7 @@ export function staffQuotaTokenRows(staff: Doc[]): { rows: ParsedTokenRow[]; war
       warnings.push(`${staffId} quota must be a whole number.`);
       return;
     }
-    const eligibleSubjects = uniqueSubjects(person.EESubjects);
+    const eligibleSubjects = parseSubjectCell(person.EESubjects);
     if (!quota && !eligibleSubjects.length) return;
     rows.push({ staffId, quota, eligibleSubjects });
   });

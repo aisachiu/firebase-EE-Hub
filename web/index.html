@@ -723,6 +723,10 @@
       .quota-table input[data-quota] { width: 72px; padding: 6px 8px; }
       .quota-subjects, .quota-pick { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
       .quota-subjects { gap: 4px; }
+      .toolbar input[type="search"] { width: 240px; max-width: 100%; padding: 7px 9px; color: var(--ink); background: white; border: 1px solid var(--line); border-radius: 3px; }
+      .subject-menu { min-width: 180px; }
+      .subject-menu summary { cursor: pointer; font-weight: 700; }
+      .subject-menu-list { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; max-height: 240px; overflow: auto; }
       .sort-button { border: 0; padding: 0; background: transparent; color: inherit; font: inherit; font-weight: 700; cursor: pointer; }
       @container (max-width: 860px) {
         .alloc-layout, .alloc-config, .alloc-filters, .quota-layout { grid-template-columns: 1fr; }
@@ -767,6 +771,9 @@
         quotaSelected: [],
         quotaSort: 'name',
         quotaDir: 1,
+        quotaQuery: '',
+        staffRecordQuery: '',
+        staffRecordSelected: [],
         tokenEditId: '',
         adminData: null,
         editingRecord: null,
@@ -6106,6 +6113,10 @@
       }
 
       function renderAdminData(data) {
+        if (state.adminEntity === 'staffUsers') {
+          renderStaffRecords(data);
+          return;
+        }
         state.adminData = data;
         const target = document.getElementById('admin-records') || document.getElementById('admin-content');
         if (!target) return;
@@ -6839,6 +6850,22 @@
             return `<option value="${escapeHtml(item.value)}" ${String(currentValue) === String(item.value) ? 'selected' : ''}>${escapeHtml(item.label)}</option>`;
           }).join('')}</select></div>`;
         }
+        if (field.type === 'checks') {
+          const selected = subjectList(currentValue);
+          const options = (field.options || []).map(function(option) {
+            return typeof option === 'string' ? { value: option, label: option } : { value: option.value, label: option.label || option.value };
+          });
+          selected.forEach(function(item) {
+            if (!options.some(function(option) { return String(option.value).toLowerCase() === item.toLowerCase(); })) {
+              options.push({ value: item, label: item });
+            }
+          });
+          const boxes = options.map(function(option) {
+            const on = selected.some(function(item) { return item.toLowerCase() === String(option.value).toLowerCase(); });
+            return `<label class="check-option"><input type="checkbox" data-field="${escapeHtml(name)}" data-multi="1" value="${escapeHtml(option.value)}" ${on ? 'checked' : ''} ${disabled}> ${escapeHtml(option.label)}</label>`;
+          }).join('');
+          return `<div class="field wide"><label>${escapeHtml(label)}</label><div class="check-grid" role="group" aria-label="${escapeHtml(label)}">${boxes || '<span class="muted">Add active subjects under Admin → Subjects.</span>'}</div></div>`;
+        }
         const inputType = ['text', 'email', 'url', 'number', 'date'].indexOf(field.type) >= 0 ? field.type : 'text';
         const formatted = escapeHtml(formatValue(currentValue));
         const control = field.type === 'textarea'
@@ -6891,10 +6918,18 @@
         const entity = state.adminEntity;
         const form = event.currentTarget;
         const record = {};
+        const multi = {};
         form.querySelectorAll('[data-field]').forEach(function(input) {
+          if (input.getAttribute('data-multi')) {
+            const fieldName = input.dataset.field;
+            if (!multi[fieldName]) multi[fieldName] = [];
+            if (input.checked) multi[fieldName].push(input.value);
+            return;
+          }
           if (input.type === 'checkbox') record[input.dataset.field] = input.checked;
           else record[input.dataset.field] = input.value;
         });
+        Object.keys(multi).forEach(function(fieldName) { record[fieldName] = multi[fieldName]; });
         const submit = form.querySelector('[type="submit"]');
         const localError = document.getElementById('member-save-error') || document.getElementById('resource-save-error');
         if (localError) { localError.hidden = true; localError.textContent = ''; }
@@ -6956,6 +6991,7 @@
 
       function displayField(field, record) {
         const value = record[field.name];
+        if (field.type === 'checks') return subjectList(value).join(', ');
         if (field.options && field.options.length) {
           const match = field.options.filter(function(option) {
             const item = typeof option === 'string' ? { value: option, label: option } : option;
@@ -7463,6 +7499,220 @@
         });
       }
 
+      function subjectList(value) {
+        const seen = {};
+        const names = [];
+        const source = Array.isArray(value) ? value : String(value || '').split(/[,;/|]/);
+        source.forEach(function(item) {
+          const name = String(item || '').trim();
+          const key = name.toLowerCase();
+          if (!name || seen[key]) return;
+          seen[key] = true;
+          names.push(name);
+        });
+        return names;
+      }
+
+      function staffNameMatch(name, email, query) {
+        if (!query) return true;
+        return String(name || '').toLowerCase().indexOf(query) >= 0 || String(email || '').toLowerCase().indexOf(query) >= 0;
+      }
+
+      function mergeSelection(selected, visible, checked) {
+        const shown = {};
+        visible.forEach(function(email) { shown[email] = true; });
+        const kept = selected.filter(function(email) { return !shown[email]; });
+        if (!checked) return kept;
+        visible.forEach(function(email) {
+          if (kept.indexOf(email) < 0) kept.push(email);
+        });
+        return kept;
+      }
+
+      function schemaSubjectNames(data) {
+        const fields = data && data.schema && data.schema.fields ? data.schema.fields : [];
+        const field = fields.filter(function(item) { return item.name === 'EESubjects'; })[0];
+        return (field && field.options ? field.options : []).map(function(option) {
+          return typeof option === 'string' ? option : option.value;
+        }).filter(Boolean);
+      }
+
+      function subjectMenuMarkup(email, assigned, subjects, attr) {
+        const names = subjectList(assigned);
+        const summary = names.length ? names.join(', ') : 'No subjects';
+        const options = (subjects || []).slice();
+        names.forEach(function(item) {
+          if (!options.some(function(option) { return String(option).toLowerCase() === item.toLowerCase(); })) options.push(item);
+        });
+        const boxes = options.map(function(subject) {
+          const on = names.some(function(item) { return item.toLowerCase() === String(subject).toLowerCase(); });
+          return `<label class="check-option"><input type="checkbox" ${attr}="${escapeHtml(email)}" data-subject="${escapeHtml(subject)}" ${on ? 'checked' : ''}> ${escapeHtml(subject)}</label>`;
+        }).join('');
+        return `<details class="subject-menu"><summary>${escapeHtml(summary)}</summary><div class="subject-menu-list">${boxes || '<span class="muted">Add active subjects under Admin → Subjects.</span>'}</div></details>`;
+      }
+
+      function checkedSubjectsIn(menu) {
+        return Array.from(menu.querySelectorAll('input[type="checkbox"]:checked')).map(function(box) {
+          return box.getAttribute('data-subject');
+        }).filter(Boolean);
+      }
+
+      function renderStaffRecords(data) {
+        state.adminData = data || { records: [], schema: { fields: [] } };
+        const target = document.getElementById('admin-records') || document.getElementById('admin-content');
+        if (!target) return;
+        const activeElement = document.activeElement;
+        const filterFocus = activeElement && activeElement.id === 'staff-record-filter';
+        const filterCaret = filterFocus ? activeElement.selectionStart : null;
+        const fields = state.adminData.schema && state.adminData.schema.fields ? state.adminData.schema.fields : [];
+        const columns = fields.filter(function(field) { return field.table !== false; });
+        const records = state.adminData.records || [];
+        const subjects = schemaSubjectNames(state.adminData);
+        const known = {};
+        records.forEach(function(record) { known[String(record.EMAIL || '').toLowerCase()] = true; });
+        state.staffRecordSelected = (state.staffRecordSelected || []).filter(function(email) { return known[String(email || '').toLowerCase()]; });
+        const query = String(state.staffRecordQuery || '').trim().toLowerCase();
+        const visible = records.filter(function(record) { return staffNameMatch(record.DisplayName, record.EMAIL, query); });
+        const selectedVisible = visible.filter(function(record) { return state.staffRecordSelected.indexOf(record.EMAIL) >= 0; }).length;
+        const allVisible = visible.length > 0 && selectedVisible === visible.length;
+        const subjectBoxes = subjects.length ? subjects.map(function(subject) {
+          return `<label class="check-option"><input type="checkbox" data-staff-subject="${escapeHtml(subject)}"> ${escapeHtml(subject)}</label>`;
+        }).join('') : '<span class="muted">Add active subjects under Admin → Subjects.</span>';
+        target.innerHTML = `${staffSectionNav()}
+          <p class="lede">EE subjects are the subjects a staff member can supervise. Pick one or more active subjects on the record, or filter by name and apply a subject change to everyone you select. Selections stay in place when the filter changes.</p>
+          <div class="toolbar">
+            <button type="button" class="button" id="new-record">Add staff user</button>
+            <label for="staff-record-filter">Filter by name</label>
+            <input id="staff-record-filter" type="search" placeholder="Name or email" value="${escapeHtml(state.staffRecordQuery || '')}" aria-label="Filter staff by name">
+            <span class="muted">${visible.length} shown · ${records.length} record${records.length === 1 ? '' : 's'}</span>
+          </div>
+          ${state.status ? `<p class="status">${escapeHtml(state.status)}</p>` : ''}
+          <div class="alloc-batch">
+            <label><input type="checkbox" id="staff-select-shown" ${allVisible ? 'checked' : ''}> Select shown</label>
+            <span class="muted" id="staff-selected-count">${state.staffRecordSelected.length} selected</span>
+            <div class="quota-pick" role="group" aria-label="Subjects to assign">${subjectBoxes}</div>
+            <button type="button" class="button secondary" id="staff-add-subjects">Add subjects to selected</button>
+            <button type="button" class="button secondary" id="staff-remove-subjects">Remove subjects from selected</button>
+          </div>
+          ${records.length ? `<div class="table-wrap"><table><thead><tr>
+            <th><span class="sr-only">Select</span></th>
+            ${columns.map(function(field) { return `<th>${escapeHtml(field.label || field.name)}</th>`; }).join('')}
+            <th>Actions</th>
+          </tr></thead><tbody>${visible.length ? visible.map(function(record) {
+            const email = record.EMAIL || '';
+            return `<tr>
+              <td><input type="checkbox" data-staff-pick="${escapeHtml(email)}" ${state.staffRecordSelected.indexOf(email) >= 0 ? 'checked' : ''} aria-label="Select ${escapeHtml(record.DisplayName || email)}"></td>
+              ${columns.map(function(field) {
+                if (field.name === 'EESubjects') return `<td>${subjectMenuMarkup(email, record.EESubjects, subjects, 'data-staff-subject-toggle')}</td>`;
+                return `<td>${escapeHtml(displayField(field, record))}</td>`;
+              }).join('')}
+              <td><div class="actions"><button type="button" class="link-button" data-edit="${escapeHtml(email)}">Edit</button><button type="button" class="link-button" data-delete="${escapeHtml(email)}">Delete</button></div></td>
+            </tr>`;
+          }).join('') : `<tr><td colspan="${columns.length + 2}"><div class="empty">No staff match that name.</div></td></tr>`}</tbody></table></div>` : '<div class="empty">No records yet.</div>'}
+          <div id="record-editor"></div>`;
+        bindStaffPane(target);
+        const addButton = document.getElementById('new-record');
+        if (addButton) addButton.addEventListener('click', function() { openEditor(null); });
+        const selectShown = document.getElementById('staff-select-shown');
+        if (selectShown) {
+          selectShown.indeterminate = selectedVisible > 0 && selectedVisible < visible.length;
+          selectShown.addEventListener('change', function(event) {
+            state.staffRecordSelected = mergeSelection(state.staffRecordSelected, visible.map(function(record) { return record.EMAIL; }), event.target.checked);
+            renderStaffRecords(state.adminData);
+          });
+        }
+        target.querySelectorAll('[data-staff-pick]').forEach(function(box) {
+          box.addEventListener('change', function() {
+            const email = box.getAttribute('data-staff-pick');
+            state.staffRecordSelected = box.checked
+              ? state.staffRecordSelected.concat([email]).filter(function(item, index, list) { return list.indexOf(item) === index; })
+              : state.staffRecordSelected.filter(function(item) { return item !== email; });
+            const count = document.getElementById('staff-selected-count');
+            if (count) count.textContent = state.staffRecordSelected.length + ' selected';
+            if (selectShown) {
+              const shownSelected = visible.filter(function(record) { return state.staffRecordSelected.indexOf(record.EMAIL) >= 0; }).length;
+              selectShown.checked = visible.length > 0 && shownSelected === visible.length;
+              selectShown.indeterminate = shownSelected > 0 && shownSelected < visible.length;
+            }
+          });
+        });
+        const filter = document.getElementById('staff-record-filter');
+        if (filter) filter.addEventListener('input', function(event) {
+          state.staffRecordQuery = event.target.value;
+          renderStaffRecords(state.adminData);
+        });
+        const addSubjects = document.getElementById('staff-add-subjects');
+        if (addSubjects) addSubjects.addEventListener('click', function() { assignSelectedStaffSubjects(true); });
+        const removeSubjects = document.getElementById('staff-remove-subjects');
+        if (removeSubjects) removeSubjects.addEventListener('click', function() { assignSelectedStaffSubjects(false); });
+        target.querySelectorAll('[data-staff-subject-toggle]').forEach(function(box) {
+          box.addEventListener('change', function() {
+            const menu = box.closest('details');
+            const email = box.getAttribute('data-staff-subject-toggle');
+            const record = records.find(function(item) { return item.EMAIL === email; });
+            if (!record || !menu) return;
+            const previous = subjectList(record.EESubjects);
+            record.EESubjects = checkedSubjectsIn(menu);
+            const summary = menu.querySelector('summary');
+            if (summary) summary.textContent = record.EESubjects.length ? record.EESubjects.join(', ') : 'No subjects';
+            runMutation('saveStaffSubjects', [[{ email: email, subjects: record.EESubjects.slice() }]], { key: 'staff-subjects:' + email }).then(function(result) {
+              const saved = result && result.staff && result.staff[0];
+              if (saved && Array.isArray(saved.subjects)) {
+                record.EESubjects = saved.subjects.slice();
+                if (summary) summary.textContent = record.EESubjects.length ? record.EESubjects.join(', ') : 'No subjects';
+              }
+            }).catch(function(error) {
+              if (isStale(error)) return;
+              record.EESubjects = previous;
+              showError(error);
+              renderStaffRecords(state.adminData);
+            });
+          });
+        });
+        target.querySelectorAll('[data-edit]').forEach(function(button) {
+          button.addEventListener('click', function() {
+            const record = records.find(function(item) { return item.EMAIL === button.getAttribute('data-edit'); });
+            if (record) openEditor(record);
+          });
+        });
+        target.querySelectorAll('[data-delete]').forEach(function(button) {
+          button.addEventListener('click', function() {
+            const record = records.find(function(item) { return item.EMAIL === button.getAttribute('data-delete'); });
+            if (record) removeRecord(record);
+          });
+        });
+        if (state.editingRecord && !filterFocus) openEditor(state.editingRecord.record, true);
+        if (filterFocus) {
+          const input = document.getElementById('staff-record-filter');
+          if (input) {
+            input.focus();
+            if (filterCaret !== null && input.setSelectionRange) input.setSelectionRange(filterCaret, filterCaret);
+          }
+        }
+      }
+
+      function assignSelectedStaffSubjects(add) {
+        const subjects = Array.from(document.querySelectorAll('[data-staff-subject]:checked')).map(function(box) {
+          return box.getAttribute('data-staff-subject');
+        });
+        if (!state.staffRecordSelected.length) { showError(new Error('Select at least one staff member.')); return; }
+        if (!subjects.length) { showError(new Error('Choose at least one subject.')); return; }
+        const button = document.getElementById(add ? 'staff-add-subjects' : 'staff-remove-subjects');
+        if (button) button.disabled = true;
+        runMutation('assignStaffSubjects', [state.staffRecordSelected.slice(), subjects, add ? 'add' : 'remove'], { key: 'staff-subjects-bulk' }).then(function(result) {
+          state.status = (add ? 'Added subjects for ' : 'Removed subjects from ') + (result.updated || state.staffRecordSelected.length) + ' staff.';
+          showSuccess(state.status);
+          return callServer('getAdminRecords', 'staffUsers');
+        }).then(function(fresh) {
+          if (button) button.disabled = false;
+          if (fresh) renderStaffRecords(fresh);
+        }).catch(function(error) {
+          if (button) button.disabled = false;
+          if (isStale(error)) return;
+          showError(error);
+        });
+      }
+
       function renderStaffQuotas(target) {
         if (!target) return;
         const main = document.getElementById('main');
@@ -7505,21 +7755,35 @@
         return rows;
       }
 
+      function visibleQuotaRows() {
+        const query = String(state.quotaQuery || '').trim().toLowerCase();
+        return sortedQuotaRows().filter(function(row) { return staffNameMatch(row.displayName, row.email, query); });
+      }
+
       function paintStaffQuotas() {
         const target = document.getElementById('admin-content');
         if (!target || state.staffPane !== 'quotas') return;
-        const focused = document.activeElement && document.activeElement.getAttribute ? document.activeElement.getAttribute('data-quota') : '';
-        const rows = sortedQuotaRows();
+        const activeElement = document.activeElement;
+        const focused = activeElement && activeElement.getAttribute ? activeElement.getAttribute('data-quota') : '';
+        const filterFocus = activeElement && activeElement.id === 'quota-filter';
+        const filterCaret = filterFocus ? activeElement.selectionStart : null;
+        const rows = visibleQuotaRows();
         const selectedCount = state.quotaSelected.length;
+        const allVisible = rows.length > 0 && rows.every(function(row) { return state.quotaSelected.indexOf(row.email) >= 0; });
         const sortMark = function(key) {
           if (state.quotaSort !== key) return '';
           return state.quotaDir === -1 ? ' ↓' : ' ↑';
         };
         target.innerHTML = `${staffSectionNav()}
-          <p class="lede">EE subjects on the staff record are the standing list of what someone can supervise. Quota is how many supervisor tokens to create for a cohort. Applying tokens adds missing slots and leaves draft or committed tokens in place.</p>
+          <p class="lede">EE subjects on the staff record are the standing list of what someone can supervise. Open a name and tick the active subjects. Quota is how many supervisor tokens to create for a cohort. Subject changes save to the staff record immediately. Applying tokens adds missing slots and leaves draft or committed tokens in place.</p>
+          <div class="toolbar">
+            <label for="quota-filter">Filter by name</label>
+            <input id="quota-filter" type="search" placeholder="Name or email" value="${escapeHtml(state.quotaQuery || '')}" aria-label="Filter staff by name">
+            <span class="muted">${rows.length} shown</span>
+          </div>
           <div class="alloc-batch">
-            <label><input type="checkbox" id="quota-select-all" ${rows.length && rows.every(function(row) { return state.quotaSelected.indexOf(row.email) >= 0; }) ? 'checked' : ''}> Select all</label>
-            <span class="muted">${selectedCount} selected</span>
+            <label><input type="checkbox" id="quota-select-all" ${allVisible ? 'checked' : ''}> Select shown</label>
+            <span class="muted" id="quota-selected-count">${selectedCount} selected</span>
             <label for="quota-bulk">Quota for selected</label>
             <input id="quota-bulk" inputmode="numeric" style="width:72px" placeholder="0">
             <button type="button" class="button secondary" id="quota-apply-bulk">Apply quota</button>
@@ -7543,11 +7807,9 @@
               <td><strong>${escapeHtml(row.displayName)}</strong><div class="muted">${escapeHtml(row.email)}</div></td>
               <td>${escapeHtml(row.department || '—')}</td>
               <td><input data-quota="${escapeHtml(row.email)}" inputmode="numeric" value="${escapeHtml(row.quota)}" aria-label="Quota for ${escapeHtml(row.displayName)}"></td>
-              <td><div class="quota-subjects">${row.subjects.length ? row.subjects.map(function(subject) {
-                return `<button type="button" class="subject-chip on" data-quota-remove="${escapeHtml(row.email)}" data-subject="${escapeHtml(subject)}">${escapeHtml(subject)} ×</button>`;
-              }).join('') : '<span class="muted">No subjects</span>'}</div></td>
+              <td>${subjectMenuMarkup(row.email, row.subjects, state.quotaSubjects, 'data-quota-subject-toggle')}</td>
             </tr>`;
-          }).join('') : '<tr><td colspan="5"><div class="empty">No staff users yet.</div></td></tr>'}</tbody></table></div>
+          }).join('') : `<tr><td colspan="5"><div class="empty">${state.quotaRows.length ? 'No staff match that name.' : 'No staff users yet.'}</div></td></tr>`}</tbody></table></div>
           <aside class="alloc-side"><header><h2>Subject capacity</h2></header><div id="quota-dashboard"></div>
             <footer>
               <label for="quota-cohort">Cohort</label>
@@ -7566,6 +7828,13 @@
         if (focused) {
           const input = target.querySelector('[data-quota="' + cssEscape(focused) + '"]');
           if (input) input.focus();
+        }
+        if (filterFocus) {
+          const input = document.getElementById('quota-filter');
+          if (input) {
+            input.focus();
+            if (filterCaret !== null && input.setSelectionRange) input.setSelectionRange(filterCaret, filterCaret);
+          }
         }
       }
 
@@ -7616,8 +7885,18 @@
 
       function bindStaffQuotas() {
         const selectAll = document.getElementById('quota-select-all');
-        if (selectAll) selectAll.addEventListener('change', function(event) {
-          state.quotaSelected = event.target.checked ? state.quotaRows.map(function(row) { return row.email; }) : [];
+        const visible = visibleQuotaRows();
+        if (selectAll) {
+          const selectedVisible = visible.filter(function(row) { return state.quotaSelected.indexOf(row.email) >= 0; }).length;
+          selectAll.indeterminate = selectedVisible > 0 && selectedVisible < visible.length;
+          selectAll.addEventListener('change', function(event) {
+            state.quotaSelected = mergeSelection(state.quotaSelected, visibleQuotaRows().map(function(row) { return row.email; }), event.target.checked);
+            paintStaffQuotas();
+          });
+        }
+        const filter = document.getElementById('quota-filter');
+        if (filter) filter.addEventListener('input', function(event) {
+          state.quotaQuery = event.target.value;
           paintStaffQuotas();
         });
         document.querySelectorAll('[data-quota-pick]').forEach(function(box) {
@@ -7626,9 +7905,14 @@
             state.quotaSelected = box.checked
               ? state.quotaSelected.concat([email]).filter(function(item, index, list) { return list.indexOf(item) === index; })
               : state.quotaSelected.filter(function(item) { return item !== email; });
-            const count = document.querySelector('.alloc-batch .muted');
+            const count = document.getElementById('quota-selected-count');
             if (count) count.textContent = state.quotaSelected.length + ' selected';
-            if (selectAll) selectAll.checked = state.quotaRows.length > 0 && state.quotaSelected.length === state.quotaRows.length;
+            if (selectAll) {
+              const shown = visibleQuotaRows();
+              const shownSelected = shown.filter(function(row) { return state.quotaSelected.indexOf(row.email) >= 0; }).length;
+              selectAll.checked = shown.length > 0 && shownSelected === shown.length;
+              selectAll.indeterminate = shownSelected > 0 && shownSelected < shown.length;
+            }
           });
         });
         document.querySelectorAll('[data-quota]').forEach(function(input) {
@@ -7657,13 +7941,23 @@
             paintStaffQuotas();
           });
         });
-        document.querySelectorAll('[data-quota-remove]').forEach(function(button) {
-          button.addEventListener('click', function() {
-            const row = state.quotaRows.find(function(item) { return item.email === button.getAttribute('data-quota-remove'); });
-            const subject = button.getAttribute('data-subject');
-            if (!row) return;
-            row.subjects = row.subjects.filter(function(item) { return item.toLowerCase() !== String(subject || '').toLowerCase(); });
-            paintStaffQuotas();
+        document.querySelectorAll('[data-quota-subject-toggle]').forEach(function(box) {
+          box.addEventListener('change', function() {
+            const menu = box.closest('details');
+            const email = box.getAttribute('data-quota-subject-toggle');
+            const row = state.quotaRows.find(function(item) { return item.email === email; });
+            if (!row || !menu) return;
+            const snapshot = cloneQuotaRows();
+            row.subjects = checkedSubjectsIn(menu);
+            const summary = menu.querySelector('summary');
+            if (summary) summary.textContent = row.subjects.length ? row.subjects.join(', ') : 'No subjects';
+            paintQuotaDashboard();
+        persistQuotaSubjects(snapshot).then(function(result) {
+          applySavedQuotaSubjects(result);
+          const saved = state.quotaRows.find(function(item) { return item.email === email; });
+          if (summary && saved) summary.textContent = saved.subjects.length ? saved.subjects.join(', ') : 'No subjects';
+          paintQuotaDashboard();
+        }).catch(function(error) { if (!isStale(error)) showError(error); });
           });
         });
         const bulk = document.getElementById('quota-apply-bulk');
@@ -7711,6 +8005,7 @@
         const subjects = checkedQuotaSubjects();
         if (!state.quotaSelected.length) { showError(new Error('Select at least one staff member.')); return; }
         if (!subjects.length) { showError(new Error('Choose at least one subject.')); return; }
+        const snapshot = cloneQuotaRows();
         state.quotaRows.forEach(function(row) {
           if (state.quotaSelected.indexOf(row.email) < 0) return;
           if (add) {
@@ -7724,6 +8019,42 @@
           }
         });
         paintStaffQuotas();
+        persistQuotaSubjects(snapshot).then(function(result) {
+          applySavedQuotaSubjects(result);
+          paintStaffQuotas();
+          showSuccess((add ? 'Added subjects for ' : 'Removed subjects from ') + state.quotaSelected.length + ' staff.');
+        }).catch(function(error) { if (!isStale(error)) showError(error); });
+      }
+
+      function cloneQuotaRows() {
+        return state.quotaRows.map(function(row) {
+          return {
+            email: row.email,
+            displayName: row.displayName,
+            department: row.department,
+            quota: row.quota,
+            subjects: row.subjects.slice()
+          };
+        });
+      }
+
+      function applySavedQuotaSubjects(result) {
+        (result && result.staff ? result.staff : []).forEach(function(item) {
+          const row = state.quotaRows.find(function(entry) { return entry.email === item.email; });
+          if (row && Array.isArray(item.subjects)) row.subjects = item.subjects.slice();
+        });
+      }
+
+      function persistQuotaSubjects(snapshot) {
+        const payload = state.quotaRows.map(function(row) {
+          return { email: row.email, subjects: row.subjects.slice() };
+        });
+        return runMutation('saveStaffSubjects', [payload], { key: 'quota-subjects' }).catch(function(error) {
+          if (isStale(error)) throw error;
+          if (snapshot) state.quotaRows = snapshot;
+          paintStaffQuotas();
+          throw error;
+        });
       }
 
       function quotaPayload() {

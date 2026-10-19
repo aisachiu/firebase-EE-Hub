@@ -8,7 +8,7 @@ import { assertSafeResourceHtml } from './formsPure';
 import { validatePhasePrerequisites } from './phaseRules';
 import { COLLECTIONS, staffHasAdminAccess, tableFields, validateRecordFields } from './schema';
 import { App, audited, requireAdmin } from './session';
-import { preserveEeActive } from './allocationPure';
+import { formatSubjectCell, preserveEeActive } from './allocationPure';
 import { planSheetImport, SheetGrid, SheetImportPlan, spreadsheetIdFrom } from './sheetImport';
 import { dateOnlyValue, Doc, driveNamePart, HubError, normalizeEmail, text, toBoolean } from './util';
 
@@ -223,6 +223,7 @@ function gridFor(entity: string, title: string, fields: string[], records: Doc[]
 function exportCell(field: { name: string; type: string } | undefined, name: string, value: unknown): string | number | boolean {
   if (name === 'FolderPrefix' || name === 'FolderSuffix') return driveNamePart(value);
   if (value === undefined || value === null || value === '') return '';
+  if (field?.type === 'checks') return formatSubjectCell(value);
   if (field?.type === 'checkbox') return toBoolean(value);
   if (field?.type === 'number') {
     const numeric = typeof value === 'number' ? value : Number(text(value));

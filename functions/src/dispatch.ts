@@ -74,7 +74,9 @@ import {
   previewStaffQuotaTokens,
   reopenAllocation,
   saveAllocationConfig,
+  assignStaffSubjects,
   saveStaffQuotas,
+  saveStaffSubjects,
   updateCohortToken,
 } from './allocation';
 import { applySheetIngest, exportSheetCollections, listSheetCollections, previewSheetIngest } from './sheetSync';
@@ -164,6 +166,8 @@ export async function dispatch(app: App, method: string, args: unknown[]): Promi
     case 'exportAllocationDrafts': return exportAllocationDrafts(app, args[0]);
     case 'getStaffQuotaSheet': return getStaffQuotaSheet(app);
     case 'saveStaffQuotas': return saveStaffQuotas(app, args[0]);
+    case 'saveStaffSubjects': return saveStaffSubjects(app, args[0]);
+    case 'assignStaffSubjects': return assignStaffSubjects(app, args[0], args[1], args[2]);
     case 'previewStaffQuotaTokens': return previewStaffQuotaTokens(app, args[0]);
     case 'applyStaffQuotaTokens': return applyStaffQuotaTokens(app, args[0]);
     case 'exportStaffQuotaSheet': return exportStaffQuotaSheet(app, args[0]);

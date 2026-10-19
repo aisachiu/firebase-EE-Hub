@@ -23,6 +23,9 @@ import {
   planReopen,
   planTokenTopUp,
   settingsFromDoc,
+  activeSubjectNamesFrom,
+  canonicalSubjectAssignment,
+  parseSubjectCell,
   staffQuotaTokenRows,
   tokenFromDoc,
   tokenSheetRows,
@@ -31,7 +34,7 @@ import {
   workspaceFromDoc,
   WorkspaceRecord,
 } from './allocationPure';
-import { Doc, HubError, normalizeEmail, nowIso, shortId, text, toBoolean } from './util';
+import { Doc, HubError, normalizeEmail, nowIso, shortId, text } from './util';
 
 export interface AllocationIngestResult {
   cohortId: string;
@@ -270,7 +273,7 @@ export async function getStaffQuotaSheet(app: App) {
       displayName: text(person.DisplayName),
       department: text(person['Primary Department']),
       quota: person.EEQuota === '' || person.EEQuota === undefined || person.EEQuota === null ? '' : person.EEQuota,
-      subjects: uniqueSubjects(person.EESubjects),
+      subjects: parseSubjectCell(person.EESubjects),
     }))
     .filter((person) => person.email)
     .sort((left, right) => left.displayName.localeCompare(right.displayName) || left.email.localeCompare(right.email));
@@ -280,15 +283,46 @@ export async function getStaffQuotaSheet(app: App) {
 export async function saveStaffQuotas(app: App, rows: unknown) {
   const user = await requireAdmin(app, 'SAVE_STAFF_QUOTAS');
   const incoming = quotaEdits(rows);
+  const active = await activeSubjectNames(app);
   return audited(app, user, 'SAVE_STAFF_QUOTAS', { staff: incoming.length }, async () => {
-    for (const row of incoming) {
-      const existing = await app.store.get(COLLECTIONS.staffUsers, row.email);
-      if (!existing) throw new HubError(`${row.email} is not a staff user.`);
-      existing.EEQuota = row.quota;
-      existing.EESubjects = row.subjects.join(', ');
-      await app.store.set(COLLECTIONS.staffUsers, row.email, existing);
+    const saved = await writeStaffSubjects(app, incoming, active, true);
+    return { updated: saved.length, staff: saved };
+  });
+}
+
+export async function saveStaffSubjects(app: App, rows: unknown) {
+  const user = await requireAdmin(app, 'SAVE_STAFF_SUBJECTS');
+  const incoming = subjectEdits(rows);
+  const active = await activeSubjectNames(app);
+  return audited(app, user, 'SAVE_STAFF_SUBJECTS', { staff: incoming.length }, async () => {
+    const saved = await writeStaffSubjects(app, incoming.map((row) => ({ ...row, quota: undefined })), active, false);
+    return { updated: saved.length, staff: saved };
+  });
+}
+
+export async function assignStaffSubjects(app: App, emails: unknown, subjects: unknown, mode: unknown) {
+  const user = await requireAdmin(app, 'ASSIGN_STAFF_SUBJECTS');
+  const modeName = text(mode).toLowerCase();
+  if (modeName !== 'add' && modeName !== 'remove') throw new HubError('Choose add or remove.');
+  const picked = uniqueSubjects(subjects);
+  if (!picked.length) throw new HubError('Choose at least one subject.');
+  const emailList = staffEmails(emails);
+  const active = await activeSubjectNames(app);
+  if (modeName === 'add') canonicalSubjectAssignment(picked, active, []);
+  return audited(app, user, 'ASSIGN_STAFF_SUBJECTS', { staff: emailList.length, mode: modeName }, async () => {
+    const saved: { email: string; subjects: string[] }[] = [];
+    for (const email of emailList) {
+      const existing = await app.store.get(COLLECTIONS.staffUsers, email);
+      if (!existing) throw new HubError(`${email} is not a staff user.`);
+      const current = parseSubjectCell(existing.EESubjects);
+      const next = modeName === 'add'
+        ? canonicalSubjectAssignment(current.concat(picked), active, current)
+        : current.filter((item) => !picked.some((subject) => subject.toLowerCase() === item.toLowerCase()));
+      existing.EESubjects = next;
+      await app.store.set(COLLECTIONS.staffUsers, email, existing);
+      saved.push({ email, subjects: next });
     }
-    return { updated: incoming.length };
+    return { updated: saved.length, staff: saved };
   });
 }
 
@@ -567,23 +601,63 @@ function sheetSource(source: unknown): string {
   return text(source);
 }
 
+async function writeStaffSubjects(app: App, rows: { email: string; quota?: number | ''; subjects: string[] }[], active: string[], writeQuota: boolean) {
+  const saved: { email: string; subjects: string[] }[] = [];
+  for (const row of rows) {
+    const existing = await app.store.get(COLLECTIONS.staffUsers, row.email);
+    if (!existing) throw new HubError(`${row.email} is not a staff user.`);
+    if (writeQuota) existing.EEQuota = row.quota;
+    const subjects = canonicalSubjectAssignment(row.subjects, active, parseSubjectCell(existing.EESubjects));
+    existing.EESubjects = subjects;
+    await app.store.set(COLLECTIONS.staffUsers, row.email, existing);
+    saved.push({ email: row.email, subjects });
+  }
+  return saved;
+}
+
+function subjectEdits(value: unknown): { email: string; subjects: string[] }[] {
+  return staffSubjectRows(value).map((row) => ({ email: row.email, subjects: row.subjects }));
+}
+
+function staffEmails(value: unknown): string[] {
+  if (!Array.isArray(value) || !value.length) throw new HubError('Select at least one staff member.');
+  if (value.length > 500) throw new HubError('Update no more than 500 staff at a time.');
+  const seen = new Set<string>();
+  const emails: string[] = [];
+  value.forEach((item) => {
+    const email = normalizeEmail(item);
+    if (!email) throw new HubError('Each selected row needs a staff email.');
+    if (seen.has(email)) return;
+    seen.add(email);
+    emails.push(email);
+  });
+  return emails;
+}
+
 function quotaEdits(value: unknown): { email: string; quota: number | ''; subjects: string[] }[] {
-  if (!Array.isArray(value) || !value.length) throw new HubError('Add at least one staff quota.');
-  if (value.length > 500) throw new HubError('Save no more than 500 staff quotas at a time.');
+  return staffSubjectRows(value).map((row) => {
+    const source = row.raw;
+    const quota = readQuota(source.quota === undefined ? source.EEQuota : source.quota);
+    return { email: row.email, quota, subjects: row.subjects };
+  });
+}
+
+function staffSubjectRows(value: unknown): { email: string; subjects: string[]; raw: Doc }[] {
+  if (!Array.isArray(value) || !value.length) throw new HubError('Add at least one staff row.');
+  if (value.length > 500) throw new HubError('Save no more than 500 staff at a time.');
   const seen = new Set<string>();
   return value.map((item) => {
     const row = item && typeof item === 'object' ? item as Doc : {};
     const email = normalizeEmail(row.email || row.staffId);
-    if (!email) throw new HubError('Each quota row needs a staff email.');
+    if (!email) throw new HubError('Each row needs a staff email.');
     if (seen.has(email)) throw new HubError(`${email} is listed more than once.`);
     seen.add(email);
-    const quota = readQuota(row.quota === undefined ? row.EEQuota : row.quota);
     const subjects = uniqueSubjects(row.subjects === undefined ? row.EESubjects : row.subjects);
     if (subjects.length > 40) throw new HubError(`${email} has too many EE subjects.`);
     subjects.forEach((subject) => {
       if (subject.length > 80) throw new HubError('An EE subject name is too long.');
     });
-    return { email, quota, subjects };
+    return { email, subjects, raw: row };
   });
 }
 
@@ -595,14 +669,7 @@ function readQuota(value: unknown): number | '' {
 }
 
 async function activeSubjectNames(app: App): Promise<string[]> {
-  const subjects = await app.store.list(COLLECTIONS.subjects);
-  const names: string[] = [];
-  subjects.forEach((subject) => {
-    const active = subject.Active === '' || subject.Active === undefined || toBoolean(subject.Active);
-    const name = text(subject.Name);
-    if (active && name && !names.some((item) => item.toLowerCase() === name.toLowerCase())) names.push(name);
-  });
-  return names;
+  return activeSubjectNamesFrom(await app.store.list(COLLECTIONS.subjects));
 }
 
 function ingestKind(value: unknown): 'workspace' | 'tokens' {

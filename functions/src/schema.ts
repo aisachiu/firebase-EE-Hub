@@ -1,3 +1,4 @@
+import { activeSubjectNamesFrom } from './allocationPure';
 import { HubError, text, toBoolean } from './util';
 
 export interface FieldDef {
@@ -88,7 +89,7 @@ export const APP_TABLES: Record<string, TableDef> = {
       { name: 'isCoordinator', type: 'checkbox' },
       { name: 'isAdmin', type: 'checkbox' },
       { name: 'EEQuota', type: 'number' },
-      { name: 'EESubjects', type: 'text' },
+      { name: 'EESubjects', type: 'checks', label: 'EE subjects', optionsFrom: 'subjects' },
     ],
   },
   subjects: {
@@ -355,6 +356,10 @@ export function validateRecordFields(entity: string, values: Record<string, any>
     const value = values[field.name];
     if (field.required && !text(value)) throw new HubError(`${field.name} is required.`);
     if (field.key && originalKey && text(value) !== text(originalKey)) throw new HubError(`${field.name} cannot be changed.`);
+    if (field.type === 'checks') {
+      if (value === undefined || value === null || value === '' || Array.isArray(value) || typeof value === 'string') return;
+      throw new HubError(`${field.name} must be a list of subjects.`);
+    }
     if (value === '' || value === undefined || value === null) return;
     if (field.options && field.options.length && !field.options.some((option) => String(option).toLowerCase() === String(value).toLowerCase())) {
       throw new HubError(field.errorMessage || `${field.name} must be one of: ${field.options.join(', ')}.`);
@@ -381,7 +386,7 @@ function validateEmailLoose(value: unknown, label: string): void {
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new HubError(`${label} must be a valid email address.`);
 }
 
-export function adminSchema(entity: string, phases: Record<string, any>[]): { entity: string; sheet: string; fields: any[] } {
+export function adminSchema(entity: string, phases: Record<string, any>[], subjects: Record<string, any>[] = []): { entity: string; sheet: string; fields: any[] } {
   const config = tableConfig(entity);
   const fields = config.fields.map((field) => {
     const result: Record<string, any> = {};
@@ -401,6 +406,9 @@ export function adminSchema(entity: string, phases: Record<string, any>[]): { en
           value: text(phase[field.optionValue || 'phaseId']),
           label: `${text(phase.phaseId)} · ${text(phase[field.optionLabel || 'phaseTitle'])}`,
         }));
+    }
+    if (field.optionsFrom === 'subjects') {
+      result.options = activeSubjectNamesFrom(subjects).map((name) => ({ value: name, label: name }));
     }
     return result;
   });
