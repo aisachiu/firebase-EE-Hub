@@ -2,6 +2,12 @@ import { Firestore } from 'firebase-admin/firestore';
 import { COLLECTIONS } from './schema';
 import { cleanDoc, Doc, text } from './util';
 
+export type AllocationOp =
+  | { kind: 'member'; cohortId: string; id: string; data: Doc }
+  | { kind: 'token'; cohortId: string; id: string; data: Doc }
+  | { kind: 'workspace'; cohortId: string; id: string; data: Doc }
+  | { kind: 'config'; cohortId: string; data: Doc };
+
 export class Store {
   constructor(public db: Firestore) {}
 
@@ -58,6 +64,71 @@ export class Store {
 
   async removeMember(cohortId: string, email: string): Promise<void> {
     await this.members(cohortId).doc(email).delete();
+  }
+
+  tokens(cohortId: string) {
+    return this.db.collection(COLLECTIONS.cohorts).doc(cohortId).collection('supervisorTokens');
+  }
+
+  async listTokens(cohortId: string): Promise<Doc[]> {
+    const snap = await this.tokens(cohortId).get();
+    return snap.docs.map((doc) => ({ ...(doc.data() as Doc), id: doc.id }));
+  }
+
+  async getToken(cohortId: string, id: string): Promise<Doc | null> {
+    if (!id) return null;
+    const snap = await this.tokens(cohortId).doc(id).get();
+    return snap.exists ? ({ ...(snap.data() as Doc), id: snap.id }) : null;
+  }
+
+  async setToken(cohortId: string, id: string, data: Doc): Promise<void> {
+    await this.tokens(cohortId).doc(id).set(cleanDoc(data));
+  }
+
+  workspace(cohortId: string) {
+    return this.db.collection(COLLECTIONS.cohorts).doc(cohortId).collection('allocationWorkspace');
+  }
+
+  async listWorkspace(cohortId: string): Promise<Doc[]> {
+    const snap = await this.workspace(cohortId).get();
+    return snap.docs.map((doc) => ({ ...(doc.data() as Doc), id: doc.id }));
+  }
+
+  async getWorkspace(cohortId: string, studentId: string): Promise<Doc | null> {
+    if (!studentId) return null;
+    const snap = await this.workspace(cohortId).doc(studentId).get();
+    return snap.exists ? ({ ...(snap.data() as Doc), id: snap.id }) : null;
+  }
+
+  async setWorkspace(cohortId: string, studentId: string, data: Doc): Promise<void> {
+    await this.workspace(cohortId).doc(studentId).set(cleanDoc(data));
+  }
+
+  allocationConfig(cohortId: string) {
+    return this.db.collection(COLLECTIONS.cohorts).doc(cohortId).collection('allocationConfig').doc('settings');
+  }
+
+  async getAllocationConfig(cohortId: string): Promise<Doc | null> {
+    const snap = await this.allocationConfig(cohortId).get();
+    return snap.exists ? (snap.data() as Doc) : null;
+  }
+
+  async setAllocationConfig(cohortId: string, data: Doc): Promise<void> {
+    await this.allocationConfig(cohortId).set(cleanDoc(data));
+  }
+
+  async applyAllocationOps(ops: AllocationOp[]): Promise<void> {
+    const size = 400;
+    for (let index = 0; index < ops.length; index += size) {
+      const batch = this.db.batch();
+      ops.slice(index, index + size).forEach((op) => {
+        if (op.kind === 'member') batch.set(this.members(op.cohortId).doc(op.id), cleanDoc(op.data));
+        else if (op.kind === 'token') batch.set(this.tokens(op.cohortId).doc(op.id), cleanDoc(op.data));
+        else if (op.kind === 'workspace') batch.set(this.workspace(op.cohortId).doc(op.id), cleanDoc(op.data));
+        else batch.set(this.allocationConfig(op.cohortId), cleanDoc(op.data));
+      });
+      await batch.commit();
+    }
   }
 
   async allMembers(): Promise<{ cohortId: string; member: Doc }[]> {

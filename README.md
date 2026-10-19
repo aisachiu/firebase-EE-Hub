@@ -128,6 +128,8 @@ The cohort folder must be somewhere that connected account can edit. Existing fo
 
 Admin → Sheets exports the collections an admin or coordinator selects into a spreadsheet owned by that same account, and shares it with the person who exported it. Phases, milestones, cohorts, and student lists are selected by default. Ingest reads a Google Sheet link and replaces only the selected collections whose tabs are present. A missing tab is left unchanged. Rows that are not in a selected tab are removed, after a preview and a confirmation. Audit logs can be exported and are not written back. Email logs and word-count samples are not part of this sheet. The Sheets scope on the same refresh token is what the Sheets API uses. The local demo can open the page and cannot create a spreadsheet until the refresh token is configured. The command-line `import-sheet` path is unchanged.
 
+Coordinators open Allocation to draft a supervisor and subject for each active student. Slots are individual tokens. A tab named `SUPERVISORTOKENS: 2026` has StaffEmail, Quota, and EligibleSubjects. Ingest adds missing tokens and leaves draft or committed slots as they are. A tab named `COHORTDATA: 2026` has StudentId, an optional SubjectChoice JSON cell, columns that start with `Choice_`, and any other column the dashboard can show. Publish writes the drafted supervisor and subject onto that student's roster row. Students with Active for allocation unchecked stay off the dashboard. Allocation settings, on that tab and under Admin, choose the choice keys and columns.
+
 4. From this repo:
 
 ```bash

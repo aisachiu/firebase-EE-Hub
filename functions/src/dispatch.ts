@@ -55,6 +55,17 @@ import {
   setNotificationRuleEnabled,
 } from './notifications';
 import { App } from './session';
+import {
+  applyAllocationIngest,
+  batchDraftAllocations,
+  commitAllocations,
+  draftAllocation,
+  exportAllocationDrafts,
+  getAllocationDesk,
+  previewAllocationIngest,
+  reopenAllocation,
+  saveAllocationConfig,
+} from './allocation';
 import { applySheetIngest, exportSheetCollections, listSheetCollections, previewSheetIngest } from './sheetSync';
 import { HubError, text } from './util';
 
@@ -129,6 +140,15 @@ export async function dispatch(app: App, method: string, args: unknown[]): Promi
     case 'runNotificationSweep': return runNotificationSweep(app, args[0]);
     case 'sendNotificationRule': return sendNotificationRule(app, args[0]);
     case 'sendNotificationTest': return sendNotificationTest(app, args[0], args[1]);
+    case 'getAllocationDesk': return getAllocationDesk(app, args[0]);
+    case 'draftAllocation': return draftAllocation(app, args[0], args[1], args[2], args[3]);
+    case 'batchDraftAllocations': return batchDraftAllocations(app, args[0], args[1], args[2], args[3]);
+    case 'reopenAllocation': return reopenAllocation(app, args[0], args[1]);
+    case 'commitAllocations': return commitAllocations(app, args[0]);
+    case 'saveAllocationConfig': return saveAllocationConfig(app, args[0], args[1]);
+    case 'previewAllocationIngest': return previewAllocationIngest(app, args[0], args[1], args[2]);
+    case 'applyAllocationIngest': return applyAllocationIngest(app, args[0], args[1], args[2]);
+    case 'exportAllocationDrafts': return exportAllocationDrafts(app, args[0]);
     default: throw new HubError('Unknown EE Hub request.');
   }
 }

@@ -197,6 +197,26 @@ test('removing a message thread also removes its replies', async () => {
   assert.deepEqual(await app.store.listMessages('t1'), []);
 });
 
+test('roster ingest keeps eeActive when the sheet has no column for it', async () => {
+  const app = appFor();
+  await seed(app);
+  const store = app.store as unknown as ReturnType<typeof memory>;
+  const member = (await store.listMembers('2026'))[0];
+  member.eeActive = false;
+  await store.setMember('2026', STUDENT, member);
+  const grid: SheetGrid = {
+    title: 'COHORT: 2026',
+    rows: [
+      ['StudentId', 'Display Name', 'Student ID', 'Student Email', 'Year Group', 'Surname'],
+      [STUDENT, 'Jamie Wong', '20260001', STUDENT, 12, 'Wong-Li'],
+    ],
+  };
+  await applySheetIngest(app, SHEET, ['cohortMembers'], true, { workbook: workbook([grid]) });
+  const saved = (await store.listMembers('2026'))[0];
+  assert.equal(saved.eeActive, false);
+  assert.equal(saved.Surname, 'Wong-Li');
+});
+
 test('a supervisor cannot export collections', async () => {
   const app = appFor('supervisor@vsa.edu');
   await seed(app);

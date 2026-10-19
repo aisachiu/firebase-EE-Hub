@@ -1,0 +1,812 @@
+import { Doc, HubError, normalizeEmail, text, toBoolean } from './util';
+
+export type TokenStatus = 'available' | 'draft' | 'committed';
+export type MatchFlag = 'none' | 'match' | 'miss';
+
+export interface Grid {
+  title: string;
+  rows: unknown[][];
+}
+
+export interface TokenRecord {
+  id: string;
+  cohortId: string;
+  staffId: string;
+  eligibleSubjects: string[];
+  allocatedTo: string;
+  assignedSubject: string;
+  status: TokenStatus;
+  createdAt: string;
+}
+
+export interface WorkspaceRecord {
+  studentId: string;
+  subjectChoices: Record<string, string | number | boolean>;
+  dynamicData: Record<string, string | number | boolean>;
+  pendingClear: boolean;
+  updatedAt: string;
+}
+
+export interface ColumnFlag {
+  key: string;
+  showOnCard: boolean;
+  filterable: boolean;
+  sortable: boolean;
+}
+
+export interface AllocationSettings {
+  primaryChoiceKey: string;
+  secondaryChoiceKey: string;
+  interdisciplinaryKey: string;
+  hlColumn: string;
+  supportColumn: string;
+  columns: ColumnFlag[];
+  detectedChoiceKeys: string[];
+  detectedDynamicKeys: string[];
+  lastWorkspaceSync: string;
+  lastTokenSync: string;
+  lastExport: string;
+}
+
+export interface ParsedWorkspaceRow {
+  studentId: string;
+  subjectChoices: Record<string, string | number | boolean>;
+  dynamicData: Record<string, string | number | boolean>;
+  eeActive: boolean | null;
+}
+
+export interface ParsedTokenRow {
+  staffId: string;
+  quota: number;
+  eligibleSubjects: string[];
+}
+
+export interface TokenTopUp {
+  create: TokenRecord[];
+  eligibleUpdates: { id: string; eligibleSubjects: string[] }[];
+  warnings: string[];
+}
+
+export interface DraftPlan {
+  tokens: TokenRecord[];
+  pendingClear: boolean;
+  changed: boolean;
+  error: string;
+  code: '' | 'capacity' | 'conflict';
+}
+
+export interface BatchDraftPlan {
+  tokenWrites: TokenRecord[];
+  pendingClears: Record<string, boolean>;
+  assigned: string[];
+  skipped: { studentId: string; reason: string }[];
+}
+
+export interface CommitPlan {
+  assignments: { studentId: string; staffId: string; subject: string; tokenId: string }[];
+  clears: string[];
+  warnings: string[];
+}
+
+export interface DeskToken {
+  id: string;
+  staffId: string;
+  staffName: string;
+  eligibleSubjects: string[];
+  assignedSubject: string;
+  status: 'draft' | 'committed';
+}
+
+export interface DeskStudent {
+  studentId: string;
+  displayName: string;
+  sortName: string;
+  liveSupervisorId: string;
+  liveSubject: string;
+  subjectChoices: Record<string, string | number | boolean>;
+  dynamicData: Record<string, string | number | boolean>;
+  pendingClear: boolean;
+  token: DeskToken | null;
+  choices: { primary: string; secondary: string; interdisciplinary: boolean };
+  flags: {
+    drafted: boolean;
+    committed: boolean;
+    subjectMatch: MatchFlag;
+    hlMatch: MatchFlag;
+    needsSupport: boolean;
+  };
+}
+
+export interface DeskSupervisor {
+  staffId: string;
+  displayName: string;
+  eligibleSubjects: string[];
+  total: number;
+  used: number;
+  available: number;
+  draft: number;
+  committed: number;
+}
+
+export interface AllocationDesk {
+  cohortId: string;
+  students: DeskStudent[];
+  supervisors: DeskSupervisor[];
+  settings: AllocationSettings;
+  summary: { staffCount: number; tokenCount: number; activeStudents: number; buffer: number };
+  publish: { drafts: number; clears: number; blocked: number };
+  warnings: string[];
+}
+
+export function emptySettings(): AllocationSettings {
+  return {
+    primaryChoiceKey: '',
+    secondaryChoiceKey: '',
+    interdisciplinaryKey: '',
+    hlColumn: '',
+    supportColumn: '',
+    columns: [],
+    detectedChoiceKeys: [],
+    detectedDynamicKeys: [],
+    lastWorkspaceSync: '',
+    lastTokenSync: '',
+    lastExport: '',
+  };
+}
+
+export function isEeActive(value: unknown): boolean {
+  if (value === undefined || value === null || value === '') return true;
+  return toBoolean(value);
+}
+
+export function preserveEeActive(incoming: Doc, previous: Doc | undefined): Doc {
+  if (!previous) return incoming;
+  const present = Object.prototype.hasOwnProperty.call(incoming, 'eeActive')
+    && incoming.eeActive !== ''
+    && incoming.eeActive !== undefined
+    && incoming.eeActive !== null;
+  if (present) return incoming;
+  if (previous.eeActive === undefined || previous.eeActive === '') return incoming;
+  return { ...incoming, eeActive: previous.eeActive };
+}
+
+export function allocationTab(title: string): { kind: 'workspace' | 'tokens'; cohortId: string } | null {
+  const trimmed = title.trim().replace(/\s+/g, ' ');
+  const data = /^cohortdata\s*:?\s*(\d{4})$/i.exec(trimmed);
+  if (data) return { kind: 'workspace', cohortId: data[1] };
+  const tokens = /^supervisortokens\s*:?\s*(\d{4})$/i.exec(trimmed);
+  if (tokens) return { kind: 'tokens', cohortId: tokens[1] };
+  return null;
+}
+
+export function findAllocationTab(grids: Grid[], cohortId: string, kind: 'workspace' | 'tokens'): Grid | null {
+  return grids.find((grid) => {
+    const parsed = allocationTab(grid.title);
+    return !!parsed && parsed.kind === kind && parsed.cohortId === cohortId;
+  }) || null;
+}
+
+export function parseWorkspaceGrid(grid: Grid): { rows: ParsedWorkspaceRow[]; warnings: string[]; choiceKeys: string[]; dynamicKeys: string[] } {
+  const headers = headerRow(grid);
+  const studentIndex = headerIndex(headers, ['studentid']);
+  if (studentIndex < 0) throw new HubError(`${grid.title} needs a StudentId column.`);
+  const choiceIndex = headerIndex(headers, ['subjectchoice', 'subjectchoices']);
+  const activeIndex = headerIndex(headers, ['eeactive', 'ee active']);
+  const warnings: string[] = [];
+  const seen = new Set<string>();
+  const rows: ParsedWorkspaceRow[] = [];
+  const choiceKeys = new Set<string>();
+  const dynamicKeys = new Set<string>();
+  grid.rows.slice(1).filter(rowHasValue).forEach((row, index) => {
+    const line = index + 2;
+    const studentId = normalizeEmail(row[studentIndex]);
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(studentId)) {
+      warnings.push(`${grid.title} row ${line} needs a student email.`);
+      return;
+    }
+    const subjectChoices: Record<string, string | number | boolean> = {};
+    if (choiceIndex >= 0) Object.assign(subjectChoices, choiceObject(row[choiceIndex], warnings, `${grid.title} row ${line} SubjectChoice`));
+    const dynamicData: Record<string, string | number | boolean> = {};
+    headers.forEach((header, column) => {
+      if (!header || column === studentIndex || column === choiceIndex || column === activeIndex) return;
+      const choiceKey = choiceColumn(header);
+      const value = plainCell(row[column]);
+      if (value === '') return;
+      if (choiceKey) {
+        subjectChoices[choiceKey] = value;
+        return;
+      }
+      dynamicData[header] = value;
+    });
+    if (seen.has(studentId)) warnings.push(`${grid.title} repeats ${studentId}. The last row is kept.`);
+    seen.add(studentId);
+    const activeCell = activeIndex < 0 ? '' : row[activeIndex];
+    const entry: ParsedWorkspaceRow = {
+      studentId,
+      subjectChoices,
+      dynamicData,
+      eeActive: activeIndex < 0 || text(activeCell) === '' ? null : toBoolean(activeCell),
+    };
+    const existing = rows.findIndex((item) => item.studentId === studentId);
+    if (existing >= 0) rows[existing] = entry;
+    else rows.push(entry);
+  });
+  rows.forEach((row) => {
+    Object.keys(row.subjectChoices).forEach((key) => choiceKeys.add(key));
+    Object.keys(row.dynamicData).forEach((key) => dynamicKeys.add(key));
+  });
+  return {
+    rows,
+    warnings,
+    choiceKeys: [...choiceKeys].sort(),
+    dynamicKeys: [...dynamicKeys].sort(),
+  };
+}
+
+export function parseTokenGrid(grid: Grid): { rows: ParsedTokenRow[]; warnings: string[] } {
+  const headers = headerRow(grid);
+  const staffIndex = headerIndex(headers, ['staffemail', 'staff email', 'email']);
+  const quotaIndex = headerIndex(headers, ['quota']);
+  const subjectIndex = headerIndex(headers, ['eligiblesubjects', 'eligible subjects', 'subjects']);
+  if (staffIndex < 0 || quotaIndex < 0) throw new HubError(`${grid.title} needs StaffEmail and Quota columns.`);
+  const warnings: string[] = [];
+  const rows: ParsedTokenRow[] = [];
+  const seen = new Set<string>();
+  grid.rows.slice(1).filter(rowHasValue).forEach((row, index) => {
+    const line = index + 2;
+    const staffId = normalizeEmail(row[staffIndex]);
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(staffId)) {
+      warnings.push(`${grid.title} row ${line} (${text(row[staffIndex]) || 'blank'}) needs a staff email.`);
+      return;
+    }
+    const quotaValue = typeof row[quotaIndex] === 'number' ? row[quotaIndex] : Number(text(row[quotaIndex]));
+    if (!Number.isInteger(quotaValue) || quotaValue < 0) {
+      warnings.push(`${grid.title} row ${line} quota must be a whole number.`);
+      return;
+    }
+    const eligibleSubjects = splitList(subjectIndex < 0 ? '' : row[subjectIndex]);
+    if (!eligibleSubjects.length) warnings.push(`${grid.title} row ${line} lists no eligible subjects for ${staffId}.`);
+    if (seen.has(staffId)) {
+      warnings.push(`${grid.title} repeats ${staffId}. The last row is kept.`);
+      const previous = rows.findIndex((item) => item.staffId === staffId);
+      if (previous >= 0) rows.splice(previous, 1);
+    }
+    seen.add(staffId);
+    rows.push({ staffId, quota: quotaValue, eligibleSubjects });
+  });
+  return { rows, warnings };
+}
+
+export function planTokenTopUp(existing: TokenRecord[], rows: ParsedTokenRow[], cohortId: string, now: string, idFactory: () => string): TokenTopUp {
+  const warnings: string[] = [];
+  const create: TokenRecord[] = [];
+  const eligibleUpdates: { id: string; eligibleSubjects: string[] }[] = [];
+  rows.forEach((row) => {
+    const owned = existing.filter((token) => token.staffId === row.staffId);
+    const gap = row.quota - owned.length;
+    if (gap > 0) {
+      for (let index = 0; index < gap; index += 1) {
+        create.push({
+          id: idFactory(),
+          cohortId,
+          staffId: row.staffId,
+          eligibleSubjects: row.eligibleSubjects.slice(),
+          allocatedTo: '',
+          assignedSubject: '',
+          status: 'available',
+          createdAt: now,
+        });
+      }
+    } else if (gap < 0) {
+      warnings.push(`${row.staffId} has ${owned.length} tokens and the sheet quota is ${row.quota}. Draft and committed tokens were left in place.`);
+    }
+    const sameList = (left: string[], right: string[]) => left.join('\n') === right.join('\n');
+    owned.forEach((token) => {
+      if (sameList(token.eligibleSubjects, row.eligibleSubjects)) return;
+      if (token.status === 'available') eligibleUpdates.push({ id: token.id, eligibleSubjects: row.eligibleSubjects.slice() });
+    });
+    const locked = owned.filter((token) => token.status !== 'available' && !sameList(token.eligibleSubjects, row.eligibleSubjects)).length;
+    if (locked) warnings.push(`${locked} draft or committed token${locked === 1 ? '' : 's'} for ${row.staffId} kept the previous subject list.`);
+  });
+  return { create, eligibleUpdates, warnings };
+}
+
+export function planDraft(input: {
+  studentId: string;
+  staffId: string;
+  subject: string;
+  tokens: TokenRecord[];
+  memberSupervisorId: string;
+  pendingClear: boolean;
+}): DraftPlan {
+  const studentId = normalizeEmail(input.studentId);
+  const staffId = normalizeEmail(input.staffId);
+  const subject = text(input.subject);
+  const mine = input.tokens.filter((token) => token.allocatedTo === studentId && token.status !== 'available');
+  if (mine.length > 1) {
+    return { tokens: [], pendingClear: input.pendingClear, changed: false, error: `${studentId} has more than one token.`, code: 'conflict' };
+  }
+  const current = mine[0];
+  if (!staffId) {
+    if (!current) return { tokens: [], pendingClear: input.pendingClear, changed: false, error: '', code: '' };
+    const published = current.status === 'committed' || (!!input.memberSupervisorId && input.memberSupervisorId === current.staffId);
+    return {
+      tokens: [{ ...current, allocatedTo: '', assignedSubject: '', status: 'available' }],
+      pendingClear: published ? true : input.pendingClear,
+      changed: true,
+      error: '',
+      code: '',
+    };
+  }
+  if (current && current.staffId === staffId) {
+    if (current.assignedSubject === subject && current.status !== 'committed') {
+      return { tokens: [], pendingClear: input.pendingClear, changed: false, error: '', code: '' };
+    }
+    if (current.assignedSubject === subject && current.status === 'committed') {
+      return { tokens: [], pendingClear: input.pendingClear, changed: false, error: '', code: '' };
+    }
+    return {
+      tokens: [{ ...current, assignedSubject: subject, status: 'draft' }],
+      pendingClear: false,
+      changed: true,
+      error: '',
+      code: '',
+    };
+  }
+  const available = input.tokens.filter((token) => token.staffId === staffId && token.status === 'available');
+  if (!available.length) {
+    return { tokens: [], pendingClear: input.pendingClear, changed: false, error: `${staffId} has no available slots.`, code: 'capacity' };
+  }
+  const preferred = available.find((token) => subjectsOverlap(subject, token.eligibleSubjects)) || available[0];
+  const updates: TokenRecord[] = [{ ...preferred, allocatedTo: studentId, assignedSubject: subject, status: 'draft' }];
+  if (current) updates.push({ ...current, allocatedTo: '', assignedSubject: '', status: 'available' });
+  return { tokens: updates, pendingClear: false, changed: true, error: '', code: '' };
+}
+
+export function planBatchDraft(input: {
+  studentIds: string[];
+  staffId: string;
+  subjects: Record<string, string>;
+  tokens: TokenRecord[];
+  supervisorByStudent: Record<string, string>;
+  pendingClearByStudent: Record<string, boolean>;
+}): BatchDraftPlan {
+  const working = input.tokens.map((token) => ({ ...token, eligibleSubjects: token.eligibleSubjects.slice() }));
+  const writes = new Map<string, TokenRecord>();
+  const pendingClears: Record<string, boolean> = {};
+  const assigned: string[] = [];
+  const skipped: { studentId: string; reason: string }[] = [];
+  let stopped = '';
+  input.studentIds.forEach((rawId) => {
+    const studentId = normalizeEmail(rawId);
+    if (!studentId) return;
+    if (stopped) {
+      skipped.push({ studentId, reason: stopped });
+      return;
+    }
+    const plan = planDraft({
+      studentId,
+      staffId: input.staffId,
+      subject: text(input.subjects[studentId]),
+      tokens: working,
+      memberSupervisorId: normalizeEmail(input.supervisorByStudent[studentId]),
+      pendingClear: !!input.pendingClearByStudent[studentId],
+    });
+    if (plan.error) {
+      skipped.push({ studentId, reason: plan.error });
+      if (plan.code === 'capacity') stopped = plan.error;
+      return;
+    }
+    if (!plan.changed) return;
+    plan.tokens.forEach((token) => {
+      const index = working.findIndex((item) => item.id === token.id);
+      if (index >= 0) working[index] = token;
+      writes.set(token.id, token);
+    });
+    pendingClears[studentId] = plan.pendingClear;
+    assigned.push(studentId);
+  });
+  return { tokenWrites: [...writes.values()], pendingClears, assigned, skipped };
+}
+
+export function planReopen(tokens: TokenRecord[], studentId: string): { token: TokenRecord | null; error: string } {
+  const email = normalizeEmail(studentId);
+  const mine = tokens.filter((token) => token.allocatedTo === email && token.status !== 'available');
+  if (mine.length !== 1) {
+    return { token: null, error: mine.length ? `${email} has more than one token.` : 'This student has no allocation to reopen.' };
+  }
+  if (mine[0].status === 'draft') return { token: mine[0], error: '' };
+  return { token: { ...mine[0], status: 'draft' }, error: '' };
+}
+
+export function planCommit(tokens: TokenRecord[], workspaces: WorkspaceRecord[]): CommitPlan {
+  const drafts = tokens.filter((token) => token.status === 'draft' && token.allocatedTo);
+  const byStudent = new Map<string, TokenRecord[]>();
+  drafts.forEach((token) => {
+    const list = byStudent.get(token.allocatedTo) || [];
+    list.push(token);
+    byStudent.set(token.allocatedTo, list);
+  });
+  const warnings: string[] = [];
+  const assignments: CommitPlan['assignments'] = [];
+  byStudent.forEach((list, studentId) => {
+    if (list.length > 1) {
+      warnings.push(`${studentId} has more than one draft token.`);
+      return;
+    }
+    const token = list[0];
+    assignments.push({ studentId, staffId: token.staffId, subject: token.assignedSubject, tokenId: token.id });
+  });
+  const blocked = new Set(byStudent.keys());
+  const clears = workspaces
+    .filter((workspace) => workspace.pendingClear && !blocked.has(workspace.studentId))
+    .map((workspace) => workspace.studentId);
+  return { assignments, clears, warnings };
+}
+
+export function subjectsOverlap(subject: string, eligible: string[]): boolean {
+  const needle = normalizeSubject(subject);
+  if (!needle) return false;
+  return eligible.some((item) => phrasesOverlap(needle, normalizeSubject(item)));
+}
+
+export function splitList(value: unknown): string[] {
+  if (Array.isArray(value)) return value.map((item) => text(item)).filter(Boolean);
+  return text(value).split(/[,;/|]/).map((part) => part.trim()).filter(Boolean);
+}
+
+export function isSupportFlag(value: unknown): boolean {
+  if (value === true || value === 1) return true;
+  return /^(yes|y|true|1|flagged|needs support)$/i.test(text(value));
+}
+
+export function tokenFromDoc(doc: Doc): TokenRecord | null {
+  const id = text(doc.id);
+  const staffId = normalizeEmail(doc.staffId);
+  if (!id || !staffId) return null;
+  const raw = text(doc.status).toLowerCase();
+  const allocatedTo = normalizeEmail(doc.allocatedTo);
+  const status: TokenStatus = (raw === 'draft' || raw === 'committed') && allocatedTo ? raw : 'available';
+  return {
+    id,
+    cohortId: text(doc.cohortId),
+    staffId,
+    eligibleSubjects: splitList(doc.eligibleSubjects),
+    allocatedTo: status === 'available' ? '' : allocatedTo,
+    assignedSubject: status === 'available' ? '' : text(doc.assignedSubject),
+    status,
+    createdAt: text(doc.createdAt),
+  };
+}
+
+export function workspaceFromDoc(doc: Doc, id: string): WorkspaceRecord {
+  return {
+    studentId: normalizeEmail(doc.studentId || id),
+    subjectChoices: plainMap(doc.subjectChoices),
+    dynamicData: plainMap(doc.dynamicData),
+    pendingClear: doc.pendingClear === true,
+    updatedAt: text(doc.updatedAt),
+  };
+}
+
+export function settingsFromDoc(doc: Doc | null): AllocationSettings {
+  const base = emptySettings();
+  if (!doc) return base;
+  const detectedDynamicKeys = stringList(doc.detectedDynamicKeys);
+  const detectedChoiceKeys = stringList(doc.detectedChoiceKeys);
+  return {
+    primaryChoiceKey: text(doc.primaryChoiceKey),
+    secondaryChoiceKey: text(doc.secondaryChoiceKey),
+    interdisciplinaryKey: text(doc.interdisciplinaryKey),
+    hlColumn: text(doc.hlColumn),
+    supportColumn: text(doc.supportColumn),
+    columns: columnFlags(doc.columns, detectedDynamicKeys),
+    detectedChoiceKeys,
+    detectedDynamicKeys,
+    lastWorkspaceSync: text(doc.lastWorkspaceSync),
+    lastTokenSync: text(doc.lastTokenSync),
+    lastExport: text(doc.lastExport),
+  };
+}
+
+export function mergeDetected(settings: AllocationSettings, choiceKeys: string[], dynamicKeys: string[]): AllocationSettings {
+  const columns = dynamicKeys.map((key) => settings.columns.find((column) => column.key === key) || {
+    key,
+    showOnCard: true,
+    filterable: false,
+    sortable: false,
+  });
+  const next: AllocationSettings = {
+    ...settings,
+    columns,
+    detectedChoiceKeys: choiceKeys.slice(),
+    detectedDynamicKeys: dynamicKeys.slice(),
+  };
+  if (!next.primaryChoiceKey && choiceKeys.includes('choice1')) next.primaryChoiceKey = 'choice1';
+  if (!next.secondaryChoiceKey && choiceKeys.includes('choice2')) next.secondaryChoiceKey = 'choice2';
+  if (!next.interdisciplinaryKey && choiceKeys.includes('interdisciplinary')) next.interdisciplinaryKey = 'interdisciplinary';
+  return next;
+}
+
+export function applySavedConfig(current: AllocationSettings, incoming: Doc): AllocationSettings {
+  const choiceKeys = new Set(current.detectedChoiceKeys);
+  const dynamicKeys = new Set(current.detectedDynamicKeys);
+  const columns = Array.isArray(incoming.columns) ? incoming.columns : [];
+  const nextColumns = current.detectedDynamicKeys.length
+    ? current.detectedDynamicKeys.map((key) => flagFrom(key, columns.find((column) => text(column?.key) === key) || current.columns.find((column) => column.key === key)))
+    : columns.map((column) => flagFrom(text(column?.key), column)).filter((column) => column.key);
+  return {
+    ...current,
+    primaryChoiceKey: allowedKey(incoming.primaryChoiceKey, choiceKeys),
+    secondaryChoiceKey: allowedKey(incoming.secondaryChoiceKey, choiceKeys),
+    interdisciplinaryKey: allowedKey(incoming.interdisciplinaryKey, choiceKeys),
+    hlColumn: allowedKey(incoming.hlColumn, dynamicKeys),
+    supportColumn: allowedKey(incoming.supportColumn, dynamicKeys),
+    columns: nextColumns,
+  };
+}
+
+export function studentLabel(member: Doc): string {
+  const surname = text(member.Surname);
+  const first = text(member['Preferred Name']) || text(member['First Name']);
+  if (surname && first) return `${surname}, ${first}`;
+  return text(member['Display Name']) || normalizeEmail(member.StudentId);
+}
+
+export function buildDesk(input: {
+  cohortId: string;
+  members: Doc[];
+  workspaces: WorkspaceRecord[];
+  tokens: TokenRecord[];
+  staff: { email: string; displayName: string }[];
+  settings: AllocationSettings;
+}): AllocationDesk {
+  const names = new Map(input.staff.map((person) => [normalizeEmail(person.email), person.displayName || person.email]));
+  const workspaceByStudent = new Map(input.workspaces.map((workspace) => [workspace.studentId, workspace]));
+  const warnings: string[] = [];
+  const tokensByStudent = new Map<string, TokenRecord[]>();
+  input.tokens.forEach((token) => {
+    if (!token.allocatedTo || token.status === 'available') return;
+    const list = tokensByStudent.get(token.allocatedTo) || [];
+    list.push(token);
+    tokensByStudent.set(token.allocatedTo, list);
+  });
+  const activeIds = new Set<string>();
+  const students = input.members
+    .filter((member) => normalizeEmail(member.StudentId) && isEeActive(member.eeActive))
+    .map((member) => {
+      const studentId = normalizeEmail(member.StudentId);
+      activeIds.add(studentId);
+      const workspace = workspaceByStudent.get(studentId);
+      const held = tokensByStudent.get(studentId) || [];
+      if (held.length > 1) warnings.push(`${studentId} has more than one token.`);
+      const token = held.find((item) => item.status === 'draft') || held[0] || null;
+      const choices = {
+        primary: choiceText(workspace?.subjectChoices, input.settings.primaryChoiceKey),
+        secondary: choiceText(workspace?.subjectChoices, input.settings.secondaryChoiceKey),
+        interdisciplinary: !!input.settings.interdisciplinaryKey && toBoolean(workspace?.subjectChoices[input.settings.interdisciplinaryKey]),
+      };
+      const assignedSubject = token?.assignedSubject || '';
+      const eligible = token?.eligibleSubjects || [];
+      const allocated = !!token;
+      const hlValue = input.settings.hlColumn ? workspace?.dynamicData[input.settings.hlColumn] : undefined;
+      const supportValue = input.settings.supportColumn ? workspace?.dynamicData[input.settings.supportColumn] : undefined;
+      return {
+        studentId,
+        displayName: studentLabel(member),
+        sortName: studentLabel(member).toLowerCase(),
+        liveSupervisorId: normalizeEmail(member.supervisorId),
+        liveSubject: text(member.subject),
+        subjectChoices: workspace?.subjectChoices || {},
+        dynamicData: workspace?.dynamicData || {},
+        pendingClear: !!workspace?.pendingClear,
+        token: token ? {
+          id: token.id,
+          staffId: token.staffId,
+          staffName: names.get(token.staffId) || token.staffId,
+          eligibleSubjects: token.eligibleSubjects.slice(),
+          assignedSubject: token.assignedSubject,
+          status: token.status as 'draft' | 'committed',
+        } : null,
+        choices,
+        flags: {
+          drafted: token?.status === 'draft',
+          committed: token?.status === 'committed',
+          subjectMatch: !allocated ? 'none' : subjectsOverlap(assignedSubject, eligible) ? 'match' : 'miss',
+          hlMatch: !allocated || !input.settings.hlColumn ? 'none' : splitList(hlValue).some((part) => subjectsOverlap(part, eligible)) ? 'match' : 'miss',
+          needsSupport: !!input.settings.supportColumn && isSupportFlag(supportValue),
+        },
+      } satisfies DeskStudent;
+    })
+    .sort((left, right) => left.sortName.localeCompare(right.sortName));
+
+  tokensByStudent.forEach((_held, studentId) => {
+    if (!activeIds.has(studentId)) warnings.push(`${studentId} is inactive and still holds a token.`);
+  });
+
+  const groups = new Map<string, TokenRecord[]>();
+  input.tokens.forEach((token) => {
+    const list = groups.get(token.staffId) || [];
+    list.push(token);
+    groups.set(token.staffId, list);
+  });
+  const supervisors = [...groups.entries()].map(([staffId, tokens]) => {
+    const subjects = [...new Set(tokens.flatMap((token) => token.eligibleSubjects))].sort();
+    const draft = tokens.filter((token) => token.status === 'draft').length;
+    const committed = tokens.filter((token) => token.status === 'committed').length;
+    const available = tokens.filter((token) => token.status === 'available').length;
+    return {
+      staffId,
+      displayName: names.get(staffId) || staffId,
+      eligibleSubjects: subjects,
+      total: tokens.length,
+      used: draft + committed,
+      available,
+      draft,
+      committed,
+    };
+  }).sort((left, right) => left.displayName.localeCompare(right.displayName));
+
+  const commit = planCommit(input.tokens, input.workspaces);
+  return {
+    cohortId: input.cohortId,
+    students,
+    supervisors,
+    settings: input.settings,
+    summary: {
+      staffCount: supervisors.length,
+      tokenCount: input.tokens.length,
+      activeStudents: students.length,
+      buffer: input.tokens.length - students.length,
+    },
+    publish: { drafts: commit.assignments.length, clears: commit.clears.length, blocked: commit.warnings.length },
+    warnings: warnings.concat(commit.warnings),
+  };
+}
+
+export function allocationExportRows(students: DeskStudent[], settings: AllocationSettings): (string | number | boolean)[][] {
+  const cards = settings.columns.filter((column) => column.showOnCard).map((column) => column.key);
+  const header = ['StudentId', 'Display Name', 'Status', 'SupervisorEmail', 'AssignedSubject', ...cards];
+  const body = students.map((student) => {
+    const status = student.flags.committed ? 'Committed' : student.flags.drafted ? 'Draft' : 'Unallocated';
+    const row: (string | number | boolean)[] = [
+      student.studentId,
+      student.displayName,
+      status,
+      student.token?.staffId || '',
+      student.token?.assignedSubject || '',
+    ];
+    cards.forEach((key) => {
+      const value = student.dynamicData[key];
+      row.push(value === undefined ? '' : value);
+    });
+    return row;
+  });
+  return [header, ...body];
+}
+
+function headerRow(grid: Grid): string[] {
+  if (!grid.rows.length) throw new HubError(`${grid.title} has no header row.`);
+  const headers = grid.rows[0].map((cell) => text(cell));
+  const seen = new Set<string>();
+  headers.forEach((header, index) => {
+    const key = header.toLowerCase();
+    if (!header || !seen.has(key)) {
+      if (header) seen.add(key);
+      return;
+    }
+    headers[index] = '';
+  });
+  return headers;
+}
+
+function headerIndex(headers: string[], names: string[]): number {
+  for (const name of names) {
+    const index = headers.findIndex((header) => header.toLowerCase().replace(/\s+/g, ' ') === name);
+    if (index >= 0) return index;
+  }
+  return -1;
+}
+
+function choiceColumn(header: string): string {
+  const match = /^choice[_:\s-]+(.+)$/i.exec(header.trim());
+  return match ? text(match[1]) : '';
+}
+
+function choiceObject(value: unknown, warnings: string[], label: string): Record<string, string | number | boolean> {
+  if (value === null || value === undefined || value === '') return {};
+  let parsed = value;
+  if (typeof value === 'string') {
+    const raw = value.trim();
+    if (!raw) return {};
+    if (!/^[[{]/.test(raw)) {
+      warnings.push(`${label} is not a JSON object.`);
+      return {};
+    }
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      warnings.push(`${label} is not valid JSON.`);
+      return {};
+    }
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    warnings.push(`${label} should be a JSON object.`);
+    return {};
+  }
+  return plainMap(parsed);
+}
+
+function plainCell(value: unknown): string | number | boolean | '' {
+  if (value === null || value === undefined || value === '') return '';
+  if (typeof value === 'number') return Number.isFinite(value) ? value : '';
+  if (typeof value === 'boolean') return value;
+  return text(value);
+}
+
+function plainMap(value: unknown): Record<string, string | number | boolean> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const out: Record<string, string | number | boolean> = {};
+  Object.entries(value as Record<string, unknown>).forEach(([key, item]) => {
+    const name = text(key);
+    const cell = plainCell(item);
+    if (!name || cell === '') return;
+    out[name] = cell;
+  });
+  return out;
+}
+
+function rowHasValue(row: unknown): boolean {
+  return Array.isArray(row) && row.some((cell) => text(cell) !== '');
+}
+
+function normalizeSubject(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+function phrasesOverlap(left: string, right: string): boolean {
+  if (!left || !right) return false;
+  if (left === right) return true;
+  const leftWords = left.split(' ');
+  const rightWords = right.split(' ');
+  if (leftWords.length === 1 && rightWords.length === 1) return wordOverlap(left, right);
+  const shorter = leftWords.length <= rightWords.length ? leftWords : rightWords;
+  const longer = shorter === leftWords ? rightWords : leftWords;
+  return shorter.every((word) => longer.some((other) => wordOverlap(word, other)));
+}
+
+function wordOverlap(left: string, right: string): boolean {
+  if (left === right) return true;
+  return left.length >= 3 && right.length >= 3 && (left.includes(right) || right.includes(left));
+}
+
+function choiceText(choices: Record<string, string | number | boolean> | undefined, key: string): string {
+  if (!choices || !key || choices[key] === undefined || typeof choices[key] === 'boolean') return '';
+  return text(choices[key]);
+}
+
+function stringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => text(item)).filter(Boolean);
+}
+
+function columnFlags(value: unknown, keys: string[]): ColumnFlag[] {
+  const rows = Array.isArray(value) ? value : [];
+  return keys.map((key) => flagFrom(key, rows.find((row) => text(row?.key) === key)));
+}
+
+function flagFrom(key: string, row: Doc | undefined): ColumnFlag {
+  return {
+    key,
+    showOnCard: row ? row.showOnCard === true : false,
+    filterable: row ? row.filterable === true : false,
+    sortable: row ? row.sortable === true : false,
+  };
+}
+
+function allowedKey(value: unknown, allowed: Set<string>): string {
+  const key = text(value).slice(0, 80);
+  if (!key) return '';
+  if (allowed.size && !allowed.has(key)) return '';
+  return key;
+}

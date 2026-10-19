@@ -163,6 +163,7 @@ export const APP_TABLES: Record<string, TableDef> = {
       { name: 'EEDoc', type: 'text', table: false },
       { name: 'RPPFDoc', type: 'text', table: false },
       { name: 'EEPoster', type: 'text', table: false },
+      { name: 'eeActive', type: 'checkbox', defaultValue: true, table: false, label: 'Active for allocation' },
     ],
   },
   studentActionItems: {

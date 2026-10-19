@@ -1,0 +1,203 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import {
+  allocationExportRows,
+  applySavedConfig,
+  buildDesk,
+  emptySettings,
+  findAllocationTab,
+  isEeActive,
+  mergeDetected,
+  parseTokenGrid,
+  parseWorkspaceGrid,
+  planBatchDraft,
+  planCommit,
+  planDraft,
+  planTokenTopUp,
+  preserveEeActive,
+  subjectsOverlap,
+  TokenRecord,
+  WorkspaceRecord,
+} from './allocationPure';
+
+const JANE = 'jane.doe@vsa.edu';
+const MARK = 'mark.lee@vsa.edu';
+const SMITH = 'smith@vsa.edu';
+const DAVIS = 'davis@vsa.edu';
+
+function token(partial: Partial<TokenRecord> & Pick<TokenRecord, 'id' | 'staffId' | 'status'>): TokenRecord {
+  return {
+    cohortId: '2026',
+    eligibleSubjects: ['History'],
+    allocatedTo: '',
+    assignedSubject: '',
+    createdAt: '2026-10-18T00:00:00.000Z',
+    ...partial,
+  };
+}
+
+test('a missing eeActive flag counts as active and a blank sheet cell does not wipe a saved flag', () => {
+  assert.equal(isEeActive(undefined), true);
+  assert.equal(isEeActive(false), false);
+  assert.equal(isEeActive('no'), false);
+  const kept = preserveEeActive({ StudentId: JANE, Surname: 'Doe' }, { StudentId: JANE, eeActive: false });
+  assert.equal(kept.eeActive, false);
+  const explicit = preserveEeActive({ StudentId: JANE, eeActive: true }, { StudentId: JANE, eeActive: false });
+  assert.equal(explicit.eeActive, true);
+});
+
+test('workspace rows split choice columns, JSON, and the rest of the sheet', () => {
+  const parsed = parseWorkspaceGrid({
+    title: 'COHORTDATA: 2026',
+    rows: [
+      ['StudentId', 'SubjectChoice', 'Choice_choice2', 'Y10 GPA', 'EEActive'],
+      [JANE, '{"choice1":"History","interdisciplinary":true}', 'Eng Lit', 3.4, 'yes'],
+      ['not-an-email', '{}', '', '', ''],
+      [JANE, '{"choice1":"Biology"}', 'Physics', 2, 'no'],
+    ],
+  });
+  assert.equal(parsed.rows.length, 1);
+  assert.equal(parsed.rows[0].subjectChoices.choice1, 'Biology');
+  assert.equal(parsed.rows[0].subjectChoices.choice2, 'Physics');
+  assert.equal(parsed.rows[0].dynamicData['Y10 GPA'], 2);
+  assert.equal(parsed.rows[0].eeActive, false);
+  assert.deepEqual(parsed.choiceKeys, ['choice1', 'choice2']);
+  assert.ok(parsed.warnings.some((warning) => warning.includes('repeats')));
+  assert.ok(parsed.warnings.some((warning) => warning.includes('student email')));
+});
+
+test('token ingest tops up available slots and leaves drafts alone', () => {
+  const existing = [
+    token({ id: 'keep', staffId: SMITH, status: 'draft', allocatedTo: JANE, assignedSubject: 'History', eligibleSubjects: ['History'] }),
+    token({ id: 'free', staffId: SMITH, status: 'available', eligibleSubjects: ['History'] }),
+  ];
+  const parsed = parseTokenGrid({
+    title: 'SUPERVISORTOKENS 2026',
+    rows: [
+      ['StaffEmail', 'Quota', 'EligibleSubjects'],
+      [SMITH, 4, 'History, Geography'],
+      ['bad-row', 'many', 'Art'],
+    ],
+  });
+  let next = 0;
+  const plan = planTokenTopUp(existing, parsed.rows, '2026', '2026-10-18T01:00:00.000Z', () => `new-${next++}`);
+  assert.equal(plan.create.length, 2);
+  assert.equal(plan.create.every((item) => item.status === 'available' && item.allocatedTo === ''), true);
+  assert.deepEqual(plan.eligibleUpdates, [{ id: 'free', eligibleSubjects: ['History', 'Geography'] }]);
+  assert.equal(plan.create[0].eligibleSubjects.join(', '), 'History, Geography');
+  assert.ok(parsed.warnings.some((warning) => warning.includes('bad-row') || warning.includes('quota')));
+
+  const over = planTokenTopUp(existing, [{ staffId: SMITH, quota: 1, eligibleSubjects: ['History'] }], '2026', '2026-10-18T01:00:00.000Z', () => 'x');
+  assert.equal(over.create.length, 0);
+  assert.match(over.warnings[0], /quota is 1/);
+});
+
+test('drafting claims a matching slot, and clearing a published token waits for the next publish', () => {
+  const tokens = [
+    token({ id: 's1', staffId: SMITH, status: 'available', eligibleSubjects: ['History', 'Geography'] }),
+    token({ id: 's2', staffId: SMITH, status: 'available', eligibleSubjects: ['Art'] }),
+    token({ id: 'd1', staffId: DAVIS, status: 'committed', allocatedTo: MARK, assignedSubject: 'Art', eligibleSubjects: ['Art'] }),
+  ];
+  const claimed = planDraft({
+    studentId: JANE, staffId: SMITH, subject: 'History', tokens, memberSupervisorId: '', pendingClear: false,
+  });
+  assert.equal(claimed.tokens[0].id, 's1');
+  assert.equal(claimed.tokens[0].status, 'draft');
+  assert.equal(claimed.pendingClear, false);
+
+  const cleared = planDraft({
+    studentId: MARK, staffId: '', subject: '', tokens, memberSupervisorId: DAVIS, pendingClear: false,
+  });
+  assert.equal(cleared.tokens[0].status, 'available');
+  assert.equal(cleared.pendingClear, true);
+
+  const switched = planDraft({
+    studentId: MARK, staffId: SMITH, subject: 'Geography', tokens, memberSupervisorId: DAVIS, pendingClear: false,
+  });
+  assert.equal(switched.pendingClear, false);
+  assert.equal(switched.tokens.find((item) => item.id === 'd1')?.status, 'available');
+  assert.equal(switched.tokens.find((item) => item.staffId === SMITH)?.allocatedTo, MARK);
+});
+
+test('a batch stops when the supervisor runs out of slots', () => {
+  const tokens = [token({ id: 'only', staffId: SMITH, status: 'available', eligibleSubjects: ['Biology'] })];
+  const plan = planBatchDraft({
+    studentIds: [JANE, MARK],
+    staffId: SMITH,
+    subjects: { [JANE]: 'Biology', [MARK]: 'Biology' },
+    tokens,
+    supervisorByStudent: {},
+    pendingClearByStudent: {},
+  });
+  assert.deepEqual(plan.assigned, [JANE]);
+  assert.equal(plan.skipped[0].studentId, MARK);
+  assert.match(plan.skipped[0].reason, /no available slots/);
+  assert.equal(plan.tokenWrites[0].allocatedTo, JANE);
+});
+
+test('publish writes drafts and clears a released supervisor', () => {
+  const tokens = [
+    token({ id: 'draft', staffId: SMITH, status: 'draft', allocatedTo: JANE, assignedSubject: 'History' }),
+    token({ id: 'free', staffId: DAVIS, status: 'available' }),
+  ];
+  const workspaces: WorkspaceRecord[] = [
+    { studentId: JANE, subjectChoices: {}, dynamicData: {}, pendingClear: true, updatedAt: '' },
+    { studentId: MARK, subjectChoices: {}, dynamicData: {}, pendingClear: true, updatedAt: '' },
+  ];
+  const plan = planCommit(tokens, workspaces);
+  assert.deepEqual(plan.assignments.map((row) => row.studentId), [JANE]);
+  assert.deepEqual(plan.clears, [MARK]);
+  assert.equal(plan.warnings.length, 0);
+});
+
+test('the desk marks subject match, an HL miss, and support flags from the saved columns', () => {
+  const settings = mergeDetected(emptySettings(), ['choice1', 'choice2', 'interdisciplinary'], ['Y10 GPA', 'HL', 'Academic Flag']);
+  settings.hlColumn = 'HL';
+  settings.supportColumn = 'Academic Flag';
+  const desk = buildDesk({
+    cohortId: '2026',
+    members: [
+      { StudentId: JANE, Surname: 'Doe', 'First Name': 'Jane', eeActive: true, supervisorId: '', subject: '' },
+      { StudentId: MARK, Surname: 'Lee', 'First Name': 'Mark', eeActive: false },
+    ],
+    workspaces: [{
+      studentId: JANE,
+      subjectChoices: { choice1: 'History', choice2: 'Eng Lit', interdisciplinary: true },
+      dynamicData: { 'Y10 GPA': 3.4, HL: 'Bio, Chem', 'Academic Flag': 'Needs Support' },
+      pendingClear: false,
+      updatedAt: '',
+    }],
+    tokens: [token({ id: 's1', staffId: SMITH, status: 'draft', allocatedTo: JANE, assignedSubject: 'History', eligibleSubjects: ['History', 'Geography'] })],
+    staff: [{ email: SMITH, displayName: 'Mr. Smith' }],
+    settings,
+  });
+  assert.equal(desk.students.length, 1);
+  assert.equal(desk.students[0].displayName, 'Doe, Jane');
+  assert.equal(desk.students[0].flags.subjectMatch, 'match');
+  assert.equal(desk.students[0].flags.hlMatch, 'miss');
+  assert.equal(desk.students[0].flags.needsSupport, true);
+  assert.equal(desk.students[0].choices.interdisciplinary, true);
+  assert.equal(desk.supervisors[0].displayName, 'Mr. Smith');
+  assert.equal(desk.supervisors[0].used, 1);
+  assert.equal(desk.summary.buffer, 0);
+  assert.equal(subjectsOverlap('Vis Art', ['Visual Arts']), true);
+
+  const saved = applySavedConfig(desk.settings, {
+    primaryChoiceKey: 'choice1',
+    secondaryChoiceKey: 'missing',
+    hlColumn: 'HL',
+    supportColumn: 'Academic Flag',
+    columns: [
+      { key: 'Y10 GPA', showOnCard: true, filterable: false, sortable: true },
+      { key: 'HL', showOnCard: true, filterable: false, sortable: false },
+      { key: 'Academic Flag', showOnCard: false, filterable: true, sortable: false },
+    ],
+  });
+  assert.equal(saved.primaryChoiceKey, 'choice1');
+  assert.equal(saved.secondaryChoiceKey, '');
+  assert.equal(saved.columns.find((column) => column.key === 'Y10 GPA')?.sortable, true);
+  const rows = allocationExportRows(desk.students, saved);
+  assert.equal(rows[1][2], 'Draft');
+  assert.equal(rows[0].includes('Y10 GPA'), true);
+  assert.equal(findAllocationTab([{ title: 'COHORTDATA 2026', rows: [] }, { title: 'SUPERVISORTOKENS: 2026', rows: [] }], '2026', 'tokens')?.title, 'SUPERVISORTOKENS: 2026');
+});

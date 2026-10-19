@@ -8,6 +8,7 @@ import { assertSafeResourceHtml } from './formsPure';
 import { validatePhasePrerequisites } from './phaseRules';
 import { COLLECTIONS, staffHasAdminAccess, tableFields, validateRecordFields } from './schema';
 import { App, audited, requireAdmin } from './session';
+import { preserveEeActive } from './allocationPure';
 import { planSheetImport, SheetGrid, SheetImportPlan, spreadsheetIdFrom } from './sheetImport';
 import { dateOnlyValue, Doc, driveNamePart, HubError, normalizeEmail, text, toBoolean } from './util';
 
@@ -419,9 +420,11 @@ async function writeIngest(app: App, plan: SheetImportPlan, entities: string[], 
             EEDocTemplateId: '',
           });
         }
+        const priorRows = await app.store.listMembers(cohortId);
+        const prior = new Map(priorRows.map((member) => [normalizeEmail(member.StudentId), member]));
         const incoming = plan.members.filter((member) => member.cohortId === cohortId);
         const keep = new Set(incoming.map((member) => member.id));
-        for (const member of incoming) await app.store.setMember(cohortId, member.id, member.data);
+        for (const member of incoming) await app.store.setMember(cohortId, member.id, preserveEeActive(member.data, prior.get(member.id)));
         for (const existing of await app.store.listMembers(cohortId)) {
           const memberId = normalizeEmail(existing.StudentId);
           if (memberId && !keep.has(memberId)) await app.store.removeMember(cohortId, memberId);
@@ -571,6 +574,10 @@ function sortBy(records: Doc[], ...fields: string[]): Doc[] {
     }
     return 0;
   });
+}
+
+export function openGoogleWorkbook(): Promise<SheetWorkbook> {
+  return googleWorkbook();
 }
 
 async function googleWorkbook(): Promise<SheetWorkbook> {
