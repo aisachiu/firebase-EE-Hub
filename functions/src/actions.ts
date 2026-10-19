@@ -1,7 +1,7 @@
 import { canCompleteMilestone, HubUser } from './permissions';
 import { findPlacement, Placement, readPhases, staffMayAddStudentTodo, staffMayUpdateAllMilestones, staffStudentContext } from './roster';
 import { COLLECTIONS, fieldConfig } from './schema';
-import { App, audited, deny, requireStaff, requireUser } from './session';
+import { App, audited, deny, requireAdmin, requireStaff, requireUser } from './session';
 import { addDays, dateOnlyValue, Doc, HubError, normalizeEmail, nowIso, parseActionDate, serializeDateOnly, shortId, text, toBoolean, uuid, validateEmail } from './util';
 import { formWritesClosed } from './formsPure';
 
@@ -365,6 +365,168 @@ export async function recordMilestoneDecision(app: App, taskId: unknown, action:
       CreatedAt: nowIso(),
     });
     return { status: item.Status };
+  });
+}
+
+const TASK_TITLE_LIMIT = 500;
+const TASK_DESCRIPTION_LIMIT = 8000;
+
+function taskStatusOptions(): string[] {
+  return fieldConfig('studentActionItems', 'Status')?.options || ['Pending', 'In Progress', 'Completed'];
+}
+
+function requireTaskStatus(status: unknown): string {
+  const value = text(status);
+  const options = taskStatusOptions();
+  if (!options.some((option) => option === value)) throw new HubError('Choose a valid task status.');
+  return value;
+}
+
+function assignmentFields(payload: any) {
+  const input = payload || {};
+  const title = text(input.title);
+  if (!title) throw new HubError('Title is required.');
+  if (title.length > TASK_TITLE_LIMIT) throw new HubError(`Title must be ${TASK_TITLE_LIMIT} characters or fewer.`);
+  const description = text(input.description);
+  if (description.length > TASK_DESCRIPTION_LIMIT) throw new HubError(`Description must be ${TASK_DESCRIPTION_LIMIT.toLocaleString('en-US')} characters or fewer.`);
+  const dueRaw = text(input.dueDate);
+  let dueDate = '';
+  if (dueRaw) {
+    const parsed = parseActionDate(dueRaw);
+    if (!parsed) throw new HubError('Due date must be a valid date.');
+    dueDate = serializeDateOnly(parsed);
+  }
+  return {
+    title,
+    description,
+    status: requireTaskStatus(input.status),
+    dueDate,
+    phaseId: text(input.phaseId),
+  };
+}
+
+function massAssignmentFields(payload: any) {
+  const input = payload || {};
+  const updateStatus = toBoolean(input.updateStatus);
+  const updateDate = toBoolean(input.updateDate);
+  if (!updateStatus && !updateDate) throw new HubError('Choose the status, the due date, or both.');
+  const status = updateStatus ? requireTaskStatus(input.status) : '';
+  let dueDate = '';
+  if (updateDate) {
+    const parsed = parseActionDate(input.dueDate);
+    if (!parsed) throw new HubError('Due date must be a valid date.');
+    dueDate = serializeDateOnly(parsed);
+  }
+  return { updateStatus, status, updateDate, dueDate };
+}
+
+async function requireKnownPhase(app: App, phaseId: string) {
+  if (!phaseId) throw new HubError('Choose a phase.');
+  const known = await app.store.get(COLLECTIONS.phases, phaseId);
+  if (!known) throw new HubError('Choose a phase that exists.');
+  return phaseId;
+}
+
+async function requireMilestoneEditor(app: App, studentEmail: unknown, cohortId: unknown, viewAs: unknown, operation: string) {
+  const user = await requireAdmin(app, operation);
+  const context = await staffStudentContext(app, user, text(studentEmail), text(cohortId), operation, viewAs);
+  if (!staffMayUpdateAllMilestones(user, context.roster, context.view)) {
+    return deny(app, user, operation, 'You cannot edit milestones in this view.');
+  }
+  return { user, context };
+}
+
+async function systemTasksForTemplate(app: App, studentEmail: string, templateId: string) {
+  const items = await app.store.whereEqual(COLLECTIONS.studentActionItems, 'StudentId', normalizeEmail(studentEmail));
+  return items.filter((item) => text(item.CreatorType) === 'System' && text(item.TemplateId) === text(templateId));
+}
+
+export async function updateMilestoneAssignment(app: App, taskId: unknown, studentEmail: unknown, cohortId: unknown, viewAs: unknown, payload: unknown) {
+  const editor = await requireMilestoneEditor(app, studentEmail, cohortId, viewAs, 'UPDATE_MILESTONE_ASSIGNMENT');
+  const changes = assignmentFields(payload);
+  const phaseId = await requireKnownPhase(app, changes.phaseId);
+  const id = text(taskId);
+  const existing = await findActionItem(app, id);
+  if (normalizeEmail(existing.StudentId) !== editor.context.email) return deny(app, editor.user, 'UPDATE_MILESTONE_ASSIGNMENT', 'Task belongs to another student.');
+  if (text(existing.CreatorType) !== 'System') throw new HubError('Only an assigned milestone can be edited here.');
+  return audited(app, editor.user, 'UPDATE_MILESTONE_ASSIGNMENT', {
+    taskId: id,
+    studentId: editor.context.email,
+    cohort: text(cohortId),
+    templateId: text(existing.TemplateId),
+  }, async () => {
+    const item = await findActionItem(app, id);
+    if (normalizeEmail(item.StudentId) !== editor.context.email) throw new HubError('Task belongs to another student.');
+    if (text(item.CreatorType) !== 'System') throw new HubError('Only an assigned milestone can be edited here.');
+    item.Title = changes.title;
+    item.Description = changes.description;
+    item.PhaseId = phaseId;
+    item.Status = changes.status;
+    item.DueDate = changes.dueDate;
+    item.LastUpdated = nowIso();
+    stampActors(item, editor.user.email, false);
+    await app.store.set(COLLECTIONS.studentActionItems, text(item.TaskId), item);
+    return {
+      taskId: text(item.TaskId),
+      title: text(item.Title),
+      description: text(item.Description),
+      phaseId: text(item.PhaseId),
+      status: text(item.Status),
+      dueDate: text(item.DueDate),
+    };
+  });
+}
+
+export async function massUpdateMilestones(app: App, cohortId: unknown, studentIds: unknown, milestoneId: unknown, payload: unknown, viewAs: unknown) {
+  const user = await requireAdmin(app, 'MASS_UPDATE_MILESTONES');
+  const changes = massAssignmentFields(payload);
+  const milestone = text(milestoneId);
+  if (!milestone) throw new HubError('Choose a milestone.');
+  if (!Array.isArray(studentIds) || !studentIds.length) throw new HubError('Select one or more students.');
+  const emails: string[] = [];
+  const seen: Record<string, boolean> = {};
+  studentIds.forEach((value) => {
+    const email = validateEmail(value, 'Student');
+    if (seen[email]) throw new HubError('A student was selected more than once.');
+    seen[email] = true;
+    emails.push(email);
+  });
+  const cohort = text(cohortId);
+  for (const email of emails) {
+    const context = await staffStudentContext(app, user, email, cohort, 'MASS_UPDATE_MILESTONES', viewAs);
+    if (!staffMayUpdateAllMilestones(user, context.roster, context.view)) {
+      return deny(app, user, 'MASS_UPDATE_MILESTONES', 'You cannot edit milestones in this view.');
+    }
+  }
+  const pending: { email: string; taskId: string }[] = [];
+  for (const email of emails) {
+    const tasks = await systemTasksForTemplate(app, email, milestone);
+    if (!tasks.length) throw new HubError('That milestone is not assigned to every selected student.');
+    tasks.forEach((task) => pending.push({ email, taskId: text(task.TaskId) }));
+  }
+  return audited(app, user, 'MASS_UPDATE_MILESTONES', {
+    cohort,
+    milestoneId: milestone,
+    studentCount: emails.length,
+    updateStatus: changes.updateStatus,
+    updateDate: changes.updateDate,
+    status: changes.status,
+    dueDate: changes.dueDate,
+  }, async () => {
+    let updated = 0;
+    for (const entry of pending) {
+      const current = await findActionItem(app, entry.taskId);
+      if (normalizeEmail(current.StudentId) !== entry.email || text(current.CreatorType) !== 'System' || text(current.TemplateId) !== milestone) {
+        throw new HubError('That milestone is not assigned to every selected student.');
+      }
+      if (changes.updateStatus) current.Status = changes.status;
+      if (changes.updateDate) current.DueDate = changes.dueDate;
+      current.LastUpdated = nowIso();
+      stampActors(current, user.email, false);
+      await app.store.set(COLLECTIONS.studentActionItems, text(current.TaskId), current);
+      updated += 1;
+    }
+    return { updated, students: emails.length, milestoneId: milestone };
   });
 }
 
