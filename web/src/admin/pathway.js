@@ -1,8 +1,9 @@
+import { closeAdminDialog, openAdminDialog } from './records.js';
 import { renderAdmin } from './sections.js';
 import { requestPush } from '../router.js';
 import { callServer, markSync } from '../shared/api.js';
 import { showError } from '../shared/feedback.js';
-import { cssEscape, escapeHtml, toBoolean } from '../shared/html.js';
+import { cssEscape, escapeHtml, hexColour, toBoolean } from '../shared/html.js';
 import { loadingLine } from '../shared/loading.js';
 import { isStale } from '../shared/scene.js';
 import { state } from '../shared/state.js';
@@ -146,7 +147,8 @@ export function pathwayNormalizePhase(record) {
     phaseDescription: String(record.phaseDescription || ''),
     sequence: record.sequence === '' || record.sequence === undefined || record.sequence === null ? '' : Number(record.sequence),
     prerequisitePhaseId: String(record.prerequisitePhaseId || ''),
-    active: toBoolean(record.active)
+    active: toBoolean(record.active),
+    phaseColor: hexColour(record.phaseColor)
   };
 }
 
@@ -159,6 +161,7 @@ export function pathwayNormalizeMilestone(record) {
     milestoneDescription: String(record.milestoneDescription || ''),
     phase: String(record.phase || ''),
     mOwner: String(record.mOwner || 'student').toLowerCase(),
+    isAnchor: record.isAnchor === undefined || record.isAnchor === null || record.isAnchor === '' ? null : toBoolean(record.isAnchor),
     deleting: !!record.deleting
   };
 }
@@ -171,12 +174,13 @@ export function pathwayPhasePayload(phase) {
     phaseDescription: String(phase.phaseDescription || ''),
     sequence: sequenceText === '' ? NaN : Number(sequenceText),
     prerequisitePhaseId: String(phase.prerequisitePhaseId || ''),
-    active: !!phase.active
+    active: !!phase.active,
+    phaseColor: hexColour(phase.phaseColor)
   };
 }
 
 export function pathwayMilestonePayload(milestone) {
-  return {
+  const payload = {
     milestoneId: String(milestone.milestoneId || '').trim(),
     type: String(milestone.type || 'form').toLowerCase(),
     milestoneTitle: String(milestone.milestoneTitle || '').trim(),
@@ -185,6 +189,8 @@ export function pathwayMilestonePayload(milestone) {
     phase: String(milestone.phase || ''),
     mOwner: String(milestone.mOwner || 'student').toLowerCase()
   };
+  if (milestone.isAnchor === true || milestone.isAnchor === false) payload.isAnchor = milestone.isAnchor;
+  return payload;
 }
 
 export function pathwaySamePayload(left, right) {
@@ -208,10 +214,27 @@ export function pathwayFindMilestone(id) {
 }
 
 export function pathwayPhaseColor(phaseId) {
+  const phase = pathwayFindPhase(phaseId);
+  const chosen = phase && hexColour(phase.phaseColor);
+  if (chosen) return chosen;
   const phases = pathwaySortedPhases();
   let index = 0;
-  phases.forEach(function(phase, phaseIndex) { if (phase.phaseId === phaseId) index = phaseIndex; });
+  phases.forEach(function(item, phaseIndex) { if (item.phaseId === phaseId) index = phaseIndex; });
   return PATHWAY_COLORS[index % PATHWAY_COLORS.length];
+}
+
+export function pathwayIsAnchor(milestone) {
+  if (!milestone || milestone.deleting) return false;
+  const milestones = ensurePathwayPlan().milestones.filter(function(item) { return !item.deleting; });
+  if (milestones.some(function(item) { return item.isAnchor === true; })) return milestone.isAnchor === true;
+  if (milestones.some(function(item) { return item.isAnchor === false; })) return false;
+  if (pathwayOffset(milestone.offsetDays) !== 0) return false;
+  const onAnchorDate = milestones.filter(function(item) { return pathwayOffset(item.offsetDays) === 0; });
+  return onAnchorDate.length === 1 && onAnchorDate[0].milestoneId === milestone.milestoneId;
+}
+
+export function pathwayAnchorMilestone() {
+  return ensurePathwayPlan().milestones.filter(function(milestone) { return pathwayIsAnchor(milestone); })[0] || null;
 }
 
 export function pathwayVisibleMilestones() {
@@ -391,21 +414,21 @@ export function pathwayMarkup() {
   const plan = state.pathwayPlan;
   const hiddenCount = Object.keys(plan.hiddenPhaseIds).length;
   const visible = pathwayVisibleMilestones();
-  const anchorMilestones = plan.milestones.filter(function(milestone) { return pathwayOffset(milestone.offsetDays) === 0; });
+  const anchorMilestone = pathwayAnchorMilestone();
   return `<div id="pathway-planner">
-    <p class="lede plan-intro">Define the phases first, then put an anchor milestone on day 0. Add the other milestones on the calendar. Colour shows the phase. A hidden phase drops its milestones from the calendar and the list.</p>
+    <p class="lede plan-intro">Define the phases first, then choose one anchor milestone. Add the other milestones on the calendar. Colour shows the phase. A hidden phase drops its milestones from the calendar and the list.</p>
     <div class="plan-layout">
     <aside class="plan-side">
     <section class="plan-block" aria-labelledby="plan-phases-heading">
       <div class="toolbar"><h2 id="plan-phases-heading">Phases</h2><button type="button" class="button" data-plan-action="add-phase">Add phase</button>${hiddenCount ? '<button type="button" class="button secondary" data-plan-action="show-phases">Show all phases</button>' : ''}</div>
-      <p class="muted">Shown phases stay on the calendar. Colour follows phase order.</p>
+      <p class="muted">Shown phases stay on the calendar. Set a colour for each phase.</p>
       ${plan.phases.length ? `<div class="plan-phase-list">${pathwaySortedPhases().map(pathwayPhaseMarkup).join('')}</div>` : '<div class="empty">Add the first phase to start the plan.</div>'}
     </section>
     </aside>
     <div class="plan-main">
-    <section class="plan-anchor plan-block" style="--phase:${anchorMilestones.length ? pathwayPhaseColor(anchorMilestones[0].phase) : '#004C80'}">
+    <section class="plan-anchor plan-block" style="--phase:${anchorMilestone ? pathwayPhaseColor(anchorMilestone.phase) : '#004C80'}">
       <div class="field"><label for="plan-anchor-date">Anchor date</label><input id="plan-anchor-date" type="date" value="${escapeHtml(plan.anchorDate)}"><p class="muted">Day 0 on this calendar. Changing it moves the preview only. Each student still has an anchor date under Assignments.</p></div>
-      <div>${pathwayAnchorCopy(anchorMilestones)}</div>
+      <div>${pathwayAnchorCopy(anchorMilestone)}</div>
       <div class="field"><span id="plan-months-label">Months in view</span><div class="plan-span" role="radiogroup" aria-labelledby="plan-months-label">${[2, 3, 4, 5, 6].map(function(count) {
         return `<button type="button" data-plan-action="months" data-months="${count}" aria-pressed="${plan.monthsVisible === count ? 'true' : 'false'}">${count}</button>`;
       }).join('')}</div><p class="muted">Desktop opens on 2 months. Choose up to 6 across the width, then scroll for the rest.</p></div>
@@ -425,17 +448,26 @@ export function pathwayMarkup() {
   </div>`;
 }
 
-export function pathwayAnchorCopy(anchorMilestones) {
-  if (!anchorMilestones.length) {
-    return `<p class="eyebrow">Anchor milestone</p><p>Nothing falls on the anchor date yet. Name the milestone that should land on each student's anchor date.</p>
+export function pathwayAnchorCopy(anchorMilestone) {
+  if (!anchorMilestone) {
+    return `<p class="eyebrow">Anchor milestone</p><p>No milestone is the anchor yet. Name one to land on each student's anchor date, or choose Make anchor on a milestone.</p>
       <div class="toolbar"><input id="plan-anchor-title" data-focus="anchor:title" placeholder="Final essay" aria-label="Anchor milestone title"><button type="button" class="button" data-plan-action="add-anchor">Add on this date</button></div>`;
   }
-  const names = anchorMilestones.map(function(milestone) {
-    const phase = pathwayFindPhase(milestone.phase);
-    const hidden = !!state.pathwayPlan.hiddenPhaseIds[milestone.phase];
-    return escapeHtml(milestone.milestoneTitle || milestone.milestoneId) + (phase ? ' · ' + escapeHtml(phase.phaseTitle || phase.phaseId) : '') + (hidden ? ' · hidden by filter' : '');
-  }).join('<br>');
-  return `<p class="eyebrow">Anchor milestone</p><p>${names}</p><button type="button" class="button secondary" data-plan-action="add-anchor">Add another on this date</button>`;
+  const phase = pathwayFindPhase(anchorMilestone.phase);
+  const hidden = !!state.pathwayPlan.hiddenPhaseIds[anchorMilestone.phase];
+  const name = escapeHtml(anchorMilestone.milestoneTitle || anchorMilestone.milestoneId) + (phase ? ' · ' + escapeHtml(phase.phaseTitle || phase.phaseId) : '') + (hidden ? ' · hidden by filter' : '');
+  return `<p class="eyebrow">Anchor milestone</p><p>${name}</p><button type="button" class="button secondary" data-plan-action="add-anchor">Add a milestone on this date</button>`;
+}
+
+export function pathwayColourChoices(phase) {
+  const selected = hexColour(phase.phaseColor);
+  const shown = selected || hexColour(pathwayPhaseColor(phase.phaseId));
+  const swatches = PATHWAY_COLORS.map(function(colour) {
+    const value = hexColour(colour);
+    const pressed = value === shown;
+    return `<button type="button" class="plan-colour" data-plan-action="phase-colour" data-phase-id="${escapeHtml(phase.phaseId)}" data-colour="${value}" data-focus="phase:${escapeHtml(phase.phaseId)}:colour:${value}" style="--swatch:${value}" aria-pressed="${pressed ? 'true' : 'false'}" aria-label="Phase colour ${value}" ${phase.deleting ? 'disabled' : ''}></button>`;
+  }).join('');
+  return `<div class="field plan-phase-colour"><span id="phase-colour-${escapeHtml(phase.phaseId)}">Colour</span><div class="plan-colours" role="radiogroup" aria-labelledby="phase-colour-${escapeHtml(phase.phaseId)}">${swatches}<label class="plan-colour-custom"><span class="sr">Custom</span><input type="color" aria-label="Custom phase colour" data-focus="phase:${escapeHtml(phase.phaseId)}:colour" data-phase-id="${escapeHtml(phase.phaseId)}" data-phase-field="phaseColor" value="${escapeHtml(shown || '#004c80')}" ${phase.deleting ? 'disabled' : ''}></label></div></div>`;
 }
 
 export function pathwayPhaseMarkup(phase) {
@@ -461,6 +493,7 @@ export function pathwayPhaseMarkup(phase) {
       <div class="field plan-phase-order"><label>Order</label><input ${locked} type="number" data-focus="phase:${id}:sequence" data-phase-id="${id}" data-phase-field="sequence" value="${escapeHtml(phase.sequence)}"></div>
       <label class="field check"><input type="checkbox" ${locked} data-phase-id="${id}" data-phase-field="active" ${phase.active ? 'checked' : ''}> Active</label>
       <div class="field"><label>Prerequisite</label><select ${locked} data-focus="phase:${id}:prerequisite" data-phase-id="${id}" data-phase-field="prerequisitePhaseId">${pathwayPrerequisiteOptions(phase)}</select></div>
+      ${pathwayColourChoices(phase)}
     </div>
     <div class="field"><label>Description</label><textarea ${locked} data-focus="phase:${id}:description" data-phase-id="${id}" data-phase-field="phaseDescription">${escapeHtml(phase.phaseDescription || '')}</textarea><p class="muted plan-count">${count} milestone${count === 1 ? '' : 's'}</p></div>` : ''}
   </article>`;
@@ -507,7 +540,7 @@ export function pathwayMonthMarkup(monthDate) {
 
 export function pathwayChipMarkup(milestone) {
   const color = pathwayPhaseColor(milestone.phase);
-  const anchor = pathwayOffset(milestone.offsetDays) === 0;
+  const anchor = pathwayIsAnchor(milestone);
   const selected = state.pathwayPlan.selectedMilestoneId === milestone.milestoneId;
   const label = (milestone.milestoneTitle || 'Untitled') + ' · ' + pathwayOffsetLabel(milestone.offsetDays);
   return `<button type="button" class="plan-chip plan-sync${anchor ? ' is-anchor' : ''}${selected ? ' is-selected' : ''}${pathwaySyncClass('milestone', milestone.milestoneId)}" draggable="${milestone.deleting ? 'false' : 'true'}" data-chip-id="${escapeHtml(milestone.milestoneId)}" data-sync-key="milestone:${escapeHtml(milestone.milestoneId)}" style="--phase:${color}" title="${escapeHtml(label)}"><span class="plan-chip-title">${escapeHtml(milestone.milestoneTitle || 'Untitled')}</span></button>`;
@@ -522,7 +555,7 @@ export function pathwayMilestoneMarkup(milestone) {
   const color = pathwayPhaseColor(milestone.phase);
   const selected = state.pathwayPlan.selectedMilestoneId === milestone.milestoneId;
   const open = !!state.pathwayPlan.openMilestoneIds[milestone.milestoneId];
-  const anchor = pathwayOffset(milestone.offsetDays) === 0;
+  const anchor = pathwayIsAnchor(milestone);
   const locked = milestone.deleting ? 'disabled' : '';
   const id = escapeHtml(milestone.milestoneId);
   return `<article class="plan-edit plan-sync${selected ? ' is-selected' : ''}${open ? ' is-open' : ''}${pathwaySyncClass('milestone', milestone.milestoneId)}" data-milestone-row="${id}" data-sync-key="milestone:${id}" style="--phase:${color}">
@@ -539,7 +572,7 @@ export function pathwayMilestoneMarkup(milestone) {
       <div class="field"><label>Phase</label><select ${locked} data-focus="milestone:${id}:phase" data-milestone-id="${id}" data-milestone-field="phase">${pathwayPhaseOptions(milestone.phase)}</select></div>
       <div class="field"><label>Type</label><select ${locked} data-focus="milestone:${id}:type" data-milestone-id="${id}" data-milestone-field="type">${pathwayOptionList(PATHWAY_TYPES, milestone.type)}</select></div>
       <div class="field"><label>Owner</label><select ${locked} data-focus="milestone:${id}:owner" data-milestone-id="${id}" data-milestone-field="mOwner">${pathwayOptionList(PATHWAY_OWNERS, milestone.mOwner)}</select></div>
-      <div class="plan-actions"><button type="button" class="link-button" data-plan-action="make-anchor" data-milestone-id="${id}" ${anchor || milestone.deleting ? 'disabled' : ''}>${anchor ? 'Anchor' : 'Make anchor'}</button><button type="button" class="link-button" data-plan-action="email-milestone" data-milestone-id="${id}">Email notification</button><button type="button" class="link-button" data-plan-action="delete-milestone" data-milestone-id="${id}">Delete</button></div>
+      <div class="plan-actions"><button type="button" class="link-button" data-plan-action="${anchor ? 'release-anchor' : 'make-anchor'}" data-milestone-id="${id}" ${milestone.deleting ? 'disabled' : ''}>${anchor ? 'Release anchor' : 'Make anchor'}</button><button type="button" class="link-button" data-plan-action="email-milestone" data-milestone-id="${id}">Email notification</button><button type="button" class="link-button" data-plan-action="delete-milestone" data-milestone-id="${id}">Delete</button></div>
       <div class="field plan-edit-description"><label>Description</label><textarea ${locked} data-focus="milestone:${id}:description" data-milestone-id="${id}" data-milestone-field="milestoneDescription">${escapeHtml(milestone.milestoneDescription || '')}</textarea></div>
     </div>` : ''}
   </article>`;
@@ -595,7 +628,9 @@ export function pathwayRunAction(node) {
   else if (action === 'jump-anchor') {
     const scroller = document.getElementById('plan-scroll');
     if (scroller) pathwayScrollAnchorIntoView(scroller);
-  }         else if (action === 'make-anchor') pathwayMakeAnchor(node.dataset.milestoneId);
+  } else if (action === 'make-anchor') pathwayMakeAnchor(node.dataset.milestoneId);
+  else if (action === 'release-anchor') pathwayReleaseAnchor(node.dataset.milestoneId);
+  else if (action === 'phase-colour') pathwaySetPhaseColour(node.dataset.phaseId, node.dataset.colour);
   else if (action === 'delete-milestone') pathwayDeleteMilestone(node.dataset.milestoneId);
   else if (action === 'email-notifications') openEmailNotifications('');
   else if (action === 'email-milestone') openEmailNotifications(node.dataset.milestoneId);
@@ -612,7 +647,7 @@ export function openEmailNotifications(milestoneId) {
 
 export function pathwayOnInput(event) {
   const input = event.target;
-  if (!input || input.tagName === 'SELECT' || input.type === 'date') return;
+  if (!input || input.tagName === 'SELECT' || input.type === 'date' || input.type === 'color') return;
   if (input.dataset && input.dataset.phaseField) pathwayUpdatePhaseField(input);
   if (input.dataset && input.dataset.milestoneField) pathwayUpdateMilestoneField(input);
 }
@@ -624,7 +659,7 @@ export function pathwayOnChange(event) {
     pathwaySetAnchorDate(input.value);
     return;
   }
-  if (input.tagName !== 'SELECT' && input.type !== 'date') return;
+  if (input.tagName !== 'SELECT' && input.type !== 'date' && input.type !== 'color') return;
   if (input.dataset && input.dataset.phaseField) pathwayUpdatePhaseField(input);
   if (input.dataset && input.dataset.milestoneField) pathwayUpdateMilestoneField(input);
 }
@@ -658,13 +693,17 @@ export function pathwayUpdatePhaseField(input) {
   const field = input.dataset.phaseField;
   if (field === 'active') phase.active = !!input.checked;
   else if (field === 'sequence') phase.sequence = input.value === '' ? '' : Number(input.value);
-  else phase[field] = input.value;
+  else if (field === 'phaseColor') {
+    const next = hexColour(input.value);
+    if (!next || next === hexColour(phase.phaseColor)) return;
+    phase.phaseColor = next;
+  } else phase[field] = input.value;
   if (field === 'phaseTitle') {
     const name = input.closest('.plan-phase') && input.closest('.plan-phase').querySelector('.plan-phase-name');
     if (name) name.textContent = String(input.value || '').trim() || 'Untitled phase';
   }
   state.pathwayPlan.preferredPhaseId = phase.phaseId;
-  if (field === 'sequence' || field === 'active' || field === 'prerequisitePhaseId') {
+  if (field === 'sequence' || field === 'active' || field === 'prerequisitePhaseId' || field === 'phaseColor') {
     state.pathwayPlan.pendingScroll = 'preserve';
     paintPathway();
   }
@@ -787,7 +826,8 @@ export function pathwayAddPhase() {
     phaseDescription: '',
     sequence: maxOrder + 1,
     prerequisitePhaseId: ordered.length ? ordered[ordered.length - 1].phaseId : '',
-    active: true
+    active: true,
+    phaseColor: hexColour(PATHWAY_COLORS[ordered.length % PATHWAY_COLORS.length])
   });
   plan.preferredPhaseId = id;
   plan.openPhaseIds[id] = true;
@@ -808,14 +848,21 @@ export function pathwayAddMilestone(iso, title) {
   const due = parsePlanDate(iso) || anchor;
   if (!anchor || !due) return;
   const id = pathwayNextId('m', state.pathwayPlan.milestones, 'milestoneId');
+  const offsetDays = planDaysBetween(due, anchor);
+  const existingAnchor = pathwayAnchorMilestone();
+  if (offsetDays === 0 && existingAnchor && existingAnchor.isAnchor !== true) {
+    existingAnchor.isAnchor = true;
+    pathwayScheduleMilestoneSave(existingAnchor.milestoneId, 0);
+  }
   state.pathwayPlan.milestones.push({
     milestoneId: id,
     type: 'form',
     milestoneTitle: title || 'New milestone',
-    offsetDays: planDaysBetween(due, anchor),
+    offsetDays: offsetDays,
     milestoneDescription: '',
     phase: phaseId,
-    mOwner: 'student'
+    mOwner: 'student',
+    isAnchor: offsetDays === 0 && !existingAnchor ? true : null
   });
   state.pathwayPlan.selectedMilestoneId = id;
   state.pathwayPlan.preferredPhaseId = phaseId;
@@ -826,14 +873,128 @@ export function pathwayAddMilestone(iso, title) {
   pathwayCommitMilestone(id);
 }
 
+export function pathwaySetPhaseColour(id, colour) {
+  const phase = pathwayFindPhase(id);
+  const next = hexColour(colour);
+  if (!phase || phase.deleting || !next || hexColour(phase.phaseColor) === next) return;
+  phase.phaseColor = next;
+  state.pathwayPlan.preferredPhaseId = id;
+  state.pathwayPlan.pendingScroll = 'preserve';
+  paintPathway();
+  pathwaySchedulePhaseSave(id, 0);
+}
+
 export function pathwayMakeAnchor(id) {
   const milestone = pathwayFindMilestone(id);
-  if (!milestone || milestone.deleting || pathwayOffset(milestone.offsetDays) === 0) return;
-  milestone.offsetDays = 0;
-  state.pathwayPlan.selectedMilestoneId = id;
-  state.pathwayPlan.pendingScroll = 'anchor';
+  if (!milestone || milestone.deleting || pathwayIsAnchor(milestone)) return;
+  const previous = pathwayAnchorMilestone();
+  const previousNote = previous && previous.milestoneId !== milestone.milestoneId
+    ? ' This releases ' + (previous.milestoneTitle || previous.milestoneId) + ' as the anchor.'
+    : '';
+  openAdminDialog('pathway-anchor', `<div class="form-panel" role="dialog" aria-modal="true" aria-labelledby="anchor-choice-title"><div class="toolbar"><h2 id="anchor-choice-title">Make this the anchor</h2><button type="button" class="button secondary" data-close-admin-dialog>Close</button></div>
+    <p>Only one milestone can be the anchor. Choose how to set ${escapeHtml(milestone.milestoneTitle || milestone.milestoneId)} as that milestone.${escapeHtml(previousNote)}</p>
+    <form id="anchor-choice-form"><div class="plan-anchor-choice">
+      <label class="check-option"><input type="radio" name="anchor-mode" value="adjust" checked> Keep the dates and adjust every other Days before anchor field so they count from this milestone. The preview anchor date moves with those dates.</label>
+      <label class="check-option"><input type="radio" name="anchor-mode" value="move"> Set this milestone as the existing anchor date. Other Days before anchor fields stay as they are, and the previous anchor is released.</label>
+    </div>
+    <p class="notice error" id="anchor-choice-error" hidden></p>
+    <div class="toolbar"><button class="button" type="submit">Update anchor</button><button class="button secondary" type="button" data-close-admin-dialog>Cancel</button></div></form></div>`);
+  const form = document.getElementById('anchor-choice-form');
+  if (!form) return;
+  form.addEventListener('submit', function(event) {
+    event.preventDefault();
+    const selected = form.querySelector('input[name="anchor-mode"]:checked');
+    closeAdminDialog();
+    pathwayApplyAnchorChoice(id, selected ? selected.value : 'adjust');
+  });
+}
+
+export function pathwayReleaseAnchor(id) {
+  const milestone = pathwayFindMilestone(id);
+  if (!milestone || milestone.deleting || !pathwayIsAnchor(milestone)) return;
+  openAdminDialog('pathway-anchor', `<div class="form-panel" role="dialog" aria-modal="true" aria-labelledby="anchor-release-title"><div class="toolbar"><h2 id="anchor-release-title">Release this anchor</h2><button type="button" class="button secondary" data-close-admin-dialog>Close</button></div>
+    <p>Release ${escapeHtml(milestone.milestoneTitle || milestone.milestoneId)} as the anchor? Days before anchor stay as they are until you choose another anchor.</p>
+    <div class="toolbar"><button type="button" class="button" id="anchor-release-confirm">Release anchor</button><button type="button" class="button secondary" data-close-admin-dialog>Cancel</button></div></div>`);
+  const confirm = document.getElementById('anchor-release-confirm');
+  if (!confirm) return;
+  confirm.addEventListener('click', function() {
+    closeAdminDialog();
+    pathwayApplyAnchorChoice(id, 'release');
+  });
+}
+
+export function pathwayApplyAnchorChoice(id, mode) {
+  const milestone = pathwayFindMilestone(id);
+  if (!milestone || milestone.deleting) return;
+  if (mode !== 'adjust' && mode !== 'move' && mode !== 'release') return;
+  pathwayMarkSaving('milestone', id, 'pending');
+  Object.keys(state.pathwayPlan.timers).forEach(function(key) {
+    if (key.indexOf('milestone:') !== 0) return;
+    window.clearTimeout(state.pathwayPlan.timers[key]);
+    delete state.pathwayPlan.timers[key];
+  });
+  return pathwayEnqueue('pathway:anchor', function() {
+    return pathwayFlushMilestones().then(function() {
+      if (!pathwayFindMilestone(id) || !state.pathwayPlan.persistedMilestones[id]) {
+        throw new Error('Save this milestone before changing the anchor.');
+      }
+      return callServer('setMilestoneAnchor', id, mode);
+    }).then(function(result) {
+      pathwayApplyAnchorResult(result, mode);
+      pathwayMarkSaving('milestone', id, 'confirmed');
+    }).catch(function(error) {
+      if (isStale(error)) return;
+      pathwayMarkSaving('milestone', id, 'rejected');
+      showError(error);
+    });
+  });
+}
+
+export function pathwayFlushMilestones() {
+  const ids = state.pathwayPlan.milestones.filter(function(milestone) {
+    return milestone && !milestone.deleting && pathwayMilestoneDirty(milestone.milestoneId);
+  }).map(function(milestone) { return milestone.milestoneId; });
+  return ids.reduce(function(chain, milestoneId) {
+    return chain.then(function() { return pathwayCommitMilestone(milestoneId); });
+  }, Promise.resolve());
+}
+
+export function pathwayMilestoneDirty(id) {
+  const milestone = pathwayFindMilestone(id);
+  if (!milestone || milestone.deleting) return false;
+  if (!state.pathwayPlan.persistedMilestones[id]) return true;
+  const baseline = state.pathwayPlan.baselines.milestones[id];
+  if (!baseline) return true;
+  return !pathwaySamePayload(pathwayMilestonePayload(milestone), pathwayMilestonePayload(baseline));
+}
+
+export function pathwayApplyAnchorResult(result, mode) {
+  const records = result && result.milestones ? result.milestones : [];
+  const byId = {};
+  records.forEach(function(record) { byId[String(record.milestoneId || '')] = record; });
+  state.pathwayPlan.milestones.forEach(function(milestone) {
+    const saved = byId[milestone.milestoneId];
+    if (!saved) return;
+    milestone.offsetDays = pathwayOffset(saved.offsetDays);
+    if (saved.isAnchor === undefined || saved.isAnchor === null || saved.isAnchor === '') milestone.isAnchor = null;
+    else milestone.isAnchor = toBoolean(saved.isAnchor);
+    const baseline = state.pathwayPlan.baselines.milestones[milestone.milestoneId];
+    if (baseline) {
+      baseline.offsetDays = milestone.offsetDays;
+      baseline.isAnchor = milestone.isAnchor;
+    }
+  });
+  if (mode === 'adjust' && result && result.deltaDays) {
+    const anchor = parsePlanDate(state.pathwayPlan.anchorDate);
+    if (anchor) {
+      state.pathwayPlan.anchorDate = formatPlanDate(addPlanDays(anchor, -Number(result.deltaDays)));
+      writePlanSetting('ee-hub-plan-anchor', state.pathwayPlan.anchorDate);
+    }
+  }
+  const anchorMilestone = pathwayAnchorMilestone();
+  state.pathwayPlan.selectedMilestoneId = anchorMilestone ? anchorMilestone.milestoneId : state.pathwayPlan.selectedMilestoneId;
+  state.pathwayPlan.pendingScroll = mode === 'release' ? 'preserve' : 'anchor';
   paintPathway();
-  pathwayCommitMilestone(id);
 }
 
 export function sizePathwayMonths() {

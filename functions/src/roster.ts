@@ -1,5 +1,5 @@
 import { HubUser, normalizeStaffView } from './permissions';
-import { cohortSheetName, COLLECTIONS } from './schema';
+import { cohortSheetName, COLLECTIONS, normalizePhaseColor } from './schema';
 import { App, deny } from './session';
 import { dateOnlyValue, Doc, driveNamePart, HubError, normalizeEmail, text, toBoolean } from './util';
 
@@ -162,7 +162,12 @@ export async function readPhases(app: App) {
   const records = await app.store.list(COLLECTIONS.phases);
   return records
     .filter((phase) => toBoolean(phase.active))
-    .map((phase) => ({ phaseId: text(phase.phaseId), phaseTitle: text(phase.phaseTitle), sequence: Number(phase.sequence) || 0 }))
+    .map((phase) => ({
+      phaseId: text(phase.phaseId),
+      phaseTitle: text(phase.phaseTitle),
+      sequence: Number(phase.sequence) || 0,
+      phaseColor: normalizePhaseColor(phase.phaseColor),
+    }))
     .sort((left, right) => left.sequence - right.sequence);
 }
 

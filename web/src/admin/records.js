@@ -17,7 +17,7 @@ import {
 } from '../shared/tables.js';
 
 export function listingDialogKind(kind) {
-  return kind === 'admin-record' || kind === 'notice-rule' || kind === 'cohort-token' || kind === 'assignment-anchor';
+  return kind === 'admin-record' || kind === 'notice-rule' || kind === 'cohort-token' || kind === 'assignment-anchor' || kind === 'pathway-anchor';
 }
 
 export function adminDialogKind() {
