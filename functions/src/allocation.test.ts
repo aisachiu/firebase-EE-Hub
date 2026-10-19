@@ -9,13 +9,17 @@ import {
   draftAllocation,
   exportAllocationDrafts,
   exportStaffQuotaSheet,
+  assignStaffSubjects,
   getAllocationDesk,
+  getStaffQuotaSheet,
   previewAllocationIngest,
   previewStaffQuotaTokens,
   saveAllocationConfig,
   saveStaffQuotas,
+  saveStaffSubjects,
   updateCohortToken,
 } from './allocation';
+import { getAdminRecords, saveAdminRecord } from './admin';
 import { COLLECTIONS } from './schema';
 import { SheetGrid } from './sheetImport';
 import { SheetWorkbook } from './sheetSync';
@@ -199,14 +203,16 @@ test('staff quotas top up a cohort without replacing tokens already there', asyn
   const app = appFor();
   await seed(app);
   await app.store.set(COLLECTIONS.subjects, 'eng', { 'Subject ID': 'eng', Name: 'English', Active: true });
+  await app.store.set(COLLECTIONS.subjects, 'his', { 'Subject ID': 'his', Name: 'History', Active: true });
   await saveStaffQuotas(app, [
     { email: SMITH, quota: 2, subjects: ['English', 'History'] },
     { email: COORDINATOR, quota: '', subjects: [] },
   ]);
   const saved = await app.store.get(COLLECTIONS.staffUsers, SMITH);
   assert.equal(saved?.EEQuota, 2);
-  assert.equal(saved?.EESubjects, 'English, History');
+  assert.deepEqual(saved?.EESubjects, ['English', 'History']);
   assert.equal(saved?.DisplayName, 'Mr. Smith');
+  assert.deepEqual((await app.store.get(COLLECTIONS.staffUsers, COORDINATOR))?.EESubjects, []);
 
   const preview = await previewStaffQuotaTokens(app, '2026');
   assert.equal(preview.creating, 2);
@@ -250,4 +256,50 @@ test('staff quotas top up a cohort without replacing tokens already there', asyn
   assert.equal(await app.store.getToken('2026', extra!.id), null);
   await commitAllocations(app, '2026');
   await assert.rejects(deleteCohortToken(app, '2026', drafted!.id), /published/);
+});
+
+test('multiple EE subjects persist on the staff record and in bulk', async () => {
+  const app = appFor();
+  await seed(app);
+  await app.store.set(COLLECTIONS.subjects, 'eng', { 'Subject ID': 'eng', Name: 'English', Active: true });
+  await app.store.set(COLLECTIONS.subjects, 'film', { 'Subject ID': 'film', Name: 'Theatre / Film', Active: true });
+  await app.store.set(COLLECTIONS.subjects, 'lat', { 'Subject ID': 'lat', Name: 'Latin', Active: false });
+  await app.store.set(COLLECTIONS.staffUsers, SMITH, {
+    EMAIL: SMITH, DisplayName: 'Mr. Smith', isStaff: true, isSupervisor: true, EEQuota: 4, EESubjects: ['Latin'],
+  });
+
+  const legacy = await getStaffQuotaSheet(app);
+  assert.deepEqual(legacy.subjects, ['English', 'Theatre / Film']);
+  await app.store.set(COLLECTIONS.staffUsers, COORDINATOR, {
+    EMAIL: COORDINATOR, DisplayName: 'Coordinator', isStaff: true, isCoordinator: true, isAdmin: true, EESubjects: 'English, History',
+  });
+  const read = await getStaffQuotaSheet(app);
+  assert.deepEqual(read.staff.find((person) => person.email === COORDINATOR)?.subjects, ['English', 'History']);
+
+  await saveStaffSubjects(app, [{ email: SMITH, subjects: ['Latin', 'Theatre / Film'] }]);
+  const smith = await app.store.get(COLLECTIONS.staffUsers, SMITH);
+  assert.equal(smith?.EEQuota, 4);
+  assert.deepEqual(smith?.EESubjects, ['Latin', 'Theatre / Film']);
+  await assert.rejects(saveStaffSubjects(app, [{ email: SMITH, subjects: ['Art'] }]), /not an active subject/);
+
+  await assignStaffSubjects(app, [SMITH, COORDINATOR], ['English'], 'add');
+  assert.deepEqual((await app.store.get(COLLECTIONS.staffUsers, SMITH))?.EESubjects, ['Latin', 'Theatre / Film', 'English']);
+  await assignStaffSubjects(app, [SMITH], ['Latin'], 'remove');
+  assert.deepEqual((await app.store.get(COLLECTIONS.staffUsers, SMITH))?.EESubjects, ['Theatre / Film', 'English']);
+
+  await saveAdminRecord(app, 'staffUsers', {
+    EMAIL: 'new.teacher@vsa.edu',
+    DisplayName: 'New Teacher',
+    isSupervisor: true,
+    EESubjects: ['english', 'Theatre / Film'],
+  }, '');
+  const created = await app.store.get(COLLECTIONS.staffUsers, 'new.teacher@vsa.edu');
+  assert.deepEqual(created?.EESubjects, ['English', 'Theatre / Film']);
+  const admin = await getAdminRecords(app, 'staffUsers');
+  const field = admin.schema.fields.find((item) => item.name === 'EESubjects');
+  assert.equal(field?.type, 'checks');
+  assert.deepEqual(field?.options, [
+    { value: 'English', label: 'English' },
+    { value: 'Theatre / Film', label: 'Theatre / Film' },
+  ]);
 });

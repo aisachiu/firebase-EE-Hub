@@ -1,3 +1,4 @@
+import { parseSubjectCell } from './allocationPure';
 import { APP_TABLES, COLLECTIONS, FieldDef, tableFields } from './schema';
 import { dateOnlyValue, Doc, driveNamePart, normalizeEmail, serializeDateOnly, text, toBoolean } from './util';
 
@@ -253,6 +254,7 @@ function recordsFrom(plan: SheetImportPlan, grid: SheetGrid, fields: FieldDef[],
 
 function coerceCell(field: FieldDef | undefined, header: string, value: unknown): unknown {
   if (header === 'FolderPrefix' || header === 'FolderSuffix') return driveNamePart(value);
+  if (field?.type === 'checks') return parseSubjectCell(value);
   if (value === null || value === undefined || value === '') return '';
   if (field?.type === 'checkbox') return toBoolean(value);
   if (field?.type === 'number') {

@@ -37,11 +37,11 @@ async function seed() {
 
   await store.set(COLLECTIONS.staffUsers, COORDINATOR, {
     EMAIL: COORDINATOR, DisplayName: 'Alex Chen', 'Primary Department': 'Extended Essay', StaffCode: 'AC',
-    isStaff: true, isSupervisor: false, isLead: false, isCoordinator: true, isAdmin: true, EEQuota: 40, EESubjects: '',
+    isStaff: true, isSupervisor: false, isLead: false, isCoordinator: true, isAdmin: true, EEQuota: 40, EESubjects: [],
   });
   await store.set(COLLECTIONS.staffUsers, SUPERVISOR, {
     EMAIL: SUPERVISOR, DisplayName: 'Priya Shah', 'Primary Department': 'English', StaffCode: 'PS',
-    isStaff: true, isSupervisor: true, isLead: true, isCoordinator: false, isAdmin: false, EEQuota: 8, EESubjects: 'English',
+    isStaff: true, isSupervisor: true, isLead: true, isCoordinator: false, isAdmin: false, EEQuota: 8, EESubjects: ['English'],
   });
   await store.set(COLLECTIONS.studentUsers, STUDENT, {
     StudentId: STUDENT, DisplayName: 'Jamie Wong', Cohort: '2026', studentEmail: STUDENT, parentEmail: 'family.wong@vsa.example.edu',

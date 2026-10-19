@@ -15,6 +15,10 @@ import {
   planDraft,
   planTokenTopUp,
   preserveEeActive,
+  activeSubjectNamesFrom,
+  canonicalSubjectAssignment,
+  formatSubjectCell,
+  parseSubjectCell,
   quotaCapacity,
   staffQuotaTokenRows,
   subjectsOverlap,
@@ -116,6 +120,27 @@ test('staff quotas count once per subject and sum once for the cohort total', ()
   assert.equal(parsed.rows.length, 1);
   assert.equal(parsed.rows[0].staffId, 'smith@vsa.edu');
   assert.deepEqual(tokenSheetRows(parsed.rows)[1], ['smith@vsa.edu', 3, 'English, History']);
+  const slash = staffQuotaTokenRows([
+    { EMAIL: 'lee@vsa.edu', EEQuota: 2, EESubjects: ['Theatre / Film', 'Biology'] },
+  ]);
+  assert.deepEqual(slash.rows[0].eligibleSubjects, ['Theatre / Film', 'Biology']);
+});
+
+test('EE subject lists keep names that contain commas or slashes', () => {
+  assert.deepEqual(activeSubjectNamesFrom([
+    { Name: 'History', Active: true },
+    { Name: 'biology', Active: 'yes' },
+    { Name: 'Latin', Active: false },
+    { Name: 'History', Active: true },
+  ]), ['biology', 'History']);
+  assert.deepEqual(parseSubjectCell('English, History'), ['English', 'History']);
+  assert.deepEqual(parseSubjectCell('["Theatre / Film","Biology"]'), ['Theatre / Film', 'Biology']);
+  assert.deepEqual(parseSubjectCell(['Theatre / Film', 'Biology']), ['Theatre / Film', 'Biology']);
+  assert.equal(formatSubjectCell(['English', 'History']), 'English, History');
+  assert.equal(formatSubjectCell(['Theatre / Film', 'Biology']), '["Theatre / Film","Biology"]');
+  assert.deepEqual(canonicalSubjectAssignment(['english', 'History'], ['English', 'History'], []), ['English', 'History']);
+  assert.deepEqual(canonicalSubjectAssignment(['Latin', 'English'], ['English'], ['Latin']), ['Latin', 'English']);
+  assert.throws(() => canonicalSubjectAssignment(['Art'], ['English'], []), /not an active subject/);
 });
 
 test('drafting claims a matching slot, and clearing a published token waits for the next publish', () => {
