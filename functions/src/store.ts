@@ -85,6 +85,10 @@ export class Store {
     await this.tokens(cohortId).doc(id).set(cleanDoc(data));
   }
 
+  async removeToken(cohortId: string, id: string): Promise<void> {
+    await this.tokens(cohortId).doc(id).delete();
+  }
+
   workspace(cohortId: string) {
     return this.db.collection(COLLECTIONS.cohorts).doc(cohortId).collection('allocationWorkspace');
   }

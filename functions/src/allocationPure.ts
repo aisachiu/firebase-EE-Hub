@@ -455,6 +455,76 @@ export function splitList(value: unknown): string[] {
   return text(value).split(/[,;/|]/).map((part) => part.trim()).filter(Boolean);
 }
 
+export function uniqueSubjects(value: unknown): string[] {
+  const seen = new Set<string>();
+  const subjects: string[] = [];
+  splitList(value).forEach((item) => {
+    const key = item.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    subjects.push(item);
+  });
+  return subjects;
+}
+
+export interface QuotaCapacity {
+  totalQuota: number;
+  untiedQuota: number;
+  subjects: { subject: string; capacity: number }[];
+}
+
+/** Per-subject capacity counts a teacher's full quota once for every subject they can take. */
+export function quotaCapacity(rows: { quota: number; eligibleSubjects: string[] }[]): QuotaCapacity {
+  let totalQuota = 0;
+  let untiedQuota = 0;
+  const groups = new Map<string, { subject: string; capacity: number }>();
+  rows.forEach((row) => {
+    const quota = Number.isInteger(row.quota) && row.quota > 0 ? row.quota : 0;
+    totalQuota += quota;
+    const subjects = uniqueSubjects(row.eligibleSubjects);
+    if (quota && !subjects.length) untiedQuota += quota;
+    if (!quota) return;
+    subjects.forEach((subject) => {
+      const key = subject.toLowerCase();
+      const current = groups.get(key);
+      if (current) current.capacity += quota;
+      else groups.set(key, { subject, capacity: quota });
+    });
+  });
+  return {
+    totalQuota,
+    untiedQuota,
+    subjects: [...groups.values()].sort((left, right) => left.subject.localeCompare(right.subject)),
+  };
+}
+
+export function staffQuotaTokenRows(staff: Doc[]): { rows: ParsedTokenRow[]; warnings: string[] } {
+  const rows: ParsedTokenRow[] = [];
+  const warnings: string[] = [];
+  staff.forEach((person) => {
+    const staffId = normalizeEmail(person.EMAIL);
+    if (!staffId) return;
+    const raw = person.EEQuota;
+    if (raw === '' || raw === undefined || raw === null) return;
+    const quota = typeof raw === 'number' ? raw : Number(text(raw));
+    if (!Number.isInteger(quota) || quota < 0) {
+      warnings.push(`${staffId} quota must be a whole number.`);
+      return;
+    }
+    const eligibleSubjects = uniqueSubjects(person.EESubjects);
+    if (!quota && !eligibleSubjects.length) return;
+    rows.push({ staffId, quota, eligibleSubjects });
+  });
+  return { rows, warnings };
+}
+
+export function tokenSheetRows(rows: ParsedTokenRow[]): (string | number)[][] {
+  return [
+    ['StaffEmail', 'Quota', 'EligibleSubjects'],
+    ...rows.map((row) => [row.staffId, row.quota, row.eligibleSubjects.join(', ')]),
+  ];
+}
+
 export function isSupportFlag(value: unknown): boolean {
   if (value === true || value === 1) return true;
   return /^(yes|y|true|1|flagged|needs support)$/i.test(text(value));

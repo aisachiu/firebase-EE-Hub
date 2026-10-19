@@ -15,7 +15,10 @@ import {
   planDraft,
   planTokenTopUp,
   preserveEeActive,
+  quotaCapacity,
+  staffQuotaTokenRows,
   subjectsOverlap,
+  tokenSheetRows,
   TokenRecord,
   WorkspaceRecord,
 } from './allocationPure';
@@ -90,6 +93,29 @@ test('token ingest tops up available slots and leaves drafts alone', () => {
   const over = planTokenTopUp(existing, [{ staffId: SMITH, quota: 1, eligibleSubjects: ['History'] }], '2026', '2026-10-18T01:00:00.000Z', () => 'x');
   assert.equal(over.create.length, 0);
   assert.match(over.warnings[0], /quota is 1/);
+});
+
+test('staff quotas count once per subject and sum once for the cohort total', () => {
+  const capacity = quotaCapacity([
+    { quota: 3, eligibleSubjects: ['English', 'History'] },
+    { quota: 2, eligibleSubjects: ['English'] },
+    { quota: 4, eligibleSubjects: [] },
+    { quota: 0, eligibleSubjects: ['Biology'] },
+  ]);
+  assert.equal(capacity.totalQuota, 9);
+  assert.equal(capacity.untiedQuota, 4);
+  assert.deepEqual(capacity.subjects, [
+    { subject: 'English', capacity: 5 },
+    { subject: 'History', capacity: 3 },
+  ]);
+  const parsed = staffQuotaTokenRows([
+    { EMAIL: 'Smith@VSA.edu', EEQuota: 3, EESubjects: 'English, History' },
+    { EMAIL: 'lee@vsa.edu', EEQuota: '', EESubjects: 'Art' },
+    { EMAIL: 'ng@vsa.edu', EEQuota: 0, EESubjects: '' },
+  ]);
+  assert.equal(parsed.rows.length, 1);
+  assert.equal(parsed.rows[0].staffId, 'smith@vsa.edu');
+  assert.deepEqual(tokenSheetRows(parsed.rows)[1], ['smith@vsa.edu', 3, 'English, History']);
 });
 
 test('drafting claims a matching slot, and clearing a published token waits for the next publish', () => {

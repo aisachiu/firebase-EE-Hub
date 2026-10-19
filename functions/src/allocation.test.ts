@@ -1,13 +1,20 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  addCohortTokens,
   applyAllocationIngest,
+  applyStaffQuotaTokens,
   commitAllocations,
+  deleteCohortToken,
   draftAllocation,
   exportAllocationDrafts,
+  exportStaffQuotaSheet,
   getAllocationDesk,
   previewAllocationIngest,
+  previewStaffQuotaTokens,
   saveAllocationConfig,
+  saveStaffQuotas,
+  updateCohortToken,
 } from './allocation';
 import { COLLECTIONS } from './schema';
 import { SheetGrid } from './sheetImport';
@@ -43,6 +50,11 @@ function memory() {
     async setMember(cohortId: string, id: string, data: Doc) { members.set(`${cohortId}\u0000${id}`, { ...data }); },
     async listTokens(cohortId: string) { return [...tokens.keys()].filter((id) => id.startsWith(`${cohortId}\u0000`)).map((id) => ({ ...tokens.get(id)!, id: id.split('\u0000')[1] })); },
     async setToken(cohortId: string, id: string, data: Doc) { tokens.set(`${cohortId}\u0000${id}`, { ...data, id }); },
+    async getToken(cohortId: string, id: string) {
+      const row = tokens.get(`${cohortId}\u0000${id}`);
+      return row ? { ...row, id } : null;
+    },
+    async removeToken(cohortId: string, id: string) { tokens.delete(`${cohortId}\u0000${id}`); },
     async listWorkspace(cohortId: string) { return [...workspace.keys()].filter((id) => id.startsWith(`${cohortId}\u0000`)).map((id) => ({ ...workspace.get(id)!, id: id.split('\u0000')[1] })); },
     async getWorkspace(cohortId: string, id: string) { return copy(workspace.get(`${cohortId}\u0000${id}`)); },
     async setWorkspace(cohortId: string, id: string, data: Doc) { workspace.set(`${cohortId}\u0000${id}`, { ...data }); },
@@ -181,4 +193,61 @@ test('export writes the allocation sheet and records the export time', async () 
   assert.equal(exported.title, 'EE Hub allocations 2026 2026-10-18');
   assert.deepEqual(titles, ['ALLOCATIONS 2026']);
   assert.ok((await app.store.getAllocationConfig('2026'))?.lastExport);
+});
+
+test('staff quotas top up a cohort without replacing tokens already there', async () => {
+  const app = appFor();
+  await seed(app);
+  await app.store.set(COLLECTIONS.subjects, 'eng', { 'Subject ID': 'eng', Name: 'English', Active: true });
+  await saveStaffQuotas(app, [
+    { email: SMITH, quota: 2, subjects: ['English', 'History'] },
+    { email: COORDINATOR, quota: '', subjects: [] },
+  ]);
+  const saved = await app.store.get(COLLECTIONS.staffUsers, SMITH);
+  assert.equal(saved?.EEQuota, 2);
+  assert.equal(saved?.EESubjects, 'English, History');
+  assert.equal(saved?.DisplayName, 'Mr. Smith');
+
+  const preview = await previewStaffQuotaTokens(app, '2026');
+  assert.equal(preview.creating, 2);
+  assert.equal((await app.store.listTokens('2026')).length, 0);
+  await applyStaffQuotaTokens(app, '2026');
+  const first = await app.store.listTokens('2026');
+  assert.equal(first.length, 2);
+  await draftAllocation(app, '2026', JANE, SMITH, 'English');
+  await saveStaffQuotas(app, [{ email: SMITH, quota: 3, subjects: ['English'] }]);
+  const again = await applyStaffQuotaTokens(app, '2026');
+  assert.equal(again.creating, 1);
+  const tokens = await app.store.listTokens('2026');
+  assert.equal(tokens.length, 3);
+  const drafted = tokens.find((token) => token.allocatedTo === JANE);
+  assert.equal(drafted?.status, 'draft');
+  assert.deepEqual(drafted?.eligibleSubjects, ['English', 'History']);
+  const open = tokens.filter((token) => token.status === 'available');
+  assert.equal(open.every((token) => token.eligibleSubjects.join(', ') === 'English'), true);
+
+  const captured: { grid: { title: string; rows: unknown[][] } | null } = { grid: null };
+  const exported = await exportStaffQuotaSheet(app, '2026', {
+    workbook: {
+      async create(_title, grids) { captured.grid = grids[0]; return { spreadsheetId: 'abc123_XYZ-000000000000', url: SHEET }; },
+      async read() { return []; },
+      async share() { return; },
+    },
+    actorEmail: COORDINATOR,
+    now: new Date('2026-10-18T00:00:00.000Z'),
+  });
+  assert.equal(exported.title, 'EE Hub supervisor tokens 2026 2026-10-18');
+  assert.equal(captured.grid?.title, 'SUPERVISORTOKENS 2026');
+  assert.deepEqual(captured.grid?.rows[0], ['StaffEmail', 'Quota', 'EligibleSubjects']);
+
+  const added = await addCohortTokens(app, '2026', COORDINATOR, ['English'], 1);
+  assert.equal(added.created, 1);
+  const extra = (await app.store.listTokens('2026')).find((token) => token.staffId === COORDINATOR);
+  assert.ok(extra);
+  await updateCohortToken(app, '2026', extra!.id, ['History']);
+  assert.deepEqual((await app.store.getToken('2026', extra!.id))?.eligibleSubjects, ['History']);
+  await deleteCohortToken(app, '2026', extra!.id);
+  assert.equal(await app.store.getToken('2026', extra!.id), null);
+  await commitAllocations(app, '2026');
+  await assert.rejects(deleteCohortToken(app, '2026', drafted!.id), /published/);
 });
