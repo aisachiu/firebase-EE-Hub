@@ -80,6 +80,7 @@ import {
   updateCohortToken,
 } from './allocation';
 import { applySheetIngest, exportSheetCollections, listSheetCollections, previewSheetIngest } from './sheetSync';
+import { addSupervisorTodo, deleteSupervisorTodo, getSupervisorTodoDesk, setSupervisorTodoStatus } from './supervisorTodos';
 import { HubError, text } from './util';
 
 export async function dispatch(app: App, method: string, args: unknown[]): Promise<unknown> {
@@ -175,6 +176,10 @@ export async function dispatch(app: App, method: string, args: unknown[]): Promi
     case 'addCohortTokens': return addCohortTokens(app, args[0], args[1], args[2], args[3]);
     case 'updateCohortToken': return updateCohortToken(app, args[0], args[1], args[2]);
     case 'deleteCohortToken': return deleteCohortToken(app, args[0], args[1]);
+    case 'getSupervisorTodoDesk': return getSupervisorTodoDesk(app, args[0]);
+    case 'addSupervisorTodo': return addSupervisorTodo(app, args[0], args[1], args[2]);
+    case 'setSupervisorTodoStatus': return setSupervisorTodoStatus(app, args[0], args[1]);
+    case 'deleteSupervisorTodo': return deleteSupervisorTodo(app, args[0]);
     default: throw new HubError('Unknown EE Hub request.');
   }
 }

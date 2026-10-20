@@ -82,5 +82,6 @@ export const state = {
   noticeMilestoneId: '',
   noticeEdit: null,
   noticeDesk: null,
-  emailDesk: false
+  emailDesk: false,
+  supervisorDesk: false
 };

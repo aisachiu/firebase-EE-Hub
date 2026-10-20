@@ -9,12 +9,41 @@ import { paintTabDot, renderShell } from '../shell.js';
 import { bindUnreadNotices, paintStudentPage, renderUnreadNotices } from '../student/home.js';
 import { dueSortKey, journeyDayLabel, milestoneMark, phaseRangeLabel } from '../student/journey.js';
 import { openMassMilestoneEditor } from '../student/milestones.js';
+import { bindSupervisorTodoList, mayManageSupervisorTodos, renderSupervisorDesk, supervisorTodoList } from './supervisorTodos.js';
+
+export function openStaffStudent(email) {
+  callServer('getStaffStudentHome', email, state.cohortId, state.actingAs).then(function(detail) {
+    state.staffStudentHome = detail;
+    state.staffPane = 'home';
+    state.journeyOpen = true;
+    state.notesOpen = false;
+    state.journeyFilters = { phaseId: 'all', showSystem: true, showStudent: true };
+    state.editingTodo = '';
+    renderShell();
+  }).catch(showError);
+}
+
+function supervisorDeskHooks() {
+  return {
+    back: function() {
+      state.supervisorDesk = false;
+      renderStaffHome();
+    },
+    openStudent: openStaffStudent,
+    reload: function() {
+      const main = document.getElementById('main');
+      if (main && state.supervisorDesk) renderSupervisorDesk(main, supervisorDeskHooks());
+    },
+  };
+}
 
 export function renderStaffHome() {
   advanceScene();
   const main = document.getElementById('main');
+  if (state.supervisorDesk && !mayManageSupervisorTodos(state.user)) state.supervisorDesk = false;
   if (state.emailDesk) { renderEmailDesk(main, { back: true }); return; }
   if (state.staffStudentHome) { paintStaffAsStudent(state.staffStudentHome); return; }
+  if (state.supervisorDesk) { renderSupervisorDesk(main, supervisorDeskHooks()); return; }
   main.innerHTML = loadingLine('Loading students...');
   callServer('getStaffHome', state.cohortId || '', state.actingAs).then(function(home) {
     state.staffHome = home;
@@ -58,19 +87,6 @@ export function visibleStaffStudents(home) {
     return textCompare(left.displayName, right.displayName);
   });
   return students;
-}
-
-export function supervisorNextList(home) {
-  if (!home || home.viewAs !== 'supervisor') return '';
-  const rows = (home.students || []).filter(function(student) {
-    return student.nextSupervisor && student.nextSupervisor.title;
-  }).slice().sort(function(left, right) {
-    return textCompare(left.surname || left.displayName, right.surname || right.displayName) || textCompare(left.displayName, right.displayName);
-  });
-  const items = rows.length ? rows.map(function(student) {
-    return `<li><button type="button" data-open-student="${escapeHtml(student.email)}"><strong>${escapeHtml(student.displayName)}</strong><span>${escapeHtml(student.nextSupervisor.title)}</span></button></li>`;
-  }).join('') : '<li class="muted">No supervisor steps are waiting.</li>';
-  return `<aside class="next-steps" aria-label="Next supervisor milestones"><p class="eyebrow">Your next steps</p><ul>${items}</ul></aside>`;
 }
 
 export function rememberStaffLayout(layout) {
@@ -334,6 +350,7 @@ export function paintStaffCards(home) {
       <input id="staff-search" type="search" placeholder="Search students" value="${escapeHtml(state.staffQuery)}" aria-label="Search students">
       <span class="muted">${students.length}${students.length === total ? '' : ' of ' + total} students</span>
       <button type="button" class="button secondary" id="open-email-desk">Email reminders</button>
+      ${mayManageSupervisorTodos(state.user) ? '<button type="button" class="button secondary" id="open-supervisor-todos">Supervisor to-dos</button>' : ''}
       ${canEditMilestones ? `<label><input type="checkbox" class="student-pick" id="staff-select-visible" ${allVisibleSelected ? 'checked' : ''} ${students.length ? '' : 'disabled'} aria-label="Select all students in this list"> Select all</label><span class="muted" id="staff-selected-count">${state.staffSelected.length} selected</span><button type="button" class="button secondary" id="edit-milestones" ${state.staffSelected.length ? '' : 'disabled'}>Edit Milestones</button>` : ''}
       <div class="view-toggle" role="group" aria-label="Student layout">
         <button type="button" data-staff-layout="tile" aria-pressed="${layout === 'tile' ? 'true' : 'false'}">Tiles</button>
@@ -341,16 +358,24 @@ export function paintStaffCards(home) {
       </div>
     </div>
     <div class="staff-board${home.viewAs === 'supervisor' ? '' : ' solo'}">
-    ${supervisorNextList(home)}
+    ${supervisorTodoList(home)}
     ${students.length ? (layout === 'list' ? renderStaffStudentList(home, students) : renderStaffStudentTiles(students, phaseName, canEditMilestones)) : '<div class="empty">No students match this view.</div>'}
     </div>`;
   bindUnreadNotices(main, true);
   document.getElementById('open-email-desk').addEventListener('click', function() {
     state.emailDesk = true;
+    state.supervisorDesk = false;
     state.noticeCohortId = state.cohortId || '';
     state.noticeEdit = null;
     renderStaffHome();
   });
+  const supervisorTodosButton = document.getElementById('open-supervisor-todos');
+  if (supervisorTodosButton) supervisorTodosButton.addEventListener('click', function() {
+    state.emailDesk = false;
+    state.supervisorDesk = true;
+    renderStaffHome();
+  });
+  bindSupervisorTodoList(main, function() { renderStaffHome(); });
   document.getElementById('staff-cohort').addEventListener('change', function(event) {
     state.cohortId = event.target.value;
     state.staffSupervisor = '';
@@ -454,16 +479,6 @@ export function paintStaffCards(home) {
   });
   bindListJourneyTips(main);
   main.querySelectorAll('[data-open-student]').forEach(function(button) {
-    button.addEventListener('click', function() {
-      callServer('getStaffStudentHome', button.dataset.openStudent, state.cohortId, state.actingAs).then(function(detail) {
-        state.staffStudentHome = detail;
-        state.staffPane = 'home';
-        state.journeyOpen = true;
-        state.notesOpen = false;
-        state.journeyFilters = { phaseId: 'all', showSystem: true, showStudent: true };
-        state.editingTodo = '';
-        renderShell();
-      }).catch(showError);
-    });
+    button.addEventListener('click', function() { openStaffStudent(button.dataset.openStudent); });
   });
 }

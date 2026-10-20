@@ -195,6 +195,10 @@ firebase deploy
 
 Hosting serves the built web app. The callable is `eeHub`. Firestore rules deny all client writes, so the function and the import script are the only writers. Deploy also publishes `notificationSweep`.
 
+## Supervisor To Do
+
+On My Students, a supervisor sees Supervisor To Do. It lists the milestones that supervisor owns and still has to attend to. The next milestone for each student is in that same list, marked Next, along with any later open milestone they own. A lead or coordinator can add a to-do for a supervisor. Those added to-dos appear in the same list. Leads and coordinators open Supervisor to-dos on My Students to see every supervisor in the cohort, with that supervisor's milestones and to-dos, and to add one. Added to-dos are stored in `supervisorTodos`. Callable methods: `getSupervisorTodoDesk`, `addSupervisorTodo`, `setSupervisorTodoStatus`, and `deleteSupervisorTodo`.
+
 ## Email notifications
 
 Coordinators own the cohort rules. Open Admin → Email notifications, or use Email notifications on the Phases & milestones editor. Each rule names a milestone, how many days before or after its due date to send, and whether the email goes to the milestone owner or only to coordinators and admins. The owner is the student when `milestoneTemplates.mOwner` is `student`, and the roster `supervisorId` when the owner is `supervisor`. Leads and coordinator-owned milestones go to staff with that flag. Supervisors can add an extra reminder for their own students from My Students → Email reminders. Staff browse is read-only.

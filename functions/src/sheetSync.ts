@@ -81,6 +81,7 @@ const CATALOG: CatalogItem[] = [
   { id: 'tickets', label: 'Messages', sheet: 'TICKETS', group: 'operational' },
   { id: 'ticketMessages', label: 'Message replies', sheet: 'TICKET_MESSAGES', group: 'operational' },
   { id: 'todoTemplates', label: 'Template tasks', sheet: 'TODO_TEMPLATES', group: 'operational' },
+  { id: 'supervisorTodos', label: 'Supervisor to-dos', sheet: 'SUPERVISOR_TODOS', group: 'operational' },
   { id: 'auditLogs', label: 'Audit log', sheet: 'AUDIT_LOGS', group: 'operational', exportOnly: true },
 ];
 
