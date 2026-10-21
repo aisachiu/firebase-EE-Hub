@@ -28,7 +28,16 @@ import { getAppBootstrap } from './bootstrap';
 import { getMyEssayAnalytics, getStudentEssayAnalytics } from './docAnalytics';
 import { checkCohortDriveFolders, getCohortDriveSettings, getDriveAccount, saveCohortDriveSettings, saveDriveAccount, syncCohortDriveFolders } from './drive';
 import { getFormDesigner, getFormResponse, getStudentForm, listFormMilestones, publishForm, saveFormDraft, saveStudentForm } from './forms';
-import { getMyActivity, getPathwayPlan, getStaffHome, getStaffStudentHome, getStudentActivity, getStudentHome } from './journey';
+import {
+  deleteCohortMilestone,
+  deleteCohortPhase,
+  getPathwayPlan,
+  saveCohortMilestone,
+  saveCohortPhase,
+  saveCohortPlanAnchor,
+  seedCohortPathway,
+} from './cohortPathway';
+import { getMyActivity, getStaffHome, getStaffStudentHome, getStudentActivity, getStudentHome } from './journey';
 import {
   createStaffNote,
   createTicket,
@@ -96,7 +105,13 @@ export async function dispatch(app: App, method: string, args: unknown[]): Promi
     case 'getCohorts': return getCohorts(app);
     case 'getAdminRecords': return getAdminRecords(app, text(args[0]));
     case 'getCohortMembersForAdmin': return getCohortMembersForAdmin(app, args[0]);
-    case 'getPathwayPlan': return getPathwayPlan(app);
+    case 'getPathwayPlan': return getPathwayPlan(app, args[0]);
+    case 'saveCohortPhase': return saveCohortPhase(app, args[0], (args[1] || {}) as any, args[2]);
+    case 'deleteCohortPhase': return deleteCohortPhase(app, args[0], args[1]);
+    case 'saveCohortMilestone': return saveCohortMilestone(app, args[0], (args[1] || {}) as any, args[2]);
+    case 'deleteCohortMilestone': return deleteCohortMilestone(app, args[0], args[1]);
+    case 'saveCohortPlanAnchor': return saveCohortPlanAnchor(app, args[0], args[1]);
+    case 'seedCohortPathway': return seedCohortPathway(app, args[0], args[1], args[2]);
     case 'saveAdminRecord': return saveAdminRecord(app, text(args[0]), (args[1] || {}) as any, args[2]);
     case 'deleteAdminRecord': return deleteAdminRecord(app, text(args[0]), args[1]);
     case 'saveCohortMember': return saveCohortMember(app, args[0], (args[1] || {}) as any, args[2]);

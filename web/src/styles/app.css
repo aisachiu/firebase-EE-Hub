@@ -425,6 +425,8 @@ main.plan-wide { max-width: none; padding-inline: clamp(12px, 2vw, 28px); }
   .next-steps { position: static; }
 }
 .plan-intro { max-width: 70ch; margin: 0 0 12px; }
+.plan-scope { margin-top: 0; }
+.plan-setup { max-width: 640px; }
 .plan-layout { display: grid; grid-template-columns: clamp(300px, 33vw, 480px) minmax(0, 1fr); gap: 18px; align-items: start; }
 .plan-side { position: sticky; top: 52px; max-height: calc(100vh - 64px); overflow: auto; padding-bottom: 8px; }
 .plan-main { min-width: 0; container-type: inline-size; container-name: plan-main; }

@@ -404,6 +404,15 @@ function checkRow(label: string, id: string, entity: string, data: Doc): void {
   }
 }
 
+async function keepCohortPlan(app: App, cohortId: string, data: Doc): Promise<Doc> {
+  const existing = await app.store.get(COLLECTIONS.cohorts, cohortId);
+  if (!existing) return data;
+  const next = { ...data };
+  if (text(existing.PlanAnchor) && !text(next.PlanAnchor)) next.PlanAnchor = text(existing.PlanAnchor);
+  if (existing.PathwaySeeded !== undefined && next.PathwaySeeded === undefined) next.PathwaySeeded = toBoolean(existing.PathwaySeeded);
+  return next;
+}
+
 async function writeIngest(app: App, plan: SheetImportPlan, entities: string[], cohortIds: string[], formIds: string[]): Promise<void> {
   const order = CATALOG.map((item) => item.id);
   const sorted = entities.slice().sort((left, right) => order.indexOf(left) - order.indexOf(right));
@@ -459,7 +468,7 @@ async function writeIngest(app: App, plan: SheetImportPlan, entities: string[], 
     const collection = COLLECTIONS[id];
     const incoming = plan.docs[collection] || [];
     const keep = new Set(incoming.map((doc) => doc.id));
-    for (const doc of incoming) await app.store.set(collection, doc.id, doc.data);
+    for (const doc of incoming) await app.store.set(collection, doc.id, id === 'cohorts' ? await keepCohortPlan(app, doc.id, doc.data) : doc.data);
     for (const existing of await app.store.list(collection)) {
       const existingId = rowId(id, existing);
       if (!existingId || keep.has(existingId)) continue;

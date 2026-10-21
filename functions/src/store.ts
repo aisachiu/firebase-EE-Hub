@@ -66,6 +66,52 @@ export class Store {
     await this.members(cohortId).doc(email).delete();
   }
 
+  cohortPhases(cohortId: string) {
+    return this.db.collection(COLLECTIONS.cohorts).doc(cohortId).collection('phases');
+  }
+
+  async listCohortPhases(cohortId: string): Promise<Doc[]> {
+    const snap = await this.cohortPhases(cohortId).get();
+    return snap.docs.map((doc) => doc.data() as Doc);
+  }
+
+  async getCohortPhase(cohortId: string, phaseId: string): Promise<Doc | null> {
+    if (!cohortId || !phaseId) return null;
+    const snap = await this.cohortPhases(cohortId).doc(phaseId).get();
+    return snap.exists ? (snap.data() as Doc) : null;
+  }
+
+  async setCohortPhase(cohortId: string, phaseId: string, data: Doc): Promise<void> {
+    await this.cohortPhases(cohortId).doc(phaseId).set(cleanDoc(data));
+  }
+
+  async removeCohortPhase(cohortId: string, phaseId: string): Promise<void> {
+    await this.cohortPhases(cohortId).doc(phaseId).delete();
+  }
+
+  cohortMilestones(cohortId: string) {
+    return this.db.collection(COLLECTIONS.cohorts).doc(cohortId).collection('milestones');
+  }
+
+  async listCohortMilestones(cohortId: string): Promise<Doc[]> {
+    const snap = await this.cohortMilestones(cohortId).get();
+    return snap.docs.map((doc) => doc.data() as Doc);
+  }
+
+  async getCohortMilestone(cohortId: string, milestoneId: string): Promise<Doc | null> {
+    if (!cohortId || !milestoneId) return null;
+    const snap = await this.cohortMilestones(cohortId).doc(milestoneId).get();
+    return snap.exists ? (snap.data() as Doc) : null;
+  }
+
+  async setCohortMilestone(cohortId: string, milestoneId: string, data: Doc): Promise<void> {
+    await this.cohortMilestones(cohortId).doc(milestoneId).set(cleanDoc(data));
+  }
+
+  async removeCohortMilestone(cohortId: string, milestoneId: string): Promise<void> {
+    await this.cohortMilestones(cohortId).doc(milestoneId).delete();
+  }
+
   tokens(cohortId: string) {
     return this.db.collection(COLLECTIONS.cohorts).doc(cohortId).collection('supervisorTokens');
   }

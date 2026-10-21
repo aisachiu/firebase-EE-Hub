@@ -158,16 +158,39 @@ export function staffMayUpdateAllMilestones(user: HubUser, roster: Placement | n
   return !!(user.permissions && user.permissions.canAdmin);
 }
 
-export async function readPhases(app: App) {
-  const records = await app.store.list(COLLECTIONS.phases);
+export async function cohortPathwaySeeded(app: App, cohortId: unknown): Promise<boolean> {
+  const id = text(cohortId);
+  if (!id) return false;
+  const cohort = await app.store.get(COLLECTIONS.cohorts, id);
+  return !!(cohort && toBoolean(cohort.PathwaySeeded));
+}
+
+export async function phaseDocsFor(app: App, cohortId?: unknown): Promise<Doc[]> {
+  const id = text(cohortId);
+  if (id && await cohortPathwaySeeded(app, id) && typeof app.store.listCohortPhases === 'function') {
+    return app.store.listCohortPhases(id);
+  }
+  return app.store.list(COLLECTIONS.phases);
+}
+
+export async function milestoneDocsFor(app: App, cohortId?: unknown): Promise<Doc[]> {
+  const id = text(cohortId);
+  if (id && await cohortPathwaySeeded(app, id) && typeof app.store.listCohortMilestones === 'function') {
+    return app.store.listCohortMilestones(id);
+  }
+  return app.store.list(COLLECTIONS.milestoneTemplates);
+}
+
+export async function readPhases(app: App, cohortId?: unknown) {
+  const records = await phaseDocsFor(app, cohortId);
   return records
     .filter((phase) => toBoolean(phase.active))
     .map((phase) => ({ phaseId: text(phase.phaseId), phaseTitle: text(phase.phaseTitle), sequence: Number(phase.sequence) || 0 }))
     .sort((left, right) => left.sequence - right.sequence);
 }
 
-export async function readTemplates(app: App) {
-  const records = await app.store.list(COLLECTIONS.milestoneTemplates);
+export async function readTemplates(app: App, cohortId?: unknown) {
+  const records = await milestoneDocsFor(app, cohortId);
   return records
     .map((template) => ({
       milestoneId: text(template.milestoneId),

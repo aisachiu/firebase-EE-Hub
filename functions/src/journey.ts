@@ -23,8 +23,8 @@ export async function getStudentHome(app: App) {
   const user = await requireUser(app, 'VIEW_STUDENT_HOME');
   if (user.role !== 'student') return deny(app, user, 'VIEW_STUDENT_HOME', 'Student access required.');
   const placement = await findPlacement(app, user.email) || { cohortId: '', displayName: user.displayName, email: user.email, subject: '', supervisorId: '', hrm: '', anchor: '', folder: '', doc: '', rppf: '', poster: '', surname: '', firstName: '', studentNumber: '' };
-  const phases = await readPhases(app);
-  const templates = orderTemplates(await readTemplates(app), phases);
+  const phases = await readPhases(app, placement.cohortId);
+  const templates = orderTemplates(await readTemplates(app, placement.cohortId), phases);
   const items = await getStudentActionItems(app, user.email, user);
   const events = await readEvents(app, [user.email]);
   const returned = latestReturned(events);
@@ -154,8 +154,8 @@ export async function getStaffHome(app: App, cohortId: unknown, viewAs: unknown)
     await requireCohort(app, selected);
   }
   const view = normalizeStaffView(user, viewAs);
-  const phases = await readPhases(app);
-  const templates = orderTemplates(await readTemplates(app), phases);
+  const phases = await readPhases(app, selected);
+  const templates = orderTemplates(await readTemplates(app, selected), phases);
   let roster = (tables.byCohort[selected] || []).slice();
   if (view === 'supervisor') roster = roster.filter((student) => student.supervisorId === user.email);
   const emails: Record<string, boolean> = {};
@@ -192,8 +192,8 @@ function staffViewLabel(view: string, canUpdate: boolean) {
 export async function getStaffStudentHome(app: App, studentEmail: unknown, cohortId: unknown, viewAs: unknown) {
   const user = await requireStaff(app, 'VIEW_STAFF_STUDENT');
   const context = await staffStudentContext(app, user, text(studentEmail), text(cohortId), 'VIEW_STAFF_STUDENT', viewAs);
-  const phases = await readPhases(app);
-  const templates = orderTemplates(await readTemplates(app), phases);
+  const phases = await readPhases(app, text(cohortId));
+  const templates = orderTemplates(await readTemplates(app, text(cohortId)), phases);
   const items = await getStudentActionItems(app, context.email, user);
   const events = await readEvents(app, [context.email]);
   const returned = latestReturned(events);
@@ -253,7 +253,8 @@ async function activityFor(app: App, email: string) {
   const logs = await app.store.list(COLLECTIONS.auditLogs);
   logs.sort((left, right) => text(left.Timestamp).localeCompare(text(right.Timestamp)));
   const templates: Record<string, string> = {};
-  (await readTemplates(app)).forEach((template) => { templates[template.milestoneId] = template.title; });
+  const placement = await findPlacement(app, email);
+  (await readTemplates(app, placement?.cohortId || '')).forEach((template) => { templates[template.milestoneId] = template.title; });
   const tasks: Record<string, string> = {};
   const items = await app.store.list(COLLECTIONS.studentActionItems);
   items.forEach((item) => {
@@ -265,10 +266,7 @@ async function activityFor(app: App, email: string) {
   return activityFeed(email, logs, templates, tasks);
 }
 
-export async function getPathwayPlan(app: App) {
-  const { getAdminRecords } = await import('./admin');
-  return { phases: await getAdminRecords(app, 'phases'), milestones: await getAdminRecords(app, 'milestoneTemplates') };
-}
+export { getPathwayPlan } from './cohortPathway';
 
 void readRoster;
 void dateOnlyValue;

@@ -130,9 +130,34 @@ export function ensurePathwayPlan() {
     didDrop: false,
     focusAfterPaint: '',
     selectAfterPaint: false,
-    resizeBound: false
+    resizeBound: false,
+    mode: readPlanSetting('ee-hub-plan-mode', 'cohort') === 'template' ? 'template' : 'cohort',
+    cohortId: readPlanSetting('ee-hub-plan-cohort', '') || '',
+    cohorts: [],
+    sources: [],
+    seeded: false,
+    generation: 0
   };
   return state.pathwayPlan;
+}
+
+export function pathwayInvalidate() {
+  const plan = state.pathwayPlan;
+  if (!plan) return;
+  plan.generation = (plan.generation || 0) + 1;
+  Object.keys(plan.timers || {}).forEach(function(key) { window.clearTimeout(plan.timers[key]); });
+  plan.timers = {};
+  plan.saving = {};
+}
+
+export function pathwayScopeNow() {
+  const plan = ensurePathwayPlan();
+  return { generation: plan.generation || 0, mode: plan.mode === 'template' ? 'template' : 'cohort', cohortId: plan.cohortId || '' };
+}
+
+export function pathwayScopeCurrent(scope) {
+  const plan = state.pathwayPlan;
+  return !!plan && plan.generation === scope.generation && (plan.mode === 'template' ? 'template' : 'cohort') === scope.mode && (plan.cohortId || '') === (scope.cohortId || '');
 }
 
 export function pathwayAnchorIso() {
@@ -312,6 +337,29 @@ export function pathwayIngest(phaseRecords, milestoneRecords) {
   });
 }
 
+export function pathwayApplyResult(result) {
+  const plan = ensurePathwayPlan();
+  plan.mode = result && result.mode === 'template' ? 'template' : 'cohort';
+  plan.cohortId = result && result.cohortId ? String(result.cohortId) : '';
+  plan.seeded = !!(result && result.seeded);
+  plan.cohorts = result && result.cohorts ? result.cohorts : [];
+  plan.sources = result && result.sources ? result.sources : [];
+  writePlanSetting('ee-hub-plan-mode', plan.mode);
+  if (plan.cohortId) writePlanSetting('ee-hub-plan-cohort', plan.cohortId);
+  if (plan.mode === 'cohort' && result && result.anchorDate && parsePlanDate(result.anchorDate)) {
+    plan.anchorDate = String(result.anchorDate).slice(0, 10);
+  }
+  if (plan.mode === 'cohort' && !plan.seeded) {
+    plan.phases = [];
+    plan.milestones = [];
+    plan.persistedPhases = {};
+    plan.persistedMilestones = {};
+    plan.baselines = { phases: {}, milestones: {} };
+    return;
+  }
+  pathwayIngest((result.phases && result.phases.records) || [], (result.milestones && result.milestones.records) || []);
+}
+
 export function renderPathwayPlanner(target) {
   const plan = ensurePathwayPlan();
   const busy = Object.keys(plan.saving).length > 0 || Object.keys(plan.timers).length > 0;
@@ -321,10 +369,11 @@ export function renderPathwayPlanner(target) {
     return;
   }
   const token = ++plan.loadToken;
-  target.innerHTML = loadingLine('Loading phases and milestones...');
-  callServer('getPathwayPlan').then(function(result) {
+  const scope = { mode: plan.mode, cohortId: plan.mode === 'cohort' ? plan.cohortId : '' };
+  target.innerHTML = loadingLine(plan.mode === 'template' ? 'Loading the template...' : 'Loading phases and milestones...');
+  callServer('getPathwayPlan', scope).then(function(result) {
     if (!state.pathwayPlan || token !== state.pathwayPlan.loadToken) return;
-    pathwayIngest((result.phases && result.phases.records) || [], (result.milestones && result.milestones.records) || []);
+    pathwayApplyResult(result);
     state.pathwayPlan.loaded = true;
     state.pathwayPlan.pendingScroll = 'anchor';
     paintPathway();
@@ -387,24 +436,59 @@ export function paintPathway() {
   }
 }
 
+export function pathwayScopeMarkup() {
+  const plan = state.pathwayPlan;
+  const cohortOptions = (plan.cohorts || []).map(function(cohort) {
+    const status = cohort.status && cohort.status !== 'Active' ? ' · ' + cohort.status : '';
+    const label = cohort.id + (cohort.seeded ? '' : ' · no milestones yet') + status;
+    return `<option value="${escapeHtml(cohort.id)}" ${cohort.id === plan.cohortId ? 'selected' : ''}>${escapeHtml(label)}</option>`;
+  }).join('');
+  return `<div class="toolbar plan-scope">
+    <div class="plan-span" role="radiogroup" aria-label="What you are editing">
+      <button type="button" data-plan-action="mode" data-mode="cohort" aria-pressed="${plan.mode === 'template' ? 'false' : 'true'}">Cohort</button>
+      <button type="button" data-plan-action="mode" data-mode="template" aria-pressed="${plan.mode === 'template' ? 'true' : 'false'}">Template</button>
+    </div>
+    ${plan.mode === 'template' || !cohortOptions ? '' : `<label for="plan-cohort">Cohort</label><select id="plan-cohort">${cohortOptions}</select>`}
+  </div>`;
+}
+
+export function pathwaySuggestedAnchor(cohortId) {
+  return /^\d{4}$/.test(String(cohortId || '')) ? cohortId + '-12-01' : pathwayDefaultAnchorIso();
+}
+
+export function pathwaySetupMarkup() {
+  const plan = state.pathwayPlan;
+  if (!plan.cohortId) {
+    return '<section class="plan-block plan-setup"><h2>No cohort yet</h2><p>Add a cohort, then create its phases and milestones here. The template stays separate.</p></section>';
+  }
+  const options = (plan.sources || []).map(function(source) {
+    const value = source.kind === 'cohort' ? 'cohort:' + source.id : 'template';
+    return `<option value="${escapeHtml(value)}">${escapeHtml(source.label || value)}</option>`;
+  }).join('');
+  return `<section class="plan-block plan-setup">
+    <h2>Milestones for cohort ${escapeHtml(plan.cohortId)}</h2>
+    <p>Copy the template or a previous cohort. Milestones keep their days before or after the anchor. The anchor milestone lands on the date you set for this cohort. After that, edit this cohort on the calendar. Other cohorts stay as they are.</p>
+    <div class="field"><label for="plan-seed-source">Copy from</label><select id="plan-seed-source">${options || '<option value="template">Template</option>'}</select></div>
+    <div class="field"><label for="plan-seed-anchor">Anchor date</label><input id="plan-seed-anchor" type="date" value="${escapeHtml(pathwaySuggestedAnchor(plan.cohortId))}"></div>
+    <button type="button" class="button" data-plan-action="seed">Create milestones</button>
+  </section>`;
+}
+
 export function pathwayMarkup() {
   const plan = state.pathwayPlan;
+  const template = plan.mode === 'template';
+  const intro = template
+    ? 'This is the shared template. It lists phases and milestones without a calendar. Copy it into a cohort when you are ready. Editing the template does not change a cohort that already has its own set.'
+    : 'This calendar belongs to one cohort. Due dates and other edits stay in that cohort. The template and other cohorts are left unchanged.';
+  if (!template && !plan.seeded) {
+    return `<div id="pathway-planner"><p class="lede plan-intro">${intro}</p>${pathwayScopeMarkup()}${pathwaySetupMarkup()}</div>`;
+  }
   const hiddenCount = Object.keys(plan.hiddenPhaseIds).length;
   const visible = pathwayVisibleMilestones();
   const anchorMilestones = plan.milestones.filter(function(milestone) { return pathwayOffset(milestone.offsetDays) === 0; });
-  return `<div id="pathway-planner">
-    <p class="lede plan-intro">Define the phases first, then put an anchor milestone on day 0. Add the other milestones on the calendar. Colour shows the phase. A hidden phase drops its milestones from the calendar and the list.</p>
-    <div class="plan-layout">
-    <aside class="plan-side">
-    <section class="plan-block" aria-labelledby="plan-phases-heading">
-      <div class="toolbar"><h2 id="plan-phases-heading">Phases</h2><button type="button" class="button" data-plan-action="add-phase">Add phase</button>${hiddenCount ? '<button type="button" class="button secondary" data-plan-action="show-phases">Show all phases</button>' : ''}</div>
-      <p class="muted">Shown phases stay on the calendar. Colour follows phase order.</p>
-      ${plan.phases.length ? `<div class="plan-phase-list">${pathwaySortedPhases().map(pathwayPhaseMarkup).join('')}</div>` : '<div class="empty">Add the first phase to start the plan.</div>'}
-    </section>
-    </aside>
-    <div class="plan-main">
-    <section class="plan-anchor plan-block" style="--phase:${anchorMilestones.length ? pathwayPhaseColor(anchorMilestones[0].phase) : '#004C80'}">
-      <div class="field"><label for="plan-anchor-date">Anchor date</label><input id="plan-anchor-date" type="date" value="${escapeHtml(plan.anchorDate)}"><p class="muted">Day 0 on this calendar. Changing it moves the preview only. Each student still has an anchor date under Assignments.</p></div>
+  const phaseNote = template ? 'Hide a phase to leave its milestones out of the list. Colour follows phase order.' : 'Shown phases stay on the calendar. Colour follows phase order.';
+  const calendar = template ? '' : `<section class="plan-anchor plan-block" style="--phase:${anchorMilestones.length ? pathwayPhaseColor(anchorMilestones[0].phase) : '#004C80'}">
+      <div class="field"><label for="plan-anchor-date">Anchor date</label><input id="plan-anchor-date" type="date" value="${escapeHtml(plan.anchorDate)}"><p class="muted">Day 0 for this cohort. The anchor milestone falls on this date. Changing it moves this cohort’s calendar only. Each student still has an anchor date under Assignments.</p></div>
       <div>${pathwayAnchorCopy(anchorMilestones)}</div>
       <div class="field"><span id="plan-months-label">Months in view</span><div class="plan-span" role="radiogroup" aria-labelledby="plan-months-label">${[2, 3, 4, 5, 6].map(function(count) {
         return `<button type="button" data-plan-action="months" data-months="${count}" aria-pressed="${plan.monthsVisible === count ? 'true' : 'false'}">${count}</button>`;
@@ -415,9 +499,22 @@ export function pathwayMarkup() {
       <div id="plan-scroll" class="plan-scroll" tabindex="0" aria-label="Milestone calendar, scroll horizontally">
         <div class="plan-track">${pathwayMonths().map(pathwayMonthMarkup).join('')}</div>
       </div>
+    </section>`;
+  return `<div id="pathway-planner">
+    <p class="lede plan-intro">${intro}</p>
+    ${pathwayScopeMarkup()}
+    <div class="plan-layout">
+    <aside class="plan-side">
+    <section class="plan-block" aria-labelledby="plan-phases-heading">
+      <div class="toolbar"><h2 id="plan-phases-heading">Phases</h2><button type="button" class="button" data-plan-action="add-phase">Add phase</button>${hiddenCount ? '<button type="button" class="button secondary" data-plan-action="show-phases">Show all phases</button>' : ''}</div>
+      <p class="muted">${phaseNote}</p>
+      ${plan.phases.length ? `<div class="plan-phase-list">${pathwaySortedPhases().map(pathwayPhaseMarkup).join('')}</div>` : '<div class="empty">Add the first phase to start the plan.</div>'}
     </section>
+    </aside>
+    <div class="plan-main">
+    ${calendar}
     <section class="plan-block" aria-labelledby="plan-list-heading">
-      <div class="toolbar"><h2 id="plan-list-heading">Milestones</h2><button type="button" class="button" data-plan-action="add-milestone">Add milestone</button><button type="button" class="button secondary" data-plan-action="email-notifications">Email notifications</button><span class="muted">Edit the list here. Hidden phases are left out.</span></div>
+      <div class="toolbar"><h2 id="plan-list-heading">Milestones</h2><button type="button" class="button" data-plan-action="add-milestone">Add milestone</button><button type="button" class="button secondary" data-plan-action="email-notifications">Email notifications</button><span class="muted">${template ? 'Edit the template list here. Hidden phases are left out.' : 'Edit the list here. Hidden phases are left out.'}</span></div>
       ${visible.length ? `<div class="plan-edit-list">${visible.map(pathwayMilestoneMarkup).join('')}</div>` : '<div class="empty">No milestones in the phases that are shown. Show a phase, or add a milestone.</div>'}
     </section>
     </div>
@@ -530,7 +627,7 @@ export function pathwayMilestoneMarkup(milestone) {
       <span class="plan-swatch" style="--phase:${color}"></span>
       <div class="plan-edit-fields">
         <div class="field"><label>Title</label><input ${locked} data-focus="milestone:${id}:title" data-milestone-id="${id}" data-milestone-field="milestoneTitle" value="${escapeHtml(milestone.milestoneTitle)}"></div>
-        <div class="field"><label>Date</label><input ${locked} type="date" data-focus="milestone:${id}:due" data-milestone-id="${id}" data-milestone-field="due" value="${escapeHtml(pathwayMilestoneIso(milestone))}"></div>
+        ${state.pathwayPlan.mode === 'template' ? '' : `<div class="field"><label>Date</label><input ${locked} type="date" data-focus="milestone:${id}:due" data-milestone-id="${id}" data-milestone-field="due" value="${escapeHtml(pathwayMilestoneIso(milestone))}"></div>`}
         <div class="field"><label>Days before anchor</label><input ${locked} type="number" data-focus="milestone:${id}:offset" data-milestone-id="${id}" data-milestone-field="offsetDays" value="${escapeHtml(milestone.offsetDays)}"></div>
       </div>
       <button type="button" class="plan-icon-button" data-plan-action="toggle-milestone" data-milestone-id="${id}" data-focus="milestone:${id}:details" aria-expanded="${open ? 'true' : 'false'}" aria-label="${open ? 'Hide milestone details' : 'Edit milestone details'}">${pathwayDetailsIcon(open)}</button>
@@ -597,6 +694,8 @@ export function pathwayRunAction(node) {
     if (scroller) pathwayScrollAnchorIntoView(scroller);
   }         else if (action === 'make-anchor') pathwayMakeAnchor(node.dataset.milestoneId);
   else if (action === 'delete-milestone') pathwayDeleteMilestone(node.dataset.milestoneId);
+  else if (action === 'mode') pathwaySetMode(node.dataset.mode);
+  else if (action === 'seed') pathwaySeed();
   else if (action === 'email-notifications') openEmailNotifications('');
   else if (action === 'email-milestone') openEmailNotifications(node.dataset.milestoneId);
 }
@@ -605,9 +704,55 @@ export function openEmailNotifications(milestoneId) {
   requestPush();
   state.adminEntity = 'emailNotifications';
   state.noticeMilestoneId = milestoneId || '';
+  if (state.pathwayPlan && state.pathwayPlan.mode !== 'template' && state.pathwayPlan.cohortId) {
+    state.noticeCohortId = state.pathwayPlan.cohortId;
+  }
   state.noticeEdit = null;
   state.emailDesk = false;
   renderAdmin();
+}
+
+export function pathwaySetMode(mode) {
+  const next = mode === 'template' ? 'template' : 'cohort';
+  const plan = ensurePathwayPlan();
+  if (plan.mode === next) return;
+  pathwayInvalidate();
+  plan.mode = next;
+  plan.loaded = false;
+  writePlanSetting('ee-hub-plan-mode', next);
+  renderPathwayPlanner(document.getElementById('admin-content'));
+}
+
+export function pathwaySwitchCohort(cohortId) {
+  const plan = ensurePathwayPlan();
+  if (plan.cohortId === cohortId) return;
+  pathwayInvalidate();
+  plan.cohortId = cohortId;
+  plan.loaded = false;
+  writePlanSetting('ee-hub-plan-cohort', cohortId);
+  renderPathwayPlanner(document.getElementById('admin-content'));
+}
+
+export function pathwaySeed() {
+  const plan = ensurePathwayPlan();
+  const sourceNode = document.getElementById('plan-seed-source');
+  const anchorNode = document.getElementById('plan-seed-anchor');
+  const raw = sourceNode ? sourceNode.value : 'template';
+  const anchorDate = anchorNode ? anchorNode.value : '';
+  const source = raw.indexOf('cohort:') === 0 ? { kind: 'cohort', cohortId: raw.slice('cohort:'.length) } : { kind: 'template' };
+  const cohortId = plan.cohortId;
+  const button = document.querySelector('[data-plan-action="seed"]');
+  if (button) button.disabled = true;
+  callServer('seedCohortPathway', cohortId, source, anchorDate).then(function() {
+    if (!state.pathwayPlan || state.pathwayPlan.cohortId !== cohortId) return;
+    state.pathwayPlan.loaded = false;
+    state.pathwayPlan.seeded = true;
+    renderPathwayPlanner(document.getElementById('admin-content'));
+  }).catch(function(error) {
+    if (button) button.disabled = false;
+    if (isStale(error)) return;
+    showError(error);
+  });
 }
 
 export function pathwayOnInput(event) {
@@ -622,6 +767,10 @@ export function pathwayOnChange(event) {
   if (!input) return;
   if (input.id === 'plan-anchor-date') {
     pathwaySetAnchorDate(input.value);
+    return;
+  }
+  if (input.id === 'plan-cohort') {
+    pathwaySwitchCohort(input.value);
     return;
   }
   if (input.tagName !== 'SELECT' && input.type !== 'date') return;
@@ -746,10 +895,28 @@ export function pathwayShowAllPhases() {
 
 export function pathwaySetAnchorDate(iso) {
   if (!parsePlanDate(iso)) return;
-  state.pathwayPlan.anchorDate = String(iso).slice(0, 10);
-  writePlanSetting('ee-hub-plan-anchor', state.pathwayPlan.anchorDate);
-  state.pathwayPlan.pendingScroll = 'anchor';
+  const plan = state.pathwayPlan;
+  const previous = plan.anchorDate;
+  const next = String(iso).slice(0, 10);
+  plan.anchorDate = next;
+  plan.pendingScroll = 'anchor';
+  if (plan.mode === 'template') {
+    writePlanSetting('ee-hub-plan-anchor', next);
+    paintPathway();
+    return;
+  }
+  const scope = pathwayScopeNow();
   paintPathway();
+  callServer('saveCohortPlanAnchor', scope.cohortId, next).catch(function(error) {
+    if (!pathwayScopeCurrent(scope)) return;
+    if (state.pathwayPlan.anchorDate === next) {
+      state.pathwayPlan.anchorDate = previous;
+      state.pathwayPlan.pendingScroll = 'anchor';
+      paintPathway();
+    }
+    if (isStale(error)) return;
+    showError(error);
+  });
 }
 
 export function pathwaySetMonths(count) {
@@ -924,10 +1091,31 @@ export function pathwayReplaceMilestone(id, record) {
   if (index >= 0) state.pathwayPlan.milestones[index] = pathwayNormalizeMilestone(record);
 }
 
+export function pathwaySavePhase(scope, payload, isNew, id) {
+  if (scope.mode === 'template') return callServer('saveAdminRecord', 'phases', payload, isNew ? '' : id);
+  return callServer('saveCohortPhase', scope.cohortId, payload, isNew ? '' : id);
+}
+
+export function pathwaySaveMilestone(scope, payload, isNew, id) {
+  if (scope.mode === 'template') return callServer('saveAdminRecord', 'milestoneTemplates', payload, isNew ? '' : id);
+  return callServer('saveCohortMilestone', scope.cohortId, payload, isNew ? '' : id);
+}
+
+export function pathwayDeletePhaseCall(scope, id) {
+  if (scope.mode === 'template') return callServer('deleteAdminRecord', 'phases', id);
+  return callServer('deleteCohortPhase', scope.cohortId, id);
+}
+
+export function pathwayDeleteMilestoneCall(scope, id) {
+  if (scope.mode === 'template') return callServer('deleteAdminRecord', 'milestoneTemplates', id);
+  return callServer('deleteCohortMilestone', scope.cohortId, id);
+}
+
 export function pathwayCommitPhase(id) {
   return pathwayEnqueue('pathway:phase:' + id, function() {
+    const scope = pathwayScopeNow();
     const phase = pathwayFindPhase(id);
-    if (!phase || phase.deleting) return null;
+    if (!pathwayScopeCurrent(scope) || !phase || phase.deleting) return null;
     const payload = pathwayPhasePayload(phase);
     if (!payload.phaseTitle || !isFinite(payload.sequence)) {
       const baseline = state.pathwayPlan.baselines.phases[id];
@@ -940,7 +1128,8 @@ export function pathwayCommitPhase(id) {
     }
     const isNew = !state.pathwayPlan.persistedPhases[id];
     pathwayMarkSaving('phase', id, 'pending');
-    return callServer('saveAdminRecord', 'phases', payload, isNew ? '' : id).then(function() {
+    return pathwaySavePhase(scope, payload, isNew, id).then(function() {
+      if (!pathwayScopeCurrent(scope)) return;
       state.pathwayPlan.persistedPhases[id] = true;
       state.pathwayPlan.baselines.phases[id] = clonePathway(payload);
       pathwayMarkSaving('phase', id, 'confirmed');
@@ -949,7 +1138,7 @@ export function pathwayCommitPhase(id) {
         window.setTimeout(function() { pathwayCommitPhase(id); }, 0);
       }
     }).catch(function(error) {
-      if (isStale(error)) return;
+      if (!pathwayScopeCurrent(scope) || isStale(error)) return;
       const current = pathwayFindPhase(id);
       if (current && pathwaySamePayload(pathwayPhasePayload(current), payload)) {
         if (isNew) pathwayRemovePhase(id);
@@ -965,8 +1154,9 @@ export function pathwayCommitPhase(id) {
 
 export function pathwayCommitMilestone(id) {
   return pathwayEnqueue('pathway:milestone:' + id, function() {
+    const scope = pathwayScopeNow();
     const milestone = pathwayFindMilestone(id);
-    if (!milestone || milestone.deleting) return null;
+    if (!pathwayScopeCurrent(scope) || !milestone || milestone.deleting) return null;
     const payload = pathwayMilestonePayload(milestone);
     if (!payload.milestoneTitle) return null;
     const phase = pathwayFindPhase(payload.phase);
@@ -980,7 +1170,8 @@ export function pathwayCommitMilestone(id) {
     }
     const isNew = !state.pathwayPlan.persistedMilestones[id];
     pathwayMarkSaving('milestone', id, 'pending');
-    return callServer('saveAdminRecord', 'milestoneTemplates', payload, isNew ? '' : id).then(function() {
+    return pathwaySaveMilestone(scope, payload, isNew, id).then(function() {
+      if (!pathwayScopeCurrent(scope)) return;
       state.pathwayPlan.persistedMilestones[id] = true;
       state.pathwayPlan.baselines.milestones[id] = clonePathway(payload);
       pathwayMarkSaving('milestone', id, 'confirmed');
@@ -989,7 +1180,7 @@ export function pathwayCommitMilestone(id) {
         window.setTimeout(function() { pathwayCommitMilestone(id); }, 0);
       }
     }).catch(function(error) {
-      if (isStale(error)) return;
+      if (!pathwayScopeCurrent(scope) || isStale(error)) return;
       const current = pathwayFindMilestone(id);
       if (current && pathwaySamePayload(pathwayMilestonePayload(current), payload)) {
         if (isNew) pathwayRemoveMilestone(id);
@@ -1012,6 +1203,8 @@ export function pathwayDeletePhase(id) {
   state.pathwayPlan.pendingScroll = 'preserve';
   paintPathway();
   pathwayEnqueue('pathway:phase:' + id, function() {
+    const scope = pathwayScopeNow();
+    if (!pathwayScopeCurrent(scope)) return null;
     if (!state.pathwayPlan.persistedPhases[id]) {
       pathwayRemovePhase(id);
       state.pathwayPlan.pendingScroll = 'preserve';
@@ -1019,9 +1212,11 @@ export function pathwayDeletePhase(id) {
       return null;
     }
     pathwayMarkSaving('phase', id, 'pending');
-    return callServer('deleteAdminRecord', 'phases', id).then(function() {
+    return pathwayDeletePhaseCall(scope, id).then(function() {
+      if (!pathwayScopeCurrent(scope)) return;
       pathwayMarkSaving('phase', id, 'confirmed');
       window.setTimeout(function() {
+        if (!pathwayScopeCurrent(scope)) return;
         pathwayRemovePhase(id);
         delete state.pathwayPlan.persistedPhases[id];
         delete state.pathwayPlan.baselines.phases[id];
@@ -1030,7 +1225,7 @@ export function pathwayDeletePhase(id) {
         paintPathway();
       }, 650);
     }).catch(function(error) {
-      if (isStale(error)) return;
+      if (!pathwayScopeCurrent(scope) || isStale(error)) return;
       const current = pathwayFindPhase(id);
       if (current) current.deleting = false;
       state.pathwayPlan.pendingScroll = 'preserve';
@@ -1050,6 +1245,8 @@ export function pathwayDeleteMilestone(id) {
   state.pathwayPlan.pendingScroll = 'preserve';
   paintPathway();
   pathwayEnqueue('pathway:milestone:' + id, function() {
+    const scope = pathwayScopeNow();
+    if (!pathwayScopeCurrent(scope)) return null;
     if (!state.pathwayPlan.persistedMilestones[id]) {
       pathwayRemoveMilestone(id);
       state.pathwayPlan.pendingScroll = 'preserve';
@@ -1057,9 +1254,11 @@ export function pathwayDeleteMilestone(id) {
       return null;
     }
     pathwayMarkSaving('milestone', id, 'pending');
-    return callServer('deleteAdminRecord', 'milestoneTemplates', id).then(function() {
+    return pathwayDeleteMilestoneCall(scope, id).then(function() {
+      if (!pathwayScopeCurrent(scope)) return;
       pathwayMarkSaving('milestone', id, 'confirmed');
       window.setTimeout(function() {
+        if (!pathwayScopeCurrent(scope)) return;
         pathwayRemoveMilestone(id);
         delete state.pathwayPlan.persistedMilestones[id];
         delete state.pathwayPlan.baselines.milestones[id];
@@ -1067,7 +1266,7 @@ export function pathwayDeleteMilestone(id) {
         paintPathway();
       }, 650);
     }).catch(function(error) {
-      if (isStale(error)) return;
+      if (!pathwayScopeCurrent(scope) || isStale(error)) return;
       const current = pathwayFindMilestone(id);
       if (current) current.deleting = false;
       state.pathwayPlan.pendingScroll = 'preserve';

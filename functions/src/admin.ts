@@ -152,6 +152,8 @@ async function saveCohort(app: App, _actor: string, record: Doc, originalKey: st
       FolderPrefix: existing ? driveNamePart(existing.FolderPrefix) : '',
       FolderSuffix: existing ? driveNamePart(existing.FolderSuffix) : '',
       EEDocTemplateId: existing ? text(existing.EEDocTemplateId) : '',
+      PlanAnchor: existing ? text(existing.PlanAnchor) : '',
+      PathwaySeeded: existing ? toBoolean(existing.PathwaySeeded) : false,
     });
     return { key: cohortId };
   });
