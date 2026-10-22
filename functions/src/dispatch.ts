@@ -23,6 +23,7 @@ import {
   importCohortMembers,
   saveAdminRecord,
   saveCohortMember,
+  setMilestoneAnchor,
 } from './admin';
 import { getAppBootstrap } from './bootstrap';
 import { getMyEssayAnalytics, getStudentEssayAnalytics } from './docAnalytics';
@@ -98,6 +99,7 @@ export async function dispatch(app: App, method: string, args: unknown[]): Promi
     case 'getCohortMembersForAdmin': return getCohortMembersForAdmin(app, args[0]);
     case 'getPathwayPlan': return getPathwayPlan(app);
     case 'saveAdminRecord': return saveAdminRecord(app, text(args[0]), (args[1] || {}) as any, args[2]);
+    case 'setMilestoneAnchor': return setMilestoneAnchor(app, args[0], args[1]);
     case 'deleteAdminRecord': return deleteAdminRecord(app, text(args[0]), args[1]);
     case 'saveCohortMember': return saveCohortMember(app, args[0], (args[1] || {}) as any, args[2]);
     case 'deleteCohortMember': return deleteCohortMember(app, args[0], args[1]);

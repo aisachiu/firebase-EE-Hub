@@ -7,7 +7,7 @@ import { advanceScene } from '../shared/scene.js';
 import { state } from '../shared/state.js';
 import { paintTabDot, renderShell } from '../shell.js';
 import { bindUnreadNotices, paintStudentPage, renderUnreadNotices } from '../student/home.js';
-import { dueSortKey, journeyDayLabel, milestoneMark, phaseRangeLabel } from '../student/journey.js';
+import { dueSortKey, journeyDayLabel, milestoneMark, phaseCardAttrs, phaseRangeLabel } from '../student/journey.js';
 import { openMassMilestoneEditor } from '../student/milestones.js';
 
 export function renderStaffHome() {
@@ -153,6 +153,7 @@ export function staffJourneyPhases(home, student) {
       id: phase.phaseId,
       title: phase.phaseTitle || phase.phaseId,
       index: index,
+      colour: phase.phaseColor || '',
       milestones: milestones,
       doneCount: doneCount,
       here: milestones.some(function(milestone) { return milestone.here; }),
@@ -186,17 +187,19 @@ export function renderListJourney(home, student) {
   }
   const cards = phases.map(function(phase) {
     const range = phaseRangeLabel(phase.milestones.map(function(milestone) { return milestone.due; }));
-    const tone = phase.index % 5;
+    const card = phaseCardAttrs(phase);
     const phaseTip = phase.title + ', ' + phase.doneCount + ' of ' + phase.milestones.length + ' done' + (phase.here ? ', current phase' : (phase.complete ? ', complete' : ''));
     if (!phase.milestones.length) {
-      return `<li class="phase-card tone-${tone}" style="--span:1"><span class="phase-title" data-tip="${escapeHtml(phaseTip)}">${escapeHtml((phase.index + 1) + ' · ' + phase.title)}</span><p class="phase-range"></p><p class="muted list-phase-empty">No milestones</p></li>`;
+      const style = (card.style ? card.style + ';' : '') + '--span:1';
+      return `<li class="phase-card ${card.className}" style="${style}"><span class="phase-title" data-tip="${escapeHtml(phaseTip)}">${escapeHtml((phase.index + 1) + ' · ' + phase.title)}</span><p class="phase-range"></p><p class="muted list-phase-empty">No milestones</p></li>`;
     }
     const marks = phase.milestones.map(function(milestone) {
       const when = milestone.due ? shortDate(milestone.due) : '';
       const tip = milestone.title + (when ? ' · ' + when : '') + ' · ' + listMilestoneStatus(milestone);
       return `<li><span class="list-mark" data-tip="${escapeHtml(tip)}"><span class="ms-date">${escapeHtml(journeyDayLabel(milestone.due))}</span><span class="ms-mark-wrap">${milestoneMark(milestone)}</span><span class="ms-label">${escapeHtml(milestone.title)}</span></span></li>`;
     }).join('');
-    return `<li class="phase-card tone-${tone}${phase.here ? ' here' : ''}${phase.complete ? ' done' : ''}" style="--span:${Math.max(phase.milestones.length, 1)}"><span class="phase-title" data-tip="${escapeHtml(phaseTip)}">${escapeHtml((phase.index + 1) + ' · ' + phase.title)}</span><p class="phase-range">${escapeHtml(range)}</p><div class="phase-body"><div class="phase-line" aria-hidden="true"></div><ol class="ms-row">${marks}</ol></div></li>`;
+    const filledStyle = (card.style ? card.style + ';' : '') + '--span:' + Math.max(phase.milestones.length, 1);
+    return `<li class="phase-card ${card.className}${phase.here ? ' here' : ''}${phase.complete ? ' done' : ''}" style="${filledStyle}"><span class="phase-title" data-tip="${escapeHtml(phaseTip)}">${escapeHtml((phase.index + 1) + ' · ' + phase.title)}</span><p class="phase-range">${escapeHtml(range)}</p><div class="phase-body"><div class="phase-line" aria-hidden="true"></div><ol class="ms-row">${marks}</ol></div></li>`;
   }).join('');
   return `<div class="list-journey is-expanded" role="img" aria-label="${escapeHtml(summary)}"><ol class="list-phases">${cards}</ol></div>`;
 }

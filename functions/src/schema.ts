@@ -53,6 +53,7 @@ export const APP_TABLES: Record<string, TableDef> = {
       { name: 'milestoneDescription', type: 'textarea', table: false },
       { name: 'phase', type: 'select', required: true, optionsFrom: 'phases', optionValue: 'phaseId', optionLabel: 'phaseTitle' },
       { name: 'mOwner', type: 'select', required: true, options: ['student', 'supervisor', 'lead', 'coordinator'], errorMessage: 'Owner must be student, supervisor, lead, or coordinator.' },
+      { name: 'isAnchor', type: 'checkbox', label: 'Anchor' },
     ],
   },
   phases: {
@@ -64,6 +65,7 @@ export const APP_TABLES: Record<string, TableDef> = {
       { name: 'sequence', type: 'number', required: true },
       { name: 'prerequisitePhaseId', type: 'select', optionsFrom: 'phases', optionValue: 'phaseId', optionLabel: 'phaseTitle', allowBlank: true },
       { name: 'active', type: 'checkbox', defaultValue: true },
+      { name: 'phaseColor', type: 'text', label: 'Colour', validator: 'phaseColor' },
     ],
   },
   studentUsers: {
@@ -378,6 +380,9 @@ export function validateRecordFields(entity: string, values: Record<string, any>
     if (field.validator === 'phaseId' && !/^[a-z][a-z0-9_-]*$/i.test(text(value))) {
       throw new HubError(`${field.name} must start with a letter and contain only letters, numbers, hyphens, or underscores.`);
     }
+    if (field.validator === 'phaseColor' && !normalizePhaseColor(value)) {
+      throw new HubError(`${field.name} must be a hex colour such as #004C80.`);
+    }
   });
 }
 
@@ -413,6 +418,11 @@ export function adminSchema(entity: string, phases: Record<string, any>[], subje
     return result;
   });
   return { entity, sheet: config.sheet || config.sheetPattern || '', fields };
+}
+
+export function normalizePhaseColor(value: unknown): string {
+  const match = /^#([0-9a-fA-F]{6})$/.exec(text(value).trim());
+  return match ? `#${match[1].toLowerCase()}` : '';
 }
 
 export function staffHasAdminAccess(staff: Record<string, any>): boolean {

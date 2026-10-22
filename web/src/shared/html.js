@@ -49,6 +49,11 @@ export function toBoolean(value) {
   return value === true || value === 1 || ['true', '1', 'yes'].indexOf(String(value || '').toLowerCase()) >= 0;
 }
 
+export function hexColour(value) {
+  const match = /^#([0-9a-fA-F]{6})$/.exec(String(value || '').trim());
+  return match ? '#' + match[1].toLowerCase() : '';
+}
+
 export function safeUrl(value) {
   try {
     const parsed = new URL(String(value || ''));

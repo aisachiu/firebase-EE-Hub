@@ -451,6 +451,15 @@ main.plan-wide { max-width: none; padding-inline: clamp(12px, 2vw, 28px); }
 .plan-filter { display: inline-flex; align-items: center; gap: 6px; flex: none; min-height: 28px; padding: 2px 8px; border: 1px solid var(--line); border-radius: 999px; background: white; color: var(--ink); font-weight: 700; }
 .plan-filter[aria-pressed="false"] { color: var(--muted); background: #f3f5f6; }
 .plan-swatch { width: 10px; height: 10px; border-radius: 50%; background: var(--phase, var(--ink)); flex: none; }
+.plan-phase-colour { flex: 1 1 100%; }
+.plan-colours { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.plan-colour { width: 22px; height: 22px; padding: 0; border: 2px solid white; border-radius: 50%; background: var(--swatch, var(--ink)); box-shadow: 0 0 0 1px var(--line); cursor: pointer; }
+.plan-colour[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--ink); }
+.plan-colour:disabled { cursor: not-allowed; opacity: .5; }
+.plan-colour-custom input[type="color"] { width: 32px; height: 24px; padding: 1px; border: 1px solid var(--line); background: white; }
+.plan-anchor-choice { display: grid; gap: 8px; margin: 10px 0; }
+.plan-anchor-choice .check-option { align-items: flex-start; }
+.sr { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 .plan-filter[aria-pressed="false"] .plan-swatch { background: transparent; box-shadow: inset 0 0 0 2px var(--phase, var(--muted)); }
 .plan-phase textarea, .plan-edit textarea { min-height: 40px; }
 .plan-count { margin: 2px 0 0; }

@@ -1,6 +1,6 @@
 import { callServer, markSync, runMutation } from '../shared/api.js';
 import { showError, showSuccess } from '../shared/feedback.js';
-import { escapeHtml, shortDate, textCompare } from '../shared/html.js';
+import { escapeHtml, hexColour, shortDate, textCompare } from '../shared/html.js';
 import { state } from '../shared/state.js';
 import {
   milestoneDescriptionText,
@@ -41,6 +41,7 @@ export function journeyOverview(home) {
       id: phase.phaseId,
       title: phase.phaseTitle || phase.phaseId,
       index: index,
+      colour: hexColour(phase.phaseColor),
       milestones: milestones,
       doneCount: doneCount,
       here: milestones.some(function(milestone) { return milestone.here; }),
@@ -69,6 +70,16 @@ export function journeyDayLabel(value) {
   return full ? full.replace(/\s+\d{4}$/, '') : '';
 }
 
+export function phaseCardAttrs(phase) {
+  const tone = 'tone-' + ((Number(phase.index) || 0) % 5);
+  const colour = hexColour(phase.colour || phase.phaseColor || '');
+  if (!colour) return { className: tone, style: '' };
+  return {
+    className: 'has-colour',
+    style: '--phase:' + colour + ';--phase-bg:color-mix(in srgb, ' + colour + ' 16%, white);--phase-fg:' + colour
+  };
+}
+
 export function milestoneMark(milestone) {
   const stateClass = milestone.done ? 'done' : (milestone.here ? 'here' : '');
   const star = milestone.type === 'form' || milestone.type === 'upload';
@@ -87,8 +98,9 @@ export function renderJourneyHero(phases) {
       const label = milestone.title + (when ? ', ' + when : '') + ', ' + status + '. Open this phase in the journey panel.';
       return `<li><button type="button" class="ms-hit" data-open-phase="${escapeHtml(phase.id)}" aria-label="${escapeHtml(label)}"><span class="ms-date">${escapeHtml(journeyDayLabel(milestone.due))}</span><span class="ms-mark-wrap">${milestoneMark(milestone)}</span><span class="ms-label">${escapeHtml(milestone.title)}</span></button></li>`;
     }).join('') : '<li class="muted">No milestones</li>';
-    const tone = phase.index % 5;
-    return `<section class="phase-card tone-${tone}${phase.here ? ' here' : ''}${phase.complete ? ' done' : ''}" style="--span:${Math.max(phase.milestones.length, 1)}"><button type="button" class="phase-title" data-open-phase="${escapeHtml(phase.id)}">${escapeHtml((phase.index + 1) + ' · ' + phase.title)}</button><p class="phase-range">${escapeHtml(range)}</p><div class="phase-body"><div class="phase-line" aria-hidden="true"></div><ol class="ms-row">${marks}</ol></div></section>`;
+    const card = phaseCardAttrs(phase);
+    const style = (card.style ? card.style + ';' : '') + '--span:' + Math.max(phase.milestones.length, 1);
+    return `<section class="phase-card ${card.className}${phase.here ? ' here' : ''}${phase.complete ? ' done' : ''}" style="${style}"><button type="button" class="phase-title" data-open-phase="${escapeHtml(phase.id)}">${escapeHtml((phase.index + 1) + ' · ' + phase.title)}</button><p class="phase-range">${escapeHtml(range)}</p><div class="phase-body"><div class="phase-line" aria-hidden="true"></div><ol class="ms-row">${marks}</ol></div></section>`;
   }).join('') : '<p class="muted">Official milestones appear after a cohort is assigned.</p>';
   const compact = phases.length ? `<ol class="compact-path">${phases.map(function(phase) {
     const dots = phase.milestones.map(function(milestone) {
