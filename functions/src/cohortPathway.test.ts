@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { assignMilestonesToStudents } from './actions';
+import { setMilestoneAnchor } from './admin';
 import {
   deleteCohortMilestone,
   getPathwayPlan,
   saveCohortMilestone,
+  saveCohortPhase,
   saveCohortPlanAnchor,
   seedCohortPathway,
 } from './cohortPathway';
@@ -15,7 +17,7 @@ import { readPhases, readTemplates } from './roster';
 import { COLLECTIONS } from './schema';
 import { App } from './session';
 import { Store } from './store';
-import { Doc } from './util';
+import { addDays, Doc, parseActionDate, serializeDateOnly } from './util';
 
 const coordinator: HubUser = {
   email: 'coordinator@vsa.example.edu',
@@ -219,6 +221,43 @@ test('notification planning uses the cohort milestone owner', () => {
   assert.equal(plan.sends.length, 1);
   assert.equal(plan.sends[0].milestoneTitle, 'Cohort question');
   assert.deepEqual(plan.sends[0].recipients, ['supervisor@vsa.example.edu']);
+});
+
+test('a cohort anchor change keeps that cohort’s dates and leaves the template', async () => {
+  const store = new MemoryStore();
+  await seedTemplate(store);
+  const app = appFor(store, coordinator);
+  await seedCohortPathway(app, '2027', { kind: 'template' }, '2027-12-01');
+  await saveCohortPhase(app, '2027', { ...(await store.getCohortPhase('2027', 'topic')), phaseColor: '#004C80' }, 'topic');
+  assert.equal((await store.getCohortPhase('2027', 'topic'))?.phaseColor, '#004c80');
+  assert.equal((await readPhases(app, '2027')).find((phase) => phase.phaseId === 'topic')?.phaseColor, '#004c80');
+  assert.equal((await store.get(COLLECTIONS.phases, 'topic'))?.phaseColor, undefined);
+  const anchor = await store.getCohortMilestone('2027', 'anchor');
+  await saveCohortMilestone(app, '2027', { ...anchor, isAnchor: true }, 'anchor');
+  const question = await store.getCohortMilestone('2027', 'm1');
+  await saveCohortMilestone(app, '2027', { ...question, isAnchor: true }, 'm1');
+  assert.equal((await store.getCohortMilestone('2027', 'anchor'))?.isAnchor, false);
+  assert.equal((await store.getCohortMilestone('2027', 'm1'))?.isAnchor, true);
+  const shifted = await setMilestoneAnchor(app, 'm1', 'adjust', { mode: 'cohort', cohortId: '2027' });
+  const anchorDate = parseActionDate('2027-12-01');
+  assert.ok(anchorDate);
+  const expectedAnchor = serializeDateOnly(addDays(anchorDate, -shifted.deltaDays));
+  assert.equal(shifted.deltaDays, 80);
+  assert.equal((await store.getCohortMilestone('2027', 'm1'))?.offsetDays, 0);
+  assert.equal((await store.getCohortMilestone('2027', 'm1'))?.isAnchor, true);
+  assert.equal((await store.getCohortMilestone('2027', 'anchor'))?.offsetDays, -80);
+  assert.equal((await store.getCohortMilestone('2027', 'anchor'))?.isAnchor, false);
+  assert.equal((await store.get(COLLECTIONS.cohorts, '2027'))?.PlanAnchor, expectedAnchor);
+  assert.equal((await store.get(COLLECTIONS.milestoneTemplates, 'm1'))?.offsetDays, 80);
+  assert.equal((await store.get(COLLECTIONS.milestoneTemplates, 'm1'))?.isAnchor, undefined);
+  const moved = await setMilestoneAnchor(app, 'anchor', 'move', { mode: 'cohort', cohortId: '2027' });
+  assert.equal(moved.deltaDays, 0);
+  assert.equal((await store.getCohortMilestone('2027', 'anchor'))?.offsetDays, 0);
+  assert.equal((await store.getCohortMilestone('2027', 'anchor'))?.isAnchor, true);
+  assert.equal((await store.getCohortMilestone('2027', 'm1'))?.isAnchor, false);
+  assert.equal((await store.getCohortMilestone('2027', 'm1'))?.offsetDays, 0);
+  assert.equal((await store.get(COLLECTIONS.cohorts, '2027'))?.PlanAnchor, expectedAnchor);
+  assert.equal((await store.get(COLLECTIONS.milestoneTemplates, 'anchor'))?.offsetDays, 0);
 });
 
 test('the template plan stays separate from cohort calendars', async () => {

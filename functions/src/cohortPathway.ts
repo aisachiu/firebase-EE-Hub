@@ -1,8 +1,9 @@
+import { AnchorMode, reanchorMilestones } from './pathwayPlan';
 import { validatePhasePrerequisites } from './phaseRules';
 import { milestoneDocsFor, phaseDocsFor, requireCohort } from './roster';
-import { COLLECTIONS, validateRecordFields } from './schema';
+import { COLLECTIONS, normalizePhaseColor, validateRecordFields } from './schema';
 import { App, audited, requireAdmin } from './session';
-import { Doc, HubError, normalizeEmail, parseActionDate, serializeDateOnly, text, toBoolean } from './util';
+import { addDays, Doc, HubError, normalizeEmail, parseActionDate, serializeDateOnly, text, toBoolean } from './util';
 
 const PLAN_ANCHOR = 'PlanAnchor';
 const PLAN_SEEDED = 'PathwaySeeded';
@@ -101,6 +102,7 @@ function normalizePhase(values: Doc, keyName: string, existing: Doc[]) {
   phase.prerequisitePhaseId = text(phase.prerequisitePhaseId).toLowerCase();
   if (phase.sequence !== '' && phase.sequence !== undefined && phase.sequence !== null) phase.sequence = Number(phase.sequence);
   phase.active = phase.active === undefined || phase.active === '' ? true : toBoolean(phase.active);
+  if (text(phase.phaseColor)) phase.phaseColor = normalizePhaseColor(phase.phaseColor);
   validateRecordFields('phases', phase, original);
   const links = existing.map((item) => ({ phaseId: text(item.phaseId).toLowerCase(), prerequisitePhaseId: text(item.prerequisitePhaseId).toLowerCase() }));
   validatePhasePrerequisites(links, phase.phaseId, phase.prerequisitePhaseId, original);
@@ -113,6 +115,7 @@ function normalizeMilestone(values: Doc, keyName: string, phases: Doc[]) {
   milestone.mOwner = text(milestone.mOwner).toLowerCase();
   milestone.phase = text(milestone.phase).toLowerCase();
   milestone.offsetDays = Number(milestone.offsetDays) || 0;
+  if (Object.prototype.hasOwnProperty.call(milestone, 'isAnchor')) milestone.isAnchor = toBoolean(milestone.isAnchor);
   validateRecordFields('milestoneTemplates', milestone, keyName);
   const phase = phases.find((item) => text(item.phaseId).toLowerCase() === milestone.phase);
   if (!phase || !toBoolean(phase.active)) throw new HubError('Choose an active phase before saving this milestone.');
@@ -177,7 +180,40 @@ export async function saveCohortMilestone(app: App, cohortId: unknown, record: D
       values.position = all.reduce((max, row) => Math.max(max, Number(row.position) || 0), 0) + 1;
     }
     await app.store.setCohortMilestone(id, values.milestoneId, current ? { ...current, ...values } : values);
+    if (toBoolean(values.isAnchor)) await releaseOtherCohortAnchors(app, id, values.milestoneId);
     return { key: values.milestoneId };
+  });
+}
+
+async function releaseOtherCohortAnchors(app: App, cohortId: string, anchorId: string) {
+  const records = await app.store.listCohortMilestones(cohortId);
+  for (const row of records) {
+    if (text(row.milestoneId) === anchorId || !toBoolean(row.isAnchor)) continue;
+    row.isAnchor = false;
+    await app.store.setCohortMilestone(cohortId, text(row.milestoneId), row);
+  }
+}
+
+export async function setCohortMilestoneAnchor(app: App, cohortId: unknown, milestoneId: unknown, mode: unknown) {
+  const user = await requireAdmin(app, 'SET_MILESTONE_ANCHOR');
+  const id = await requireSeededCohort(app, cohortId);
+  const milestoneKey = text(milestoneId);
+  const choice = text(mode);
+  if (choice !== 'adjust' && choice !== 'move' && choice !== 'release') {
+    throw new HubError('Choose whether to keep the dates or use the existing anchor date.');
+  }
+  return audited(app, user, 'SET_MILESTONE_ANCHOR', { cohortId: id, milestoneId: milestoneKey, mode: choice }, async () => {
+    const records = await app.store.listCohortMilestones(id);
+    const result = reanchorMilestones(records, milestoneKey, choice as AnchorMode);
+    for (const row of result.milestones) {
+      await app.store.setCohortMilestone(id, text(row.milestoneId), row);
+    }
+    if (choice === 'adjust' && result.deltaDays) {
+      const cohort = await app.store.get(COLLECTIONS.cohorts, id);
+      const current = parseActionDate(cohort && cohort.PlanAnchor);
+      if (current) await writePlanFlag(app, id, serializeDateOnly(addDays(current, -result.deltaDays)));
+    }
+    return { milestones: result.milestones, deltaDays: result.deltaDays };
   });
 }
 

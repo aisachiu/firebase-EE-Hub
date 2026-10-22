@@ -1,7 +1,9 @@
 import { activeSubjectNamesFrom, canonicalSubjectAssignment, parseSubjectCell } from './allocationPure';
 import { validatePhasePrerequisites } from './phaseRules';
+import { setCohortMilestoneAnchor } from './cohortPathway';
+import { AnchorMode, reanchorMilestones } from './pathwayPlan';
 import { listCohorts, placementFromMember, requireCohort } from './roster';
-import { adminSchema, cohortSheetName, COLLECTIONS, docIdFor, fieldConfig, staffHasAdminAccess, tableConfig, tableHeaders, tableKey, validateRecordFields } from './schema';
+import { adminSchema, cohortSheetName, COLLECTIONS, docIdFor, fieldConfig, normalizePhaseColor, staffHasAdminAccess, tableConfig, tableHeaders, tableKey, validateRecordFields } from './schema';
 import { App, audited, requireAdmin } from './session';
 import { validateTicketCategory } from './messaging';
 import { assertSafeResourceHtml } from './formsPure';
@@ -85,11 +87,13 @@ export async function saveAdminRecord(app: App, entity: string, record: Doc, ori
     values.mOwner = text(values.mOwner).toLowerCase();
     const milestonePhase = await app.store.get(COLLECTIONS.phases, text(values.phase));
     if (!milestonePhase || !toBoolean(milestonePhase.active)) throw new HubError('Choose an active phase before saving this milestone.');
+    if (Object.prototype.hasOwnProperty.call(values, 'isAnchor')) values.isAnchor = toBoolean(values.isAnchor);
   }
   if (entity === 'phases') {
     values.phaseId = text(values.phaseId).toLowerCase();
     values.sequence = Number(values.sequence);
     values.active = values.active === undefined || values.active === '' ? true : toBoolean(values.active);
+    if (text(values.phaseColor)) values.phaseColor = normalizePhaseColor(values.phaseColor);
     const existing = await phases(app);
     validatePhasePrerequisites(existing.map((phase) => ({ phaseId: text(phase.phaseId), prerequisitePhaseId: text(phase.prerequisitePhaseId) })), values.phaseId, text(values.prerequisitePhaseId), keyName);
   }
@@ -130,7 +134,36 @@ export async function saveAdminRecord(app: App, entity: string, record: Doc, ori
     }
     const stored = existing ? { ...existing, ...values } : values;
     await app.store.set(COLLECTIONS[entity], id, stored);
+    if (entity === 'milestoneTemplates' && toBoolean(stored.isAnchor)) await releaseOtherAnchors(app, id);
     return { key: id };
+  });
+}
+
+async function releaseOtherAnchors(app: App, anchorId: string) {
+  const records = await app.store.list(COLLECTIONS.milestoneTemplates);
+  for (const row of records) {
+    if (text(row.milestoneId) === anchorId || !toBoolean(row.isAnchor)) continue;
+    row.isAnchor = false;
+    await app.store.set(COLLECTIONS.milestoneTemplates, text(row.milestoneId), row);
+  }
+}
+
+export async function setMilestoneAnchor(app: App, milestoneId: unknown, mode: unknown, scope?: unknown) {
+  const requested = scope && typeof scope === 'object' ? scope as Doc : {};
+  if (text(requested.mode) === 'cohort') return setCohortMilestoneAnchor(app, requested.cohortId, milestoneId, mode);
+  const user = await requireAdmin(app, 'SET_MILESTONE_ANCHOR');
+  const id = text(milestoneId);
+  const choice = text(mode);
+  if (choice !== 'adjust' && choice !== 'move' && choice !== 'release') {
+    throw new HubError('Choose whether to keep the dates or use the existing anchor date.');
+  }
+  return audited(app, user, 'SET_MILESTONE_ANCHOR', { milestoneId: id, mode: choice }, async () => {
+    const records = await app.store.list(COLLECTIONS.milestoneTemplates);
+    const result = reanchorMilestones(records, id, choice as AnchorMode);
+    for (const row of result.milestones) {
+      await app.store.set(COLLECTIONS.milestoneTemplates, text(row.milestoneId), row);
+    }
+    return { milestones: result.milestones, deltaDays: result.deltaDays };
   });
 }
 

@@ -23,6 +23,7 @@ import {
   importCohortMembers,
   saveAdminRecord,
   saveCohortMember,
+  setMilestoneAnchor,
 } from './admin';
 import { getAppBootstrap } from './bootstrap';
 import { getMyEssayAnalytics, getStudentEssayAnalytics } from './docAnalytics';
@@ -89,6 +90,7 @@ import {
   updateCohortToken,
 } from './allocation';
 import { applySheetIngest, exportSheetCollections, listSheetCollections, previewSheetIngest } from './sheetSync';
+import { addSupervisorTodo, deleteSupervisorTodo, getSupervisorTodoDesk, setSupervisorTodoStatus } from './supervisorTodos';
 import { HubError, text } from './util';
 
 export async function dispatch(app: App, method: string, args: unknown[]): Promise<unknown> {
@@ -113,6 +115,7 @@ export async function dispatch(app: App, method: string, args: unknown[]): Promi
     case 'saveCohortPlanAnchor': return saveCohortPlanAnchor(app, args[0], args[1]);
     case 'seedCohortPathway': return seedCohortPathway(app, args[0], args[1], args[2]);
     case 'saveAdminRecord': return saveAdminRecord(app, text(args[0]), (args[1] || {}) as any, args[2]);
+    case 'setMilestoneAnchor': return setMilestoneAnchor(app, args[0], args[1], args[2]);
     case 'deleteAdminRecord': return deleteAdminRecord(app, text(args[0]), args[1]);
     case 'saveCohortMember': return saveCohortMember(app, args[0], (args[1] || {}) as any, args[2]);
     case 'deleteCohortMember': return deleteCohortMember(app, args[0], args[1]);
@@ -190,6 +193,10 @@ export async function dispatch(app: App, method: string, args: unknown[]): Promi
     case 'addCohortTokens': return addCohortTokens(app, args[0], args[1], args[2], args[3]);
     case 'updateCohortToken': return updateCohortToken(app, args[0], args[1], args[2]);
     case 'deleteCohortToken': return deleteCohortToken(app, args[0], args[1]);
+    case 'getSupervisorTodoDesk': return getSupervisorTodoDesk(app, args[0]);
+    case 'addSupervisorTodo': return addSupervisorTodo(app, args[0], args[1], args[2]);
+    case 'setSupervisorTodoStatus': return setSupervisorTodoStatus(app, args[0], args[1]);
+    case 'deleteSupervisorTodo': return deleteSupervisorTodo(app, args[0]);
     default: throw new HubError('Unknown EE Hub request.');
   }
 }

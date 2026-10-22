@@ -6,7 +6,8 @@ import { presentDriveAccount, requireDriveActor } from './driveAccount';
 import { getGoogleAuth } from './googleAuth';
 import { assertSafeResourceHtml } from './formsPure';
 import { validatePhasePrerequisites } from './phaseRules';
-import { COLLECTIONS, staffHasAdminAccess, tableFields, validateRecordFields } from './schema';
+import { assertSingleMilestoneAnchor } from './pathwayPlan';
+import { COLLECTIONS, normalizePhaseColor, staffHasAdminAccess, tableFields, validateRecordFields } from './schema';
 import { App, audited, requireAdmin } from './session';
 import { formatSubjectCell, preserveEeActive } from './allocationPure';
 import { planSheetImport, SheetGrid, SheetImportPlan, spreadsheetIdFrom } from './sheetImport';
@@ -81,6 +82,7 @@ const CATALOG: CatalogItem[] = [
   { id: 'tickets', label: 'Messages', sheet: 'TICKETS', group: 'operational' },
   { id: 'ticketMessages', label: 'Message replies', sheet: 'TICKET_MESSAGES', group: 'operational' },
   { id: 'todoTemplates', label: 'Template tasks', sheet: 'TODO_TEMPLATES', group: 'operational' },
+  { id: 'supervisorTodos', label: 'Supervisor to-dos', sheet: 'SUPERVISOR_TODOS', group: 'operational' },
   { id: 'auditLogs', label: 'Audit log', sheet: 'AUDIT_LOGS', group: 'operational', exportOnly: true },
 ];
 
@@ -346,6 +348,7 @@ async function validateIngest(app: App, plan: SheetImportPlan, entities: string[
       docs.forEach((doc) => {
         if (!active.has(text(doc.data.phase))) throw new HubError(`Milestones row ${doc.id} needs an active phase.`);
       });
+      assertSingleMilestoneAnchor(docs.map((doc) => doc.data));
     }
     if (id === 'staffUsers') {
       docs.forEach((doc) => { doc.data.isStaff = true; });
@@ -386,6 +389,10 @@ function normalizeIncoming(entity: string, data: Doc): Doc {
     copy.phaseId = text(copy.phaseId).toLowerCase();
     copy.sequence = copy.sequence === '' || copy.sequence === undefined ? copy.sequence : Number(copy.sequence);
     copy.active = copy.active === '' || copy.active === undefined ? true : toBoolean(copy.active);
+    if (text(copy.phaseColor)) {
+      const colour = normalizePhaseColor(copy.phaseColor);
+      if (colour) copy.phaseColor = colour;
+    }
   }
   if (entity === 'staffUsers') {
     ['isSupervisor', 'isLead', 'isCoordinator', 'isAdmin'].forEach((name) => {
