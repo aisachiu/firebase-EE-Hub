@@ -6,6 +6,7 @@ import { COLLECTIONS } from './schema';
 import { App, deny, requireStaff, requireUser } from './session';
 import { staffUnreadNotices, studentTicketNotice } from './messaging';
 import { publishedFormIds } from './forms';
+import { listAddedSupervisorTodos, supervisorOwnedMilestones } from './supervisorTodos';
 import { dateOnlyValue, text } from './util';
 
 function todayUtc() {
@@ -147,7 +148,7 @@ export async function getStaffHome(app: App, cohortId: unknown, viewAs: unknown)
   const cohorts = tables.activeCohorts.map((cohort) => ({ id: cohort.id, name: cohort.name, sheetName: cohort.sheetName }));
   let selected = text(cohortId);
   if (!selected && cohorts.length) selected = cohorts[0].id;
-  if (!selected) return { cohorts, cohortId: '', viewAs: 'staff', students: [], phases: [], templates: [] };
+  if (!selected) return { cohorts, cohortId: '', viewAs: 'staff', students: [], phases: [], templates: [], supervisorMilestoneTodos: [], supervisorTodos: [] };
   const known = cohorts.some((cohort) => cohort.id === selected);
   if (!known) {
     const { requireCohort } = await import('./roster');
@@ -167,6 +168,10 @@ export async function getStaffHome(app: App, cohortId: unknown, viewAs: unknown)
   const students = roster.map((student) => summarize(student, items[student.email] || [], templates, returned, today, user, view))
     .sort((left, right) => right.urgency - left.urgency || left.displayName.localeCompare(right.displayName));
   const notices = await staffUnreadNotices(app, user, view, tables.byEmail);
+  const supervisorMilestoneTodos = view === 'supervisor' ? supervisorOwnedMilestones(roster, templates, items) : [];
+  const supervisorTodos = view === 'supervisor'
+    ? (await listAddedSupervisorTodos(app, selected)).filter((todo) => todo.supervisorId === user.email && todo.status !== 'Completed')
+    : [];
   return {
     cohorts,
     cohortId: selected,
@@ -178,6 +183,8 @@ export async function getStaffHome(app: App, cohortId: unknown, viewAs: unknown)
     templates,
     supervisors: supervisorChoices(roster, await staffDirectory(app)),
     students,
+    supervisorMilestoneTodos,
+    supervisorTodos,
     unreadTicketCount: notices.count,
     unreadTickets: notices.tickets,
   };
