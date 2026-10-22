@@ -1,5 +1,6 @@
 import { activeSubjectNamesFrom, canonicalSubjectAssignment, parseSubjectCell } from './allocationPure';
 import { validatePhasePrerequisites } from './phaseRules';
+import { setCohortMilestoneAnchor } from './cohortPathway';
 import { AnchorMode, reanchorMilestones } from './pathwayPlan';
 import { listCohorts, placementFromMember, requireCohort } from './roster';
 import { adminSchema, cohortSheetName, COLLECTIONS, docIdFor, fieldConfig, normalizePhaseColor, staffHasAdminAccess, tableConfig, tableHeaders, tableKey, validateRecordFields } from './schema';
@@ -147,7 +148,9 @@ async function releaseOtherAnchors(app: App, anchorId: string) {
   }
 }
 
-export async function setMilestoneAnchor(app: App, milestoneId: unknown, mode: unknown) {
+export async function setMilestoneAnchor(app: App, milestoneId: unknown, mode: unknown, scope?: unknown) {
+  const requested = scope && typeof scope === 'object' ? scope as Doc : {};
+  if (text(requested.mode) === 'cohort') return setCohortMilestoneAnchor(app, requested.cohortId, milestoneId, mode);
   const user = await requireAdmin(app, 'SET_MILESTONE_ANCHOR');
   const id = text(milestoneId);
   const choice = text(mode);
@@ -182,6 +185,8 @@ async function saveCohort(app: App, _actor: string, record: Doc, originalKey: st
       FolderPrefix: existing ? driveNamePart(existing.FolderPrefix) : '',
       FolderSuffix: existing ? driveNamePart(existing.FolderSuffix) : '',
       EEDocTemplateId: existing ? text(existing.EEDocTemplateId) : '',
+      PlanAnchor: existing ? text(existing.PlanAnchor) : '',
+      PathwaySeeded: existing ? toBoolean(existing.PathwaySeeded) : false,
     });
     return { key: cohortId };
   });

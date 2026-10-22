@@ -1,5 +1,5 @@
 import { canCompleteMilestone, HubUser } from './permissions';
-import { findPlacement, Placement, readPhases, staffMayAddStudentTodo, staffMayUpdateAllMilestones, staffStudentContext } from './roster';
+import { findPlacement, milestoneDocsFor, phaseDocsFor, Placement, readPhases, staffMayAddStudentTodo, staffMayUpdateAllMilestones, staffStudentContext } from './roster';
 import { COLLECTIONS, fieldConfig } from './schema';
 import { App, audited, deny, requireAdmin, requireStaff, requireUser } from './session';
 import { addDays, dateOnlyValue, Doc, HubError, normalizeEmail, nowIso, parseActionDate, serializeDateOnly, shortId, text, toBoolean, uuid, validateEmail } from './util';
@@ -8,14 +8,15 @@ import { formWritesClosed } from './formsPure';
 export async function getStudentActionItems(app: App, studentEmail: string, user: HubUser | null) {
   const normalizedStudentId = normalizeEmail(studentEmail);
   const records = (await app.store.whereEqual(COLLECTIONS.studentActionItems, 'StudentId', normalizedStudentId));
-  const templates = await app.store.list(COLLECTIONS.milestoneTemplates);
+  const placementForTemplates = await findPlacement(app, normalizedStudentId);
+  const templates = await milestoneDocsFor(app, placementForTemplates?.cohortId || '');
   const templateOwners: Record<string, string> = {};
   const templateTypes: Record<string, string> = {};
   templates.forEach((template) => {
     templateOwners[text(template.milestoneId)] = text(template.mOwner).toLowerCase();
     templateTypes[text(template.milestoneId)] = text(template.type).toLowerCase();
   });
-  const placement = user && user.role === 'staff' ? await findPlacement(app, normalizedStudentId) : null;
+  const placement = user && user.role === 'staff' ? placementForTemplates : null;
   const items = [];
   for (const source of records) {
     const item: Doc = { ...source };
@@ -45,16 +46,22 @@ function stampActors(record: Doc, actorEmail: string, creating: boolean) {
   return record;
 }
 
-async function prepareTodo(app: App, title: unknown, phaseId: unknown) {
+async function prepareTodo(app: App, title: unknown, phaseId: unknown, cohortId?: unknown) {
   const taskTitle = text(title);
   if (!taskTitle) throw new HubError('To-Do title is required.');
   if (taskTitle.length > 240) throw new HubError('To-Do title must be 240 characters or fewer.');
   const phase = text(phaseId);
   if (phase) {
-    const known = await app.store.get(COLLECTIONS.phases, phase);
+    const known = (await phaseDocsFor(app, cohortId)).find((item) => text(item.phaseId) === phase);
     if (!known || !toBoolean(known.active)) throw new HubError('Choose an active phase for this to-do.');
   }
   return { title: taskTitle, phase };
+}
+
+async function milestoneForStudent(app: App, studentId: string, milestoneId: string, cohortId?: unknown) {
+  const cohort = text(cohortId) || (await findPlacement(app, studentId))?.cohortId || '';
+  const templates = await milestoneDocsFor(app, cohort);
+  return templates.find((template) => text(template.milestoneId) === text(milestoneId)) || null;
 }
 
 async function appendAction(app: App, values: Doc) {
@@ -64,7 +71,8 @@ async function appendAction(app: App, values: Doc) {
 export async function addStudentTodo(app: App, title: unknown, phaseId: unknown) {
   const user = await requireUser(app, 'ADD_STUDENT_TODO');
   if (user.role !== 'student') return deny(app, user, 'ADD_STUDENT_TODO', 'Student access required.');
-  const input = await prepareTodo(app, title, phaseId);
+  const placement = await findPlacement(app, user.email);
+  const input = await prepareTodo(app, title, phaseId, placement?.cohortId || '');
   return audited(app, user, 'ADD_STUDENT_TODO', { studentId: user.email, phaseId: input.phase }, async () => {
     const values = stampActors({
       TaskId: shortId('ACT_'),
@@ -85,9 +93,9 @@ export async function addStudentTodo(app: App, title: unknown, phaseId: unknown)
 
 export async function addStaffStudentTodo(app: App, title: unknown, phaseId: unknown, studentEmail: unknown, cohortId: unknown, viewAs: unknown) {
   const user = await requireStaff(app, 'ADD_STAFF_STUDENT_TODO');
-  const input = await prepareTodo(app, title, phaseId);
   const context = await staffStudentContext(app, user, text(studentEmail), text(cohortId), 'ADD_STAFF_STUDENT_TODO', viewAs);
   if (!staffMayAddStudentTodo(user, context)) return deny(app, user, 'ADD_STAFF_STUDENT_TODO', 'You cannot add a to-do for this student.');
+  const input = await prepareTodo(app, title, phaseId, text(cohortId));
   return audited(app, user, 'ADD_STAFF_STUDENT_TODO', { studentId: context.email, phaseId: input.phase, cohort: text(cohortId) }, async () => {
     const values = stampActors({
       TaskId: shortId('ACT_'),
@@ -148,7 +156,7 @@ async function requireActionStatus(app: App, user: HubUser, item: Doc) {
     return;
   }
   if (item.CreatorType !== 'System') throw new HubError('Unsupported action-item creator type.');
-  const template = await app.store.get(COLLECTIONS.milestoneTemplates, text(item.TemplateId));
+  const template = await milestoneForStudent(app, item.StudentId, text(item.TemplateId));
   const placement = template && text(template.mOwner).toLowerCase() === 'supervisor' ? await findPlacement(app, item.StudentId) : null;
   if (!template || !canCompleteMilestone(user, item.StudentId, text(template.mOwner).toLowerCase(), text(template.type).toLowerCase(), placement)) {
     return deny(app, user, 'SET_ACTION_ITEM_STATUS', 'Only the milestone owner can change this status.');
@@ -159,7 +167,7 @@ export async function staffMayUpdateSystemItem(app: App, user: HubUser, context:
   if (!context || text(record.CreatorType) !== 'System') return false;
   if (staffMayUpdateAllMilestones(user, context.roster, context.view)) return true;
   if (context.view === 'staff') return false;
-  const template = await app.store.get(COLLECTIONS.milestoneTemplates, text(record.TemplateId));
+  const template = await milestoneForStudent(app, record.StudentId, text(record.TemplateId), context.roster.cohortId);
   if (!template) return false;
   const placement = context.roster;
   return canCompleteMilestone(user, record.StudentId, text(template.mOwner).toLowerCase(), text(template.type).toLowerCase(), placement);
@@ -211,8 +219,8 @@ export async function assignMilestonesToStudents(app: App, cohortId: unknown, se
       if (selected[studentId]) throw new HubError('A student was selected more than once.');
       selected[studentId] = true;
     });
-    const templates = await app.store.list(COLLECTIONS.milestoneTemplates);
-    if (!templates.length) throw new HubError('MILESTONE_TEMPLATES has no milestone templates.');
+    const templates = await milestoneDocsFor(app, cohort);
+    if (!templates.length) throw new HubError('This cohort has no milestones to assign.');
     const existingItems = await app.store.list(COLLECTIONS.studentActionItems);
     const existing: Record<string, boolean> = {};
     existingItems.forEach((row) => {
@@ -286,7 +294,7 @@ async function applyDateSync(app: App, user: HubUser, cohortId: string, targetSt
   if (!member) throw new HubError('Student is not in the selected cohort.');
   const anchorDate = parseActionDate(member.Anchor_Date);
   if (!anchorDate) throw new HubError('Set the student Anchor_Date before syncing.');
-  const templates = await app.store.list(COLLECTIONS.milestoneTemplates);
+  const templates = await milestoneDocsFor(app, cohortId);
   const byId: Record<string, Doc> = {};
   templates.forEach((template) => { byId[text(template.milestoneId)] = template; });
   const items = await app.store.whereEqual(COLLECTIONS.studentActionItems, 'StudentId', targetStudentId);
@@ -343,7 +351,7 @@ export async function recordMilestoneDecision(app: App, taskId: unknown, action:
   return audited(app, user, `MILESTONE_${decision.toUpperCase()}`, { taskId: text(taskId), studentId: email, cohort: text(cohortId) }, async () => {
     const item = await findActionItem(app, text(taskId));
     if (normalizeEmail(item.StudentId) !== email) throw new HubError('Task belongs to another student.');
-    const template = await app.store.get(COLLECTIONS.milestoneTemplates, text(item.TemplateId));
+    const template = await milestoneForStudent(app, email, text(item.TemplateId), text(cohortId));
     if (!template) throw new HubError('Milestone template not found.');
     const owner = text(template.mOwner).toLowerCase();
     const type = text(template.type).toLowerCase();
@@ -420,9 +428,9 @@ function massAssignmentFields(payload: any) {
   return { updateStatus, status, updateDate, dueDate };
 }
 
-async function requireKnownPhase(app: App, phaseId: string) {
+async function requireKnownPhase(app: App, phaseId: string, cohortId?: unknown) {
   if (!phaseId) throw new HubError('Choose a phase.');
-  const known = await app.store.get(COLLECTIONS.phases, phaseId);
+  const known = (await phaseDocsFor(app, cohortId)).find((phase) => text(phase.phaseId) === phaseId);
   if (!known) throw new HubError('Choose a phase that exists.');
   return phaseId;
 }
@@ -444,7 +452,7 @@ async function systemTasksForTemplate(app: App, studentEmail: string, templateId
 export async function updateMilestoneAssignment(app: App, taskId: unknown, studentEmail: unknown, cohortId: unknown, viewAs: unknown, payload: unknown) {
   const editor = await requireMilestoneEditor(app, studentEmail, cohortId, viewAs, 'UPDATE_MILESTONE_ASSIGNMENT');
   const changes = assignmentFields(payload);
-  const phaseId = await requireKnownPhase(app, changes.phaseId);
+  const phaseId = await requireKnownPhase(app, changes.phaseId, cohortId);
   const id = text(taskId);
   const existing = await findActionItem(app, id);
   if (normalizeEmail(existing.StudentId) !== editor.context.email) return deny(app, editor.user, 'UPDATE_MILESTONE_ASSIGNMENT', 'Task belongs to another student.');
@@ -621,7 +629,7 @@ export async function applyTodoTemplate(app: App, templateId: unknown, studentEm
   const template = (await app.store.list(COLLECTIONS.todoTemplates)).map(todoFrom).find((item) => item.templateId === id);
   if (!template || template.owner !== user.email || !template.active) throw new HubError('Choose one of your template tasks.');
   const phase = template.phaseId || text(phaseId);
-  const input = await prepareTodo(app, template.title, phase);
+  const input = await prepareTodo(app, template.title, phase, text(cohortId));
   return audited(app, user, 'APPLY_TODO_TEMPLATE', { templateId: id, studentId: context.email, phaseId: input.phase, title: input.title, cohort: text(cohortId) }, async () => {
     const values = stampActors({
       TaskId: shortId('ACT_'),

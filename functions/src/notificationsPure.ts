@@ -26,6 +26,7 @@ export interface SweepTemplate {
   milestoneId: string;
   title: string;
   mOwner: string;
+  cohortId?: string;
 }
 
 export interface SweepStaff {
@@ -266,8 +267,15 @@ export function planSweep(input: {
   staff: SweepStaff[];
   rules: SweepRule[];
   blockedSendIds?: Set<string>;
+  cohortSets?: string[];
 }): SweepPlan {
-  const templates = new Map(input.templates.map((template) => [template.milestoneId, template]));
+  const shared = new Map<string, SweepTemplate>();
+  const scoped = new Map<string, SweepTemplate>();
+  input.templates.forEach((template) => {
+    if (template.cohortId) scoped.set(`${template.cohortId}|${template.milestoneId}`, template);
+    else shared.set(template.milestoneId, template);
+  });
+  const cohortSets = new Set(input.cohortSets || []);
   const tasksByStudent = new Map<string, SweepTask[]>();
   input.tasks.forEach((task) => {
     if (text(task.creatorType) !== 'System') return;
@@ -293,7 +301,9 @@ export function planSweep(input: {
   const blocked = input.blockedSendIds || new Set<string>();
 
   input.rules.filter((rule) => rule.enabled).forEach((rule) => {
-    const template = templates.get(rule.milestoneId);
+    const template = cohortSets.has(rule.cohortId)
+      ? scoped.get(`${rule.cohortId}|${rule.milestoneId}`)
+      : (scoped.get(`${rule.cohortId}|${rule.milestoneId}`) || shared.get(rule.milestoneId));
     const roster = studentsByCohort.get(rule.cohortId) || [];
     roster.forEach((student) => {
       if (rule.kind === 'overlay') {

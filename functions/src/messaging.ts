@@ -559,7 +559,7 @@ export async function getStaffStudentPanel(app: App, studentEmail: unknown, coho
     displayName: context.roster.displayName,
     notes: await presentNotes(app, notes, user, placements),
     templates: await listTodoTemplatesFor(app, user.email),
-    phases: await readPhases(app),
+    phases: await readPhases(app, text(cohortId)),
   };
 }
 

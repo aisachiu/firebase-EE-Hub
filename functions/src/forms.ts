@@ -28,8 +28,28 @@ function definitionFrom(record: Doc) {
   };
 }
 
+async function formMilestoneDocs(app: App): Promise<Doc[]> {
+  const byId: Record<string, Doc> = {};
+  (await app.store.list(COLLECTIONS.milestoneTemplates)).forEach((row) => {
+    const milestoneId = text(row.milestoneId);
+    if (text(row.type).toLowerCase() === 'form' && milestoneId) byId[milestoneId] = row;
+  });
+  if (typeof app.store.listCohortMilestones !== 'function') return Object.values(byId);
+  const cohorts = await app.store.list(COLLECTIONS.cohorts);
+  for (const cohort of cohorts) {
+    if (!toBoolean(cohort.PathwaySeeded)) continue;
+    const rows = await app.store.listCohortMilestones(text(cohort.Cohort));
+    rows.forEach((row) => {
+      const milestoneId = text(row.milestoneId);
+      if (text(row.type).toLowerCase() === 'form' && milestoneId && !byId[milestoneId]) byId[milestoneId] = row;
+    });
+  }
+  return Object.values(byId);
+}
+
 async function requireFormTemplate(app: App, milestoneId: string) {
-  const template = await app.store.get(COLLECTIONS.milestoneTemplates, text(milestoneId));
+  const template = (await formMilestoneDocs(app)).find((row) => text(row.milestoneId) === text(milestoneId))
+    || await app.store.get(COLLECTIONS.milestoneTemplates, text(milestoneId));
   if (!template || text(template.type).toLowerCase() !== 'form') throw new HubError('Choose a form milestone.');
   return template;
 }
@@ -107,7 +127,7 @@ function assertAppendOnly(existingCount: number, previous: string[], next: strin
 
 export async function listFormMilestones(app: App) {
   await requireAdmin(app, 'LIST_FORMS');
-  const templates = (await app.store.list(COLLECTIONS.milestoneTemplates)).filter((template) => text(template.type).toLowerCase() === 'form');
+  const templates = await formMilestoneDocs(app);
   const result = [];
   for (const template of templates) {
     const record = await app.store.get(COLLECTIONS.formDefinitions, text(template.milestoneId));

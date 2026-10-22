@@ -27,7 +27,7 @@ import {
   SweepTemplate,
   timingLabel,
 } from './notificationsPure';
-import { listCohorts, placementFromMember, requireCohort } from './roster';
+import { cohortPathwaySeeded, listCohorts, placementFromMember, requireCohort } from './roster';
 import { COLLECTIONS } from './schema';
 import { App, audit, audited, deny, requireStaff } from './session';
 import { clockParts, Doc, HubError, normalizeEmail, nowIso, serializeDateOnly, text, toBoolean, uuid } from './util';
@@ -113,13 +113,43 @@ function ruleFromDoc(doc: Doc, kind: NotifyKind): SweepRule | null {
   };
 }
 
-async function loadTemplates(app: App): Promise<SweepTemplate[]> {
-  const records = await app.store.list(COLLECTIONS.milestoneTemplates);
-  return records.map((record) => ({
-    milestoneId: text(record.milestoneId),
+function templateFrom(record: Doc, cohortId = ''): SweepTemplate | null {
+  const milestoneId = text(record.milestoneId);
+  if (!milestoneId) return null;
+  return {
+    milestoneId,
     title: text(record.milestoneTitle),
     mOwner: text(record.mOwner).toLowerCase(),
-  })).filter((template) => template.milestoneId);
+    cohortId: cohortId || undefined,
+  };
+}
+
+async function loadTemplates(app: App): Promise<SweepTemplate[]> {
+  const records = await app.store.list(COLLECTIONS.milestoneTemplates);
+  return records.map((record) => templateFrom(record)).filter((template): template is SweepTemplate => !!template);
+}
+
+async function loadTemplatesForCohort(app: App, cohortId: string): Promise<SweepTemplate[]> {
+  if (cohortId && await cohortPathwaySeeded(app, cohortId) && typeof app.store.listCohortMilestones === 'function') {
+    const records = await app.store.listCohortMilestones(cohortId);
+    return records.map((record) => templateFrom(record, cohortId)).filter((template): template is SweepTemplate => !!template);
+  }
+  return loadTemplates(app);
+}
+
+async function loadSweepTemplates(app: App, cohortIds: string[]): Promise<{ templates: SweepTemplate[]; cohortSets: string[] }> {
+  const templates = await loadTemplates(app);
+  const cohortSets: string[] = [];
+  for (const cohortId of cohortIds) {
+    if (!await cohortPathwaySeeded(app, cohortId) || typeof app.store.listCohortMilestones !== 'function') continue;
+    cohortSets.push(cohortId);
+    const records = await app.store.listCohortMilestones(cohortId);
+    records.forEach((record) => {
+      const template = templateFrom(record, cohortId);
+      if (template) templates.push(template);
+    });
+  }
+  return { templates, cohortSets };
 }
 
 async function loadStaff(app: App): Promise<SweepStaff[]> {
@@ -207,7 +237,7 @@ export async function listNotificationDesk(app: App, cohortId: unknown, mileston
   }
   if (!selectedCohort) selectedCohort = cohorts[0]?.id || '';
   const milestoneFilter = text(milestoneId);
-  const templates = await loadTemplates(app);
+  const templates = await loadTemplatesForCohort(app, selectedCohort);
   const templateMap = new Map(templates.map((template) => [template.milestoneId, template]));
   const rules = (await loadRules(app))
     .filter((rule) => !selectedCohort || rule.cohortId === selectedCohort)
@@ -246,8 +276,8 @@ export async function listNotificationDesk(app: App, cohortId: unknown, mileston
   };
 }
 
-async function requireMilestone(app: App, milestoneId: string): Promise<SweepTemplate> {
-  const template = (await loadTemplates(app)).find((item) => item.milestoneId === milestoneId);
+async function requireMilestone(app: App, milestoneId: string, cohortId = ''): Promise<SweepTemplate> {
+  const template = (await loadTemplatesForCohort(app, cohortId)).find((item) => item.milestoneId === milestoneId);
   if (!template) throw new HubError('Choose a milestone.');
   return template;
 }
@@ -295,7 +325,7 @@ export async function saveNotificationRule(app: App, raw: unknown) {
   const enabled = normalizeEnabled(input.enabled, true);
   const cohort = await requireCohort(app, text(input.cohortId), true);
   const milestoneId = text(input.milestoneId);
-  await requireMilestone(app, milestoneId);
+  await requireMilestone(app, milestoneId, cohort.id);
   const existingId = text(input.ruleId);
   return audited(app, user, existingId ? 'UPDATE_NOTIFICATION_RULE' : 'CREATE_NOTIFICATION_RULE', { ruleId: existingId, cohortId: cohort.id, milestoneId }, async () => {
     const existing = existingId ? await app.store.get(COLLECTIONS.notificationRules, existingId) : null;
@@ -366,7 +396,7 @@ export async function saveNotificationOverlay(app: App, raw: unknown) {
   const enabled = normalizeEnabled(input.enabled, true);
   const cohort = await requireCohort(app, text(input.cohortId), true);
   const milestoneId = text(input.milestoneId);
-  await requireMilestone(app, milestoneId);
+  await requireMilestone(app, milestoneId, cohort.id);
   const studentId = normalizeEmail(input.studentId);
   await assertOwnStudent(app, user, cohort.id, studentId);
   const existingId = text(input.ruleId);
@@ -441,10 +471,10 @@ async function sweepInputs(app: App, cohortId: string, now: Date) {
   const chosen = cohortId ? cohorts.filter((cohort) => cohort.id === cohortId) : active;
   if (cohortId && !chosen.length) throw new HubError('Cohort not found.');
   const cohortIds = chosen.map((cohort) => cohort.id);
-  const [tasks, students, templates, staff, rules, blockedSendIdsForToday] = await Promise.all([
+  const [tasks, students, templateBundle, staff, rules, blockedSendIdsForToday] = await Promise.all([
     loadTasks(app),
     loadStudents(app, cohortIds),
-    loadTemplates(app),
+    loadSweepTemplates(app, cohortIds),
     loadStaff(app),
     loadRules(app),
     blockedSendIds(app, today, now),
@@ -454,7 +484,8 @@ async function sweepInputs(app: App, cohortId: string, now: Date) {
     today,
     tasks,
     students,
-    templates,
+    templates: templateBundle.templates,
+    cohortSets: templateBundle.cohortSets,
     staff,
     rules: rules.filter((rule) => cohortSet.has(rule.cohortId)),
     blockedSendIds: blockedSendIdsForToday,
@@ -831,7 +862,7 @@ export async function sendNotificationTest(app: App, ruleKind: unknown, ruleId: 
   if (kind === 'overlay' && normalizeEmail(existing.supervisorId) !== user.email && !powers.editRules) {
     return deny(app, user, 'TEST_NOTIFICATION', 'Supervisors can test their own reminders.');
   }
-  const template = await requireMilestone(app, rule.milestoneId);
+  const template = await requireMilestone(app, rule.milestoneId, rule.cohortId);
   const message = buildMessage({
     audience: rule.audience,
     milestoneTitle: template.title,
