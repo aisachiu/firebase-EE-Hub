@@ -1,3 +1,4 @@
+import { colorScaleFill, columnScaleExtent, scaleNumber } from '../../../functions/src/allocationPure.ts';
 import { adminDialogKind, closeAdminDialog, openAdminDialog } from '../admin/records.js';
 import { openStaffQuotas } from '../admin/staff.js';
 import { callServer } from '../shared/api.js';
@@ -5,17 +6,19 @@ import { showError, showSuccess } from '../shared/feedback.js';
 import { escapeHtml, safeUrl } from '../shared/html.js';
 import { loadingLine } from '../shared/loading.js';
 import { advanceScene } from '../shared/scene.js';
+import { renderSheetIngestPreview } from '../shared/sheetPreview.js';
 import { state } from '../shared/state.js';
 import {
+  adminSortState,
   bindCollapsibleHeaders,
   bindSortableHeaders,
   collapsibleHeader,
-  compareSortValues,
   sortableHeader,
   sortedRows,
 } from '../shared/tables.js';
 import { requestPush, syncHistory } from '../router.js';
 import { renderShell } from '../shell.js';
+import { workspaceHelpMarkup } from './workspaceHelp.js';
 
 export function openAllocationTokens() {
   requestPush();
@@ -81,19 +84,34 @@ export function paintAllocation() {
   bindAllocation(target, desk);
 }
 
+export function allocationDeskColumns(settings) {
+  return ((settings && settings.columns) || []).filter(function(column) { return column.showOnCard; });
+}
+
 export function allocationDashboardMarkup(desk) {
   const students = visibleAllocationStudents(desk);
-  const sortable = (desk.settings.columns || []).filter(function(column) { return column.sortable; });
+  const columns = allocationDeskColumns(desk.settings);
+  const sort = adminSortState('alloc-desk');
   const supervisors = desk.supervisors || [];
   const openSupervisors = supervisors.filter(function(person) { return person.available > 0; });
   const publish = desk.publish || { drafts: 0, clears: 0, blocked: 0 };
   const summary = desk.summary || { staffCount: 0, tokenCount: 0, activeStudents: 0, buffer: 0 };
-  const sortHeader = function(key, label) {
-    const active = state.allocationSort === key;
-    const mark = !active ? '' : state.allocationSortDir === -1 ? ' ↓' : ' ↑';
-    const aria = !active ? 'none' : state.allocationSortDir === -1 ? 'descending' : 'ascending';
-    return `<div role="columnheader" aria-sort="${aria}"><button type="button" class="sort-button" data-alloc-sort="${escapeHtml(key)}">${escapeHtml(label)}${mark}</button></div>`;
+  const extents = {};
+  columns.forEach(function(column) {
+    if (!column.colorScale) return;
+    extents[column.key] = columnScaleExtent(students.map(function(student) {
+      return student.dynamicData ? student.dynamicData[column.key] : '';
+    }));
+  });
+  const scaleOn = columns.some(function(column) { return column.colorScale && extents[column.key]; });
+  const allSelected = students.length > 0 && students.every(function(student) { return state.allocationSelected.indexOf(student.studentId) >= 0; });
+  const sortOption = function(key, label) {
+    return `<option value="${escapeHtml(key)}" ${sort.key === key ? 'selected' : ''}>${escapeHtml(label)}</option>`;
   };
+  const dynamicHeaders = columns.map(function(column) {
+    if (column.sortable === false) return `<th scope="col">${escapeHtml(column.key)}</th>`;
+    return sortableHeader('alloc-desk', 'field:' + column.key, column.key);
+  }).join('');
   return `<div class="alloc-layout"><div>
       ${collapsibleHeader('alloc-filters', 'Filters and selection', `<div class="toolbar"><label for="alloc-cohort">Cohort</label><select id="alloc-cohort">${state.allocationCohorts.map(function(cohort) {
     return `<option value="${escapeHtml(cohort.id)}" ${cohort.id === state.cohortId ? 'selected' : ''}>${escapeHtml(cohort.name)}</option>`;
@@ -106,13 +124,11 @@ export function allocationDashboardMarkup(desk) {
           }).join('')}
         </div></div>
         <div><label for="alloc-support">Support flag</label><select id="alloc-support"><option value="all" ${state.allocationSupport === 'all' ? 'selected' : ''}>All students</option><option value="flagged" ${state.allocationSupport === 'flagged' ? 'selected' : ''}>Flagged only</option></select></div>
-        <div><label for="alloc-sort">Sort by</label><select id="alloc-sort"><option value="name" ${state.allocationSort === 'name' ? 'selected' : ''}>Name</option><option value="supervisor" ${state.allocationSort === 'supervisor' ? 'selected' : ''}>Supervisor</option><option value="subject" ${state.allocationSort === 'subject' ? 'selected' : ''}>Requested subjects</option><option value="status" ${state.allocationSort === 'status' ? 'selected' : ''}>Status</option>${sortable.map(function(column) {
-          return `<option value="${escapeHtml(column.key)}" ${state.allocationSort === column.key ? 'selected' : ''}>${escapeHtml(column.key)}</option>`;
+        <div><label for="alloc-sort">Sort by</label><select id="alloc-sort">${sortOption('name', 'Name')}${sortOption('supervisor', 'Supervisor')}${sortOption('subject', 'Requested subjects')}${sortOption('status', 'Status')}${columns.filter(function(column) { return column.sortable !== false; }).map(function(column) {
+          return sortOption('field:' + column.key, column.key);
         }).join('')}</select></div>
       </div>
       <div class="alloc-batch">
-        <label><input type="checkbox" id="alloc-select-all" ${students.length && students.every(function(student) { return state.allocationSelected.indexOf(student.studentId) >= 0; }) ? 'checked' : ''}> Select all</label>
-        <span class="muted">|</span>
         <span>Apply to selected</span>
         <select id="alloc-batch-supervisor"><option value="">Select supervisor...</option>${openSupervisors.map(function(person) {
           return `<option value="${escapeHtml(person.staffId)}">${escapeHtml(allocationSupervisorLabel(person))}</option>`;
@@ -120,10 +136,17 @@ export function allocationDashboardMarkup(desk) {
         <button type="button" class="button" id="alloc-batch-assign">Assign</button>
         <span class="muted">${state.allocationSelected.length} selected</span>
       </div>`)}
-      <div class="alloc-table">
-        <div class="alloc-head"><div></div>${sortHeader('name', 'Student')}${sortHeader('supervisor', 'Supervisor')}${sortHeader('subject', 'Requested subjects')}</div>
-        ${students.length ? students.map(function(student) { return allocationRowMarkup(student, supervisors); }).join('') : '<div class="empty">No students in this view.</div>'}
-      </div>
+      ${scaleOn ? '<p class="muted alloc-scale-note">Blue shading runs from low to high among the students in this view.</p>' : ''}
+      <div class="table-wrap alloc-desk-wrap"><table class="alloc-desk">
+        <thead><tr>
+          <th class="alloc-check" scope="col"><input type="checkbox" id="alloc-select-all" ${allSelected ? 'checked' : ''} aria-label="Select all students"></th>
+          ${sortableHeader('alloc-desk', 'name', 'Student')}
+          ${sortableHeader('alloc-desk', 'supervisor', 'Supervisor')}
+          ${sortableHeader('alloc-desk', 'subject', 'Requested subjects')}
+          ${dynamicHeaders}
+        </tr></thead>
+        <tbody>${students.length ? students.map(function(student) { return allocationRowMarkup(student, supervisors, columns, extents); }).join('') : `<tr><td class="empty" colspan="${4 + columns.length}">No students in this view.</td></tr>`}</tbody>
+      </table></div>
     </div>
     <aside class="alloc-side">
       <header><h2>Supervisor token load</h2></header>
@@ -136,33 +159,44 @@ export function allocationDashboardMarkup(desk) {
     </aside></div>`;
 }
 
-export function allocationRowMarkup(student, supervisors) {
+export function allocationRowMarkup(student, supervisors, columns, extents) {
   const subject = selectedAllocationSubject(student);
   const current = student.token ? student.token.staffId : '';
   const options = supervisors.filter(function(person) { return person.available > 0 || person.staffId === current; });
-  const cards = (state.allocationDesk.settings.columns || []).filter(function(column) { return column.showOnCard; }).map(function(column) {
-    const value = student.dynamicData[column.key];
-    if (value === undefined || value === null || value === '') return '';
-    return escapeHtml(column.key) + ': ' + escapeHtml(value);
-  }).filter(Boolean);
   const choices = [];
   if (student.choices.primary) choices.push(student.choices.primary);
   if (student.choices.secondary && student.choices.secondary !== student.choices.primary) choices.push(student.choices.secondary);
   const statusClass = student.flags.committed ? 'committed' : student.flags.drafted ? 'draft' : '';
-  return `<div class="alloc-row">
-    <div><input type="checkbox" data-alloc-pick="${escapeHtml(student.studentId)}" ${state.allocationSelected.indexOf(student.studentId) >= 0 ? 'checked' : ''} aria-label="Select ${escapeHtml(student.displayName)}"></div>
-    <div>
+  const fields = (columns || []).map(function(column) {
+    const value = student.dynamicData ? student.dynamicData[column.key] : '';
+    const shown = value === undefined || value === null || value === '' ? '' : String(value);
+    const fill = column.colorScale ? colorScaleFill(value, extents ? extents[column.key] : null) : null;
+    const style = scaleStyle(fill);
+    return `<td${style ? ` class="alloc-scale" style="${style}"` : ''}>${escapeHtml(shown)}</td>`;
+  }).join('');
+  return `<tr>
+    <td class="alloc-check"><input type="checkbox" data-alloc-pick="${escapeHtml(student.studentId)}" ${state.allocationSelected.indexOf(student.studentId) >= 0 ? 'checked' : ''} aria-label="Select ${escapeHtml(student.displayName)}"></td>
+    <td>
       <div class="alloc-name">${escapeHtml(student.displayName)}${student.flags.needsSupport ? '<span class="support-badge">Needs support</span>' : ''}${student.choices.interdisciplinary ? '<span class="info-badge">Interdisciplinary</span>' : ''}${student.pendingClear ? '<span class="info-badge">Clears on publish</span>' : ''}</div>
       <div class="alloc-marks">${allocationMark(student.token ? 'Drafted' : 'Unallocated', student.token ? 'on' : 'off')}${allocationMark(student.flags.subjectMatch === 'match' ? 'Subject match' : 'No subject match', student.flags.subjectMatch === 'match' ? 'on' : 'off')}${allocationMark(student.flags.hlMatch === 'miss' ? 'Not an HL match' : student.flags.hlMatch === 'match' ? 'HL match' : 'No HL match', student.flags.hlMatch === 'match' ? 'on' : student.flags.hlMatch === 'miss' ? 'warn' : 'off')}</div>
-      <div class="alloc-meta">${cards.join(' <span>|</span> ') || 'No card fields'}${student.flags.committed ? ' <button type="button" class="link-button" data-alloc-reopen="' + escapeHtml(student.studentId) + '">Return to draft</button>' : ''}</div>
-    </div>
-    <div><select class="alloc-select ${statusClass}" data-alloc-supervisor="${escapeHtml(student.studentId)}" aria-label="Supervisor for ${escapeHtml(student.displayName)}"><option value="">${student.token ? 'Unassigned...' : 'Select...'}</option>${options.map(function(person) {
+      ${student.flags.committed ? '<button type="button" class="link-button" data-alloc-reopen="' + escapeHtml(student.studentId) + '">Return to draft</button>' : ''}
+    </td>
+    <td><select class="alloc-select ${statusClass}" data-alloc-supervisor="${escapeHtml(student.studentId)}" aria-label="Supervisor for ${escapeHtml(student.displayName)}"><option value="">${student.token ? 'Unassigned...' : 'Select...'}</option>${options.map(function(person) {
       return `<option value="${escapeHtml(person.staffId)}" ${person.staffId === current ? 'selected' : ''}>${escapeHtml(allocationSupervisorLabel(person))}</option>`;
-    }).join('')}</select></div>
-    <div>${choices.map(function(choice) {
+    }).join('')}</select></td>
+    <td>${choices.map(function(choice) {
       return `<button type="button" class="subject-chip${choice === subject ? ' on' : ''}" data-alloc-subject="${escapeHtml(student.studentId)}" data-subject="${escapeHtml(choice)}">${escapeHtml(choice)}</button>`;
-    }).join('') || '<span class="muted">No subject choices</span>'}</div>
-  </div>`;
+    }).join('') || '<span class="muted">No subject choices</span>'}</td>
+    ${fields}
+  </tr>`;
+}
+
+function scaleStyle(fill) {
+  if (!fill) return '';
+  const background = /^#[0-9a-fA-F]{6}$/.test(fill.background) ? fill.background : '';
+  const color = /^#[0-9a-fA-F]{6}$/.test(fill.color) ? fill.color : '';
+  if (!background || !color) return '';
+  return 'background:' + background + ';color:' + color;
 }
 
 export function allocationLoadMarkup(person) {
@@ -180,17 +214,35 @@ export function allocationSettingsMarkup(desk) {
   const columns = settings.detectedDynamicKeys || [];
   const flags = {};
   (settings.columns || []).forEach(function(column) { flags[column.key] = column; });
+  const kind = state.allocationIngestKind === 'tokens' ? 'tokens' : 'workspace';
+  const flagLabels = [['showOnCard', 'Show in table'], ['filterable', 'Filterable'], ['sortable', 'Sortable'], ['colorScale', 'Color scale']];
   return `<div class="toolbar"><label for="alloc-cohort">Cohort</label><select id="alloc-cohort">${state.allocationCohorts.map(function(cohort) {
     return `<option value="${escapeHtml(cohort.id)}" ${cohort.id === state.cohortId ? 'selected' : ''}>${escapeHtml(cohort.name)}</option>`;
-  }).join('')}</select></div><div class="alloc-config"><div>
+  }).join('')}</select></div>
+    <div class="alloc-ingest-layout">
       <section class="alloc-panel"><h2>Google Sheets sync</h2>
         ${desk.driveReady ? '' : `<p class="notice">${escapeHtml(desk.driveError || 'Connect Google in Admin → Google account before ingesting sheets.')}</p>`}
+        <p class="doc-hint">Choose workspace or tokens, export a workbook if you need one, paste the link, then preview. Workspace ingest reads <code>COHORTDATA: ${escapeHtml(state.cohortId)}</code> and upserts by StudentId. Token ingest reads <code>SUPERVISORTOKENS: ${escapeHtml(state.cohortId)}</code> and tops up quotas. Neither deletes rows that are missing from the sheet.</p>
+        <div class="sheet-choices" role="radiogroup" aria-label="Ingest kind">
+          <label class="check-option"><input type="radio" name="alloc-ingest-kind" value="workspace" ${kind === 'workspace' ? 'checked' : ''}><span>Workspace data <span class="muted">COHORTDATA: ${escapeHtml(state.cohortId)}</span></span></label>
+          <label class="check-option"><input type="radio" name="alloc-ingest-kind" value="tokens" ${kind === 'tokens' ? 'checked' : ''}><span>Supervisor tokens <span class="muted">SUPERVISORTOKENS: ${escapeHtml(state.cohortId)}</span></span></label>
+        </div>
+        <div class="toolbar">
+          <button type="button" class="button secondary" id="alloc-export">Export allocation drafts</button>
+          <button type="button" class="button secondary" id="alloc-export-tokens">Export token sheet</button>
+          <button type="button" class="button secondary" id="alloc-open-quotas">Open EE quotas</button>
+        </div>
+        <p class="muted">Export allocation drafts writes an <code>ALLOCATIONS: ${escapeHtml(state.cohortId)}</code> tab. Export token sheet writes <code>SUPERVISORTOKENS: ${escapeHtml(state.cohortId)}</code> from the EE quotas already saved on staff. Set those quotas before exporting tokens.</p>
+        <p id="alloc-export-result" class="muted">${settings.lastExport ? 'Last draft export: ' + escapeHtml(allocationWhen(settings.lastExport)) : 'Drafts not exported yet'}${settings.lastWorkspaceSync ? ' · Workspace: ' + escapeHtml(allocationWhen(settings.lastWorkspaceSync)) : ''}${settings.lastTokenSync ? ' · Tokens: ' + escapeHtml(allocationWhen(settings.lastTokenSync)) : ''}</p>
         <label class="field" for="alloc-sheet-url">Spreadsheet link</label>
         <input id="alloc-sheet-url" value="${escapeHtml(state.allocationSheetUrl)}" placeholder="https://docs.google.com/spreadsheets/d/...">
-        <div class="field"><span class="alloc-kicker">1. Workspace data (COHORTDATA: ${escapeHtml(state.cohortId)})</span><button type="button" class="button secondary" id="alloc-ingest-workspace">Ingest student data</button><div class="alloc-sync">${settings.lastWorkspaceSync ? 'Last sync: ' + escapeHtml(allocationWhen(settings.lastWorkspaceSync)) : 'Not ingested yet'}</div></div>
-        <div class="field"><span class="alloc-kicker">2. Supervisor quotas (SUPERVISORTOKENS: ${escapeHtml(state.cohortId)})</span><button type="button" class="button secondary" id="alloc-ingest-tokens">Ingest staff tokens</button><div class="alloc-sync">${settings.lastTokenSync ? 'Last sync: ' + escapeHtml(allocationWhen(settings.lastTokenSync)) : 'Not ingested yet'}</div><p class="muted">Build the same sheet from Staff users → EE quotas. Applying there uses this top-up and leaves draft and committed tokens in place.</p><button type="button" class="button secondary" id="alloc-open-quotas">Open EE quotas</button></div>
-        <div class="field"><span class="alloc-kicker">3. Allocation output</span><button type="button" class="button secondary" id="alloc-export">Export drafts to Sheets</button><div class="alloc-sync" id="alloc-export-result">${settings.lastExport ? 'Last export: ' + escapeHtml(allocationWhen(settings.lastExport)) : 'Not exported yet'}</div></div>
+        <label class="check-option"><input type="checkbox" id="alloc-ingest-confirm"><span id="alloc-confirm-label">${escapeHtml(allocationConfirmCopy(kind))}</span></label>
+        <div class="toolbar"><button class="button secondary" id="alloc-preview" type="button">Preview ingest</button><button class="button" id="alloc-apply" type="button" disabled>Apply ingest</button></div>
       </section>
+      ${workspaceHelpMarkup(state.cohortId)}
+    </div>
+    <div id="alloc-preview-result"></div>
+    <div class="alloc-config"><div>
       <section class="alloc-panel"><h2>Token summary</h2>
         <p>Total eligible staff <strong>${summary.staffCount}</strong></p>
         <p>Total tokens generated <strong>${summary.tokenCount}</strong></p>
@@ -208,11 +260,11 @@ export function allocationSettingsMarkup(desk) {
         <div class="alloc-map"><label for="alloc-flag">Support flag column</label><select id="alloc-flag">${allocationKeyOptions(columns, settings.supportColumn, true)}</select></div>
       </section>
       <section class="alloc-panel"><h2>Dashboard fields</h2>
-        <p class="muted">These columns were detected in the latest COHORTDATA import.</p>
-        ${columns.length ? `<div class="table-wrap"><table><thead><tr>${sortableHeader('alloc-columns', 'column', 'Imported column')}<th>Show on card</th><th>Filterable</th><th>Sortable</th></tr></thead><tbody>${sortedRows('alloc-columns', columns, function(key) { return key; }).map(function(key) {
+        <p class="muted">These columns were detected in the latest COHORTDATA import. New columns start visible and sortable. Color scale stays off until you turn it on. It paints numbers, and words such as Weak or Strong, from light blue to deep blue across the students in the current view. It does not use red and green. Uncheck Sortable to leave a column on the desk without a sort button.</p>
+        ${columns.length ? `<div class="table-wrap"><table><thead><tr>${sortableHeader('alloc-columns', 'column', 'Imported column')}${flagLabels.map(function(flag) { return `<th>${escapeHtml(flag[1])}</th>`; }).join('')}</tr></thead><tbody>${sortedRows('alloc-columns', columns, function(key) { return key; }).map(function(key) {
           const column = flags[key] || {};
-          return `<tr><td><code>${escapeHtml(key)}</code></td>${['showOnCard', 'filterable', 'sortable'].map(function(flag) {
-            return `<td><input type="checkbox" data-alloc-col="${escapeHtml(key)}" data-flag="${flag}" ${column[flag] ? 'checked' : ''} aria-label="${escapeHtml(flag + ' ' + key)}"></td>`;
+          return `<tr><td><code>${escapeHtml(key)}</code></td>${flagLabels.map(function(flag) {
+            return `<td><input type="checkbox" data-alloc-col="${escapeHtml(key)}" data-flag="${flag[0]}" ${column[flag[0]] ? 'checked' : ''} aria-label="${escapeHtml(flag[1] + ' ' + key)}"></td>`;
           }).join('')}</tr>`;
         }).join('')}</tbody></table></div>` : '<div class="empty">Ingest student data to detect columns.</div>'}
         <div class="toolbar"><button type="button" class="button" id="alloc-save-config">Save configuration</button></div>
@@ -240,6 +292,9 @@ export function bindAllocation(target, desk) {
   if (support) support.addEventListener('change', function(event) { state.allocationSupport = event.target.value; paintAllocation(); });
   const sort = document.getElementById('alloc-sort');
   if (sort) sort.addEventListener('change', function(event) {
+    const current = adminSortState('alloc-desk');
+    current.key = event.target.value;
+    current.dir = 1;
     state.allocationSort = event.target.value;
     state.allocationSortDir = 1;
     paintAllocation();
@@ -247,18 +302,10 @@ export function bindAllocation(target, desk) {
   bindCollapsibleHeaders(target);
   bindSortableHeaders(target, function() {
     captureAllocationColumns();
+    const current = adminSortState('alloc-desk');
+    state.allocationSort = current.key;
+    state.allocationSortDir = current.dir;
     paintAllocation();
-  });
-  target.querySelectorAll('[data-alloc-sort]').forEach(function(button) {
-    button.addEventListener('click', function() {
-      const key = button.getAttribute('data-alloc-sort');
-      if (state.allocationSort === key) state.allocationSortDir = state.allocationSortDir === -1 ? 1 : -1;
-      else {
-        state.allocationSort = key;
-        state.allocationSortDir = 1;
-      }
-      paintAllocation();
-    });
   });
   const selectAll = document.getElementById('alloc-select-all');
   if (selectAll) selectAll.addEventListener('change', function(event) {
@@ -308,13 +355,26 @@ export function bindAllocation(target, desk) {
   const publish = document.getElementById('alloc-publish');
   if (publish) publish.addEventListener('click', publishAllocations);
   const sheetUrl = document.getElementById('alloc-sheet-url');
-  if (sheetUrl) sheetUrl.addEventListener('input', function(event) { state.allocationSheetUrl = event.target.value; });
-  const ingestWorkspace = document.getElementById('alloc-ingest-workspace');
-  if (ingestWorkspace) ingestWorkspace.addEventListener('click', function() { ingestAllocation('workspace'); });
-  const ingestTokens = document.getElementById('alloc-ingest-tokens');
-  if (ingestTokens) ingestTokens.addEventListener('click', function() { ingestAllocation('tokens'); });
+  if (sheetUrl) sheetUrl.addEventListener('input', function(event) {
+    state.allocationSheetUrl = event.target.value;
+    clearAllocationPreview();
+  });
+  target.querySelectorAll('input[name="alloc-ingest-kind"]').forEach(function(input) {
+    input.addEventListener('change', function() {
+      state.allocationIngestKind = input.value === 'tokens' ? 'tokens' : 'workspace';
+      const label = document.getElementById('alloc-confirm-label');
+      if (label) label.textContent = allocationConfirmCopy(state.allocationIngestKind);
+      clearAllocationPreview();
+    });
+  });
+  const previewButton = document.getElementById('alloc-preview');
+  if (previewButton) previewButton.addEventListener('click', previewAllocationSheet);
+  const applyButton = document.getElementById('alloc-apply');
+  if (applyButton) applyButton.addEventListener('click', applyAllocationSheet);
   const exportButton = document.getElementById('alloc-export');
   if (exportButton) exportButton.addEventListener('click', exportAllocations);
+  const exportTokens = document.getElementById('alloc-export-tokens');
+  if (exportTokens) exportTokens.addEventListener('click', exportAllocationTokens);
   const save = document.getElementById('alloc-save-config');
   if (save) save.addEventListener('click', saveAllocationSettings);
   const openQuotas = document.getElementById('alloc-open-quotas');
@@ -482,38 +542,92 @@ export function publishAllocations() {
   }).catch(showError);
 }
 
-export function ingestAllocation(kind) {
-  const url = state.allocationSheetUrl || (document.getElementById('alloc-sheet-url') ? document.getElementById('alloc-sheet-url').value : '');
+export function allocationConfirmCopy(kind) {
+  return kind === 'tokens'
+    ? 'Apply this token top-up. Tokens missing from the sheet stay in the hub.'
+    : 'Apply this student upsert. Students missing from the sheet stay in the hub.';
+}
+
+export function clearAllocationPreview() {
+  const apply = document.getElementById('alloc-apply');
+  if (apply) apply.disabled = true;
+  const preview = document.getElementById('alloc-preview-result');
+  if (preview) preview.innerHTML = '';
+}
+
+export function allocationSheetUrl() {
+  const input = document.getElementById('alloc-sheet-url');
+  const url = String((input && input.value) || state.allocationSheetUrl || '').trim();
+  state.allocationSheetUrl = url;
+  return url;
+}
+
+export function previewAllocationSheet() {
+  const kind = state.allocationIngestKind === 'tokens' ? 'tokens' : 'workspace';
+  const url = allocationSheetUrl();
   if (!url) { showError(new Error('Paste a spreadsheet link.')); return; }
   callServer('previewAllocationIngest', state.cohortId, { url: url }, kind).then(function(preview) {
-    const summary = kind === 'workspace'
-      ? preview.writing + ' students will update. ' + preview.skipped + ' rows are not on the roster.'
-      : preview.creating + ' tokens will be created. ' + preview.writing + ' open slots will take the new subject list.';
-    const warnings = (preview.warnings || []).slice(0, 8).join('\n');
-    if (!window.confirm(summary + (warnings ? '\n\n' + warnings : '') + '\n\nIngest this sheet?')) return null;
-    return callServer('applyAllocationIngest', state.cohortId, { url: url }, kind);
-  }).then(function(result) {
-    if (!result) return;
+    const host = document.getElementById('alloc-preview-result');
+    if (!host) return;
+    host.innerHTML = renderSheetIngestPreview({
+      note: preview.note,
+      summaryColumns: ['Sheet', 'Rows in the sheet', 'Rows in the hub', 'Rows removed'],
+      summaryRows: [[preview.sheet || kind, preview.incoming, preview.existing, preview.removing]],
+      detailTitle: 'Incoming and hub',
+      detailColumns: [kind === 'tokens' ? 'Staff' : 'Student', 'Action', 'Incoming', 'In the hub'],
+      detailRows: (preview.rows || []).map(function(row) { return [row.id, row.action, row.incoming, row.hub]; }),
+      warnings: preview.warnings,
+    });
+    const apply = document.getElementById('alloc-apply');
+    if (apply) apply.disabled = false;
+  }).catch(showError);
+}
+
+export function applyAllocationSheet() {
+  const kind = state.allocationIngestKind === 'tokens' ? 'tokens' : 'workspace';
+  const url = allocationSheetUrl();
+  const confirm = document.getElementById('alloc-ingest-confirm');
+  if (!url) { showError(new Error('Paste a spreadsheet link.')); return; }
+  if (!confirm || confirm.checked !== true) { showError(new Error(allocationConfirmCopy(kind))); return; }
+  const button = document.getElementById('alloc-apply');
+  if (button) button.disabled = true;
+  callServer('applyAllocationIngest', state.cohortId, { url: url }, kind).then(function() {
     showSuccess(kind === 'workspace' ? 'Student data ingested.' : 'Staff tokens ingested.');
     loadAllocation();
-  }).catch(showError);
+  }).catch(function(error) {
+    if (button) button.disabled = false;
+    showError(error);
+  });
 }
 
 export function exportAllocations() {
   callServer('exportAllocationDrafts', state.cohortId).then(function(exported) {
-    const url = safeUrl(exported.url);
-    const host = document.getElementById('alloc-export-result');
-    if (host) {
-      host.innerHTML = url
-        ? `<a href="${escapeHtml(url)}" target="_blank" rel="noopener">${escapeHtml(exported.title || 'Open spreadsheet')}</a>`
-        : escapeHtml(exported.shareProblem || 'Export finished.');
-    }
-    if (url) state.allocationSheetUrl = url;
-    const input = document.getElementById('alloc-sheet-url');
-    if (input && url) input.value = url;
-    showSuccess(exported.shared ? 'Allocation sheet created.' : 'Allocation sheet created. ' + (exported.shareProblem || ''));
+    paintAllocationExport(exported, exported.shared ? 'Allocation sheet created.' : 'Allocation sheet created. ' + (exported.shareProblem || ''));
     if (state.allocationDesk && state.allocationDesk.settings) state.allocationDesk.settings.lastExport = new Date().toISOString();
   }).catch(showError);
+}
+
+export function exportAllocationTokens() {
+  callServer('exportStaffQuotaSheet', state.cohortId).then(function(exported) {
+    paintAllocationExport(exported, exported.shared ? 'Token sheet created. Existing cohort tokens were not changed.' : 'Token sheet created. ' + (exported.shareProblem || ''));
+  }).catch(showError);
+}
+
+function paintAllocationExport(exported, message) {
+  const url = safeUrl(exported.url);
+  const host = document.getElementById('alloc-export-result');
+  if (host) {
+    host.innerHTML = url
+      ? `<a href="${escapeHtml(url)}" target="_blank" rel="noopener">${escapeHtml(exported.title || 'Open spreadsheet')}</a>`
+      : escapeHtml(exported.shareProblem || 'Export finished.');
+  }
+  if (url) {
+    state.allocationSheetUrl = url;
+    const input = document.getElementById('alloc-sheet-url');
+    if (input) input.value = url;
+    clearAllocationPreview();
+  }
+  showSuccess(message);
 }
 
 export function captureAllocationColumns() {
@@ -523,7 +637,7 @@ export function captureAllocationColumns() {
   boxes.forEach(function(box) {
     const key = box.getAttribute('data-alloc-col');
     const flag = box.getAttribute('data-flag');
-    if (!columns[key]) columns[key] = { key: key, showOnCard: false, filterable: false, sortable: false };
+    if (!columns[key]) columns[key] = { key: key, showOnCard: false, filterable: false, sortable: false, colorScale: false };
     columns[key][flag] = box.checked;
   });
   state.allocationDesk.settings.columns = Object.keys(columns).map(function(key) { return columns[key]; });
@@ -534,7 +648,7 @@ export function saveAllocationSettings() {
   document.querySelectorAll('[data-alloc-col]').forEach(function(box) {
     const key = box.getAttribute('data-alloc-col');
     const flag = box.getAttribute('data-flag');
-    if (!columns[key]) columns[key] = { key: key, showOnCard: false, filterable: false, sortable: false };
+    if (!columns[key]) columns[key] = { key: key, showOnCard: false, filterable: false, sortable: false, colorScale: false };
     columns[key][flag] = box.checked;
   });
   const config = {
@@ -558,25 +672,26 @@ export function visibleAllocationStudents(desk) {
     if (state.allocationSupport === 'flagged' && !student.flags.needsSupport) return false;
     return true;
   });
-  const dir = state.allocationSortDir === -1 ? -1 : 1;
-  rows.sort(function(left, right) {
-    return compareSortValues(allocationRank(left, state.allocationSort), allocationRank(right, state.allocationSort), dir) || left.sortName.localeCompare(right.sortName);
-  });
-  return rows;
+  rows.sort(function(left, right) { return left.sortName.localeCompare(right.sortName); });
+  return sortedRows('alloc-desk', rows, function(student, key) { return allocationRank(student, key); });
 }
 
 export function allocationRank(student, key) {
   if (key === 'name') return student.sortName || '';
   if (key === 'supervisor') return student.token && student.token.staffName ? student.token.staffName : '';
-  if (key === 'subject') return student.choices && student.choices.primary ? student.choices.primary : '';
+  if (key === 'subject') {
+    const choices = [];
+    if (student.choices && student.choices.primary) choices.push(student.choices.primary);
+    if (student.choices && student.choices.secondary && student.choices.secondary !== student.choices.primary) choices.push(student.choices.secondary);
+    return choices.join(', ');
+  }
   if (key === 'status') return student.flags.committed ? 2 : student.flags.drafted ? 1 : 0;
-  const raw = student.dynamicData ? student.dynamicData[key] : '';
-  const word = String(raw === undefined || raw === null ? '' : raw).toLowerCase();
-  const academic = { weak: 0, low: 1, avg: 2, average: 2, strong: 3, high: 4 };
-  if (Object.prototype.hasOwnProperty.call(academic, word)) return academic[word];
-  const numeric = Number(raw);
-  if (raw !== '' && raw !== null && raw !== undefined && !isNaN(numeric)) return numeric;
-  return word;
+  const field = String(key || '').indexOf('field:') === 0 ? String(key).slice(6) : key;
+  const raw = student.dynamicData ? student.dynamicData[field] : '';
+  if (raw === undefined || raw === null || raw === '') return '';
+  const numeric = scaleNumber(raw);
+  if (numeric !== null) return numeric;
+  return String(raw).toLowerCase();
 }
 
 export function selectedAllocationSubject(student) {

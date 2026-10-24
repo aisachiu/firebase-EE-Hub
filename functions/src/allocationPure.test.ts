@@ -1,15 +1,22 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { WORKSPACE_SHEET_HELP } from './workspaceSheetHelp';
 import {
   allocationExportRows,
+  allocationTab,
   applySavedConfig,
   buildDesk,
+  COLOR_SCALE_STOPS,
+  colorScaleFill,
+  columnScaleExtent,
   emptySettings,
   findAllocationTab,
   isEeActive,
   mergeDetected,
   parseTokenGrid,
   parseWorkspaceGrid,
+  tokenPreviewRows,
+  workspacePreviewRows,
   planBatchDraft,
   planCommit,
   planDraft,
@@ -247,8 +254,163 @@ test('the desk marks subject match, an HL miss, and support flags from the saved
   assert.equal(saved.primaryChoiceKey, 'choice1');
   assert.equal(saved.secondaryChoiceKey, '');
   assert.equal(saved.columns.find((column) => column.key === 'Y10 GPA')?.sortable, true);
+  assert.equal(saved.columns.find((column) => column.key === 'Y10 GPA')?.colorScale, false);
+  assert.equal(settings.columns.every((column) => column.showOnCard && column.sortable && column.colorScale === false), true);
   const rows = allocationExportRows(desk.students, saved);
   assert.equal(rows[1][2], 'Draft');
   assert.equal(rows[0].includes('Y10 GPA'), true);
   assert.equal(findAllocationTab([{ title: 'COHORTDATA 2026', rows: [] }, { title: 'SUPERVISORTOKENS: 2026', rows: [] }], '2026', 'tokens')?.title, 'SUPERVISORTOKENS: 2026');
 });
+
+test('workspace preview compares each sheet row with the hub and does not list removals', () => {
+  const leftOut = 'left.out@vsa.edu';
+  const parsed = parseWorkspaceGrid({
+    title: 'COHORTDATA: 2026',
+    rows: [
+      ['StudentId', 'SubjectChoice', 'Y10 GPA', 'EEActive'],
+      [JANE, '{"choice1":"History"}', 3.4, ''],
+      [MARK, '{"choice1":"Art"}', 2, 'no'],
+      ['missing@vsa.edu', '{"choice1":"Film"}', '', ''],
+    ],
+  });
+  const rows = workspacePreviewRows(parsed.rows, [
+    { studentId: JANE, eeActive: true },
+    { studentId: MARK, eeActive: true },
+    { studentId: leftOut, eeActive: true },
+  ], [{
+    studentId: JANE,
+    subjectChoices: { choice1: 'History' },
+    dynamicData: { 'Y10 GPA': 3.4 },
+    pendingClear: false,
+    updatedAt: '',
+  }]);
+  assert.equal(rows.find((row) => row.id === JANE)?.action, 'Unchanged');
+  assert.equal(rows.find((row) => row.id === MARK)?.action, 'Add');
+  assert.match(rows.find((row) => row.id === MARK)?.incoming || '', /choice1: Art/);
+  assert.equal(rows.find((row) => row.id === MARK)?.hub, '—');
+  assert.equal(rows.find((row) => row.id === 'missing@vsa.edu')?.action, 'Skip');
+  assert.equal(rows.find((row) => row.id === 'missing@vsa.edu')?.hub, 'Not on the roster');
+  assert.equal(rows.find((row) => row.id === leftOut), undefined);
+
+  const changed = workspacePreviewRows([{
+    studentId: JANE,
+    subjectChoices: { choice1: 'Biology' },
+    dynamicData: { 'Y10 GPA': 3.1 },
+    eeActive: false,
+  }], [{ studentId: JANE, eeActive: true }], [{
+    studentId: JANE,
+    subjectChoices: { choice1: 'History' },
+    dynamicData: { 'Y10 GPA': 3.4 },
+    pendingClear: false,
+    updatedAt: '',
+  }]);
+  assert.equal(changed[0].action, 'Update');
+  assert.match(changed[0].incoming, /Biology/);
+  assert.match(changed[0].incoming, /EEActive: no/);
+  assert.match(changed[0].hub, /History/);
+  assert.match(changed[0].hub, /EEActive: yes/);
+});
+
+test('token preview tops up and updates open slots without marking missing tokens for removal', () => {
+  const existing = [
+    token({ id: 'free', staffId: SMITH, status: 'available', eligibleSubjects: ['History'] }),
+    token({ id: 'keep', staffId: SMITH, status: 'draft', allocatedTo: JANE, assignedSubject: 'History', eligibleSubjects: ['History'] }),
+    token({ id: 'other', staffId: DAVIS, status: 'available', eligibleSubjects: ['Art'] }),
+  ];
+  const rows = tokenPreviewRows([
+    { staffId: SMITH, quota: 4, eligibleSubjects: ['History', 'Geography'] },
+    { staffId: 'new@vsa.edu', quota: 1, eligibleSubjects: ['Biology'] },
+    { staffId: 'same@vsa.edu', quota: 1, eligibleSubjects: ['Art'] },
+  ], existing.concat([
+    token({ id: 'same', staffId: 'same@vsa.edu', status: 'available', eligibleSubjects: ['Art'] }),
+  ]));
+  const smith = rows.find((row) => row.id === SMITH);
+  assert.equal(smith?.action, 'Update');
+  assert.match(smith?.incoming || '', /Quota 4/);
+  assert.match(smith?.hub || '', /2 tokens/);
+  assert.match(smith?.hub || '', /1 open, 1 draft, 0 committed/);
+  assert.equal(rows.find((row) => row.id === 'new@vsa.edu')?.action, 'Add');
+  assert.equal(rows.find((row) => row.id === 'new@vsa.edu')?.hub, 'No tokens yet');
+  assert.equal(rows.find((row) => row.id === 'same@vsa.edu')?.action, 'Unchanged');
+  assert.equal(rows.find((row) => row.id === DAVIS), undefined);
+
+  const kept = tokenPreviewRows([
+    { staffId: SMITH, quota: 1, eligibleSubjects: ['History'] },
+  ], existing);
+  assert.equal(kept[0].action, 'Unchanged');
+  assert.match(kept[0].hub, /2 tokens/);
+});
+
+test('color scale runs from the visible min to max on a blue sequential palette', () => {
+  assert.equal(columnScaleExtent(['', 'n/a', null]), null);
+  assert.equal(columnScaleExtent([3, '3']), null);
+  const extent = columnScaleExtent(['1', '', 'Weak', 4, 'History']);
+  assert.deepEqual(extent, { min: 0, max: 4 });
+  const low = colorScaleFill('Weak', extent);
+  const mid = colorScaleFill(2, extent);
+  const high = colorScaleFill(4, extent);
+  assert.equal(colorScaleFill('', extent), null);
+  assert.equal(colorScaleFill('History', extent), null);
+  assert.equal(low?.background, COLOR_SCALE_STOPS[0].background);
+  assert.equal(high?.background, COLOR_SCALE_STOPS[COLOR_SCALE_STOPS.length - 1].background);
+  assert.notEqual(low?.background, high?.background);
+  assert.equal(mid?.background, '#6baed6');
+  COLOR_SCALE_STOPS.forEach((stop) => {
+    assert.ok(contrastRatio(stop.background, stop.color) >= 4.5, stop.background);
+    const [red, green, blue] = rgb(stop.background);
+    assert.ok(blue >= red && blue >= green, stop.background);
+    assert.ok(stop.color === '#263746' || stop.color === '#ffffff');
+  });
+  assert.equal(colorScaleFill(0, null), null);
+});
+
+test('the settings help example is the workspace sheet the parser accepts', () => {
+  const row = WORKSPACE_SHEET_HELP.exampleRow;
+  const parsed = parseWorkspaceGrid({
+    title: WORKSPACE_SHEET_HELP.tabExample,
+    rows: [
+      WORKSPACE_SHEET_HELP.exampleHeaders,
+      [row.StudentId, row.SubjectChoice, row.Choice_choice2, row['Y10 GPA'], row.EEActive],
+    ],
+  });
+  assert.equal(parsed.warnings.length, 0);
+  assert.equal(parsed.rows[0].subjectChoices.choice1, 'History');
+  assert.equal(parsed.rows[0].subjectChoices.choice2, 'Eng Lit');
+  assert.equal(parsed.rows[0].subjectChoices.interdisciplinary, true);
+  assert.equal(parsed.rows[0].dynamicData['Y10 GPA'], '3.4');
+  assert.equal(parsed.rows[0].eeActive, true);
+  assert.deepEqual(parsed.choiceKeys, ['choice1', 'choice2', 'interdisciplinary']);
+  assert.equal(allocationTab(WORKSPACE_SHEET_HELP.tabExample)?.kind, 'workspace');
+  assert.equal(allocationTab('COHORTDATA: 2026')?.cohortId, '2026');
+  const json = JSON.parse(WORKSPACE_SHEET_HELP.jsonExample) as Record<string, unknown>;
+  assert.equal(Array.isArray(json), false);
+  assert.equal(json.choice1, 'History');
+  assert.equal(json.choice2, 'Eng Lit');
+  assert.equal(json.interdisciplinary, true);
+  assert.match(WORKSPACE_SHEET_HELP.mappingNote, /No subject choices/);
+  assert.match(WORKSPACE_SHEET_HELP.mappingNote, /Malformed JSON/);
+  assert.match(WORKSPACE_SHEET_HELP.requiredColumn, /StudentId/);
+  assert.match(WORKSPACE_SHEET_HELP.workspaceNote, /does not remove/);
+  assert.match(WORKSPACE_SHEET_HELP.tokenNote, /does not remove/);
+  assert.ok(WORKSPACE_SHEET_HELP.choiceHeaders.includes('SubjectChoice'));
+  assert.ok(WORKSPACE_SHEET_HELP.choiceColumnPrefixes.includes('Choice_'));
+});
+
+function rgb(hex: string): [number, number, number] {
+  const value = parseInt(hex.slice(1), 16);
+  return [(value >> 16) & 255, (value >> 8) & 255, value & 255];
+}
+
+function contrastRatio(background: string, foreground: string): number {
+  const lighter = Math.max(relativeLuminance(background), relativeLuminance(foreground));
+  const darker = Math.min(relativeLuminance(background), relativeLuminance(foreground));
+  return (lighter + 0.05) / (darker + 0.05);
+}
+
+function relativeLuminance(hex: string): number {
+  const channels = rgb(hex).map((channel) => {
+    const value = channel / 255;
+    return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2];
+}
