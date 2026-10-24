@@ -2,6 +2,7 @@ import { callServer } from '../shared/api.js';
 import { showError, showSuccess } from '../shared/feedback.js';
 import { escapeHtml, safeUrl } from '../shared/html.js';
 import { loadingLine } from '../shared/loading.js';
+import { renderSheetIngestPreview } from '../shared/sheetPreview.js';
 
 export function renderSheetSync(target) {
   target.innerHTML = `<section class="editor"><h2>Sheets</h2>${loadingLine('Loading collections...')}</section>`;
@@ -73,11 +74,13 @@ export function renderSheetSync(target) {
       const source = document.getElementById('sheet-url').value;
       if (!entities.length) { showError(new Error('Choose at least one collection to ingest.')); return; }
       callServer('previewSheetIngest', { url: source }, entities).then(function(preview) {
-        const rows = preview.tables.map(function(table) {
-          return `<tr><td>${escapeHtml(table.label)}</td><td>${escapeHtml(String(table.incoming))}</td><td>${escapeHtml(String(table.existing))}</td><td>${escapeHtml(String(table.removing))}</td></tr>`;
-        }).join('');
-        const warnings = (preview.warnings || []).map(function(warning) { return `<li>${escapeHtml(warning)}</li>`; }).join('');
-        document.getElementById('sheet-preview-result').innerHTML = `<div class="table-wrap"><table class="data"><thead><tr><th>Collection</th><th>Rows in the sheet</th><th>Rows in the hub</th><th>Rows removed</th></tr></thead><tbody>${rows}</tbody></table></div>${warnings ? `<ul>${warnings}</ul>` : ''}`;
+        document.getElementById('sheet-preview-result').innerHTML = renderSheetIngestPreview({
+          summaryColumns: ['Collection', 'Rows in the sheet', 'Rows in the hub', 'Rows removed'],
+          summaryRows: preview.tables.map(function(table) {
+            return [table.label, table.incoming, table.existing, table.removing];
+          }),
+          warnings: preview.warnings,
+        });
         document.getElementById('sheet-apply').disabled = false;
       }).catch(showError);
     });

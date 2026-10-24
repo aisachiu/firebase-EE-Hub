@@ -32,6 +32,8 @@ export interface ColumnFlag {
   showOnCard: boolean;
   filterable: boolean;
   sortable: boolean;
+  /** Sequential blue fill for numeric cells. Off until a coordinator turns it on. */
+  colorScale: boolean;
 }
 
 export interface AllocationSettings {
@@ -630,11 +632,16 @@ export function settingsFromDoc(doc: Doc | null): AllocationSettings {
 }
 
 export function mergeDetected(settings: AllocationSettings, choiceKeys: string[], dynamicKeys: string[]): AllocationSettings {
-  const columns = dynamicKeys.map((key) => settings.columns.find((column) => column.key === key) || {
-    key,
-    showOnCard: true,
-    filterable: false,
-    sortable: false,
+  const columns = dynamicKeys.map((key) => {
+    const prior = settings.columns.find((column) => column.key === key);
+    if (prior) return { ...prior, colorScale: prior.colorScale === true };
+    return {
+      key,
+      showOnCard: true,
+      filterable: false,
+      sortable: true,
+      colorScale: false,
+    };
   });
   const next: AllocationSettings = {
     ...settings,
@@ -646,6 +653,151 @@ export function mergeDetected(settings: AllocationSettings, choiceKeys: string[]
   if (!next.secondaryChoiceKey && choiceKeys.includes('choice2')) next.secondaryChoiceKey = 'choice2';
   if (!next.interdisciplinaryKey && choiceKeys.includes('interdisciplinary')) next.interdisciplinaryKey = 'interdisciplinary';
   return next;
+}
+
+export type AllocationPreviewAction = 'Add' | 'Update' | 'Unchanged' | 'Skip';
+
+export interface AllocationPreviewRow {
+  id: string;
+  action: AllocationPreviewAction;
+  incoming: string;
+  hub: string;
+}
+
+/** Light blue → deep blue (ColorBrewer Blues). Luminance carries the value, so the scale stays distinct without red and green. */
+export const COLOR_SCALE_STOPS: { background: string; color: string }[] = [
+  { background: '#f7fbff', color: '#263746' },
+  { background: '#c6dbef', color: '#263746' },
+  { background: '#6baed6', color: '#263746' },
+  { background: '#2171b5', color: '#ffffff' },
+  { background: '#08306b', color: '#ffffff' },
+];
+
+const ORDINAL_WORDS: Record<string, number> = {
+  weak: 0,
+  low: 1,
+  avg: 2,
+  average: 2,
+  strong: 3,
+  high: 4,
+};
+
+export function scaleNumber(value: unknown): number | null {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (typeof value === 'boolean') return value ? 1 : 0;
+  if (value === null || value === undefined) return null;
+  const raw = text(value);
+  if (!raw) return null;
+  if (/^-?\d+(\.\d+)?$/.test(raw)) return Number(raw);
+  const word = raw.toLowerCase();
+  if (Object.prototype.hasOwnProperty.call(ORDINAL_WORDS, word)) return ORDINAL_WORDS[word];
+  return null;
+}
+
+export function columnScaleExtent(values: unknown[]): { min: number; max: number } | null {
+  const nums = values.map(scaleNumber).filter((value): value is number => value !== null);
+  if (!nums.length) return null;
+  const min = Math.min(...nums);
+  const max = Math.max(...nums);
+  if (min === max) return null;
+  return { min, max };
+}
+
+export function colorScaleFill(value: unknown, extent: { min: number; max: number } | null): { background: string; color: string } | null {
+  if (!extent) return null;
+  const number = scaleNumber(value);
+  if (number === null) return null;
+  const span = extent.max - extent.min;
+  if (span <= 0) return null;
+  const t = Math.min(1, Math.max(0, (number - extent.min) / span));
+  const index = Math.round(t * (COLOR_SCALE_STOPS.length - 1));
+  return COLOR_SCALE_STOPS[index];
+}
+
+export function workspacePreviewRows(
+  parsedRows: ParsedWorkspaceRow[],
+  roster: { studentId: string; eeActive?: unknown }[],
+  existing: WorkspaceRecord[],
+): AllocationPreviewRow[] {
+  const onRoster = new Map(roster.map((member) => [normalizeEmail(member.studentId), member]));
+  const hub = new Map(existing.map((row) => [normalizeEmail(row.studentId), row]));
+  return parsedRows.map((row) => {
+    const incoming = summarizeWorkspace(row.subjectChoices, row.dynamicData, row.eeActive) || '—';
+    const member = onRoster.get(row.studentId);
+    if (!member) return { id: row.studentId, action: 'Skip', incoming, hub: 'Not on the roster' };
+    const prior = hub.get(row.studentId);
+    const hubActive = text(member.eeActive) === '' ? null : toBoolean(member.eeActive);
+    const activeSame = row.eeActive === null || row.eeActive === (hubActive === null ? true : hubActive);
+    const hubSummary = summarizeWorkspace(
+      prior?.subjectChoices || {},
+      prior?.dynamicData || {},
+      row.eeActive === null ? null : (hubActive === null ? true : hubActive),
+    );
+    if (!prior) return { id: row.studentId, action: 'Add', incoming, hub: '—' };
+    const same = sameRecord(row.subjectChoices, prior.subjectChoices) && sameRecord(row.dynamicData, prior.dynamicData) && activeSame;
+    return { id: row.studentId, action: same ? 'Unchanged' : 'Update', incoming, hub: hubSummary || '—' };
+  });
+}
+
+export function tokenPreviewRows(parsedRows: ParsedTokenRow[], existing: TokenRecord[]): AllocationPreviewRow[] {
+  return parsedRows.map((row) => {
+    const owned = existing.filter((token) => token.staffId === row.staffId);
+    const open = owned.filter((token) => token.status === 'available');
+    const draft = owned.filter((token) => token.status === 'draft').length;
+    const committed = owned.filter((token) => token.status === 'committed').length;
+    const gap = row.quota - owned.length;
+    const creates = Math.max(0, gap);
+    const subjects = row.eligibleSubjects.join(', ') || 'No subjects';
+    const incoming = `Quota ${row.quota} · ${subjects}`;
+    const hub = owned.length
+      ? `${owned.length} token${owned.length === 1 ? '' : 's'} · ${open.length} open, ${draft} draft, ${committed} committed · ${uniqueSubjectLists(owned)}`
+      : 'No tokens yet';
+    const subjectUpdates = open.filter((token) => token.eligibleSubjects.join('\n') !== row.eligibleSubjects.join('\n')).length;
+    let action: AllocationPreviewAction = 'Unchanged';
+    if (creates > 0 && owned.length === 0) action = 'Add';
+    else if (creates > 0 || subjectUpdates > 0) action = 'Update';
+    return { id: row.staffId, action, incoming, hub };
+  });
+}
+
+function summarizeWorkspace(
+  choices: Record<string, string | number | boolean>,
+  dynamicData: Record<string, string | number | boolean>,
+  eeActive: boolean | null,
+): string {
+  const parts: string[] = [];
+  const choiceText = summarizePairs(choices);
+  const dynamicText = summarizePairs(dynamicData);
+  if (choiceText) parts.push(choiceText);
+  if (dynamicText) parts.push(dynamicText);
+  if (eeActive === true || eeActive === false) parts.push(`EEActive: ${eeActive ? 'yes' : 'no'}`);
+  return parts.join(' · ');
+}
+
+function summarizePairs(record: Record<string, string | number | boolean>): string {
+  return Object.keys(record).sort().map((key) => `${key}: ${formatPreviewValue(record[key])}`).join(', ');
+}
+
+function formatPreviewValue(value: string | number | boolean): string {
+  if (typeof value === 'boolean') return value ? 'true' : 'false';
+  return String(value);
+}
+
+function sameRecord(left: Record<string, string | number | boolean>, right: Record<string, string | number | boolean>): boolean {
+  const keys = new Set([...Object.keys(left), ...Object.keys(right)]);
+  for (const key of keys) {
+    if (left[key] !== right[key]) return false;
+  }
+  return true;
+}
+
+function uniqueSubjectLists(tokens: TokenRecord[]): string {
+  const lists: string[] = [];
+  tokens.forEach((token) => {
+    const label = token.eligibleSubjects.join(', ') || 'No subjects';
+    if (!lists.includes(label)) lists.push(label);
+  });
+  return lists.join(' / ') || 'No subjects';
 }
 
 export function applySavedConfig(current: AllocationSettings, incoming: Doc): AllocationSettings {
@@ -921,6 +1073,7 @@ function flagFrom(key: string, row: Doc | undefined): ColumnFlag {
     showOnCard: row ? row.showOnCard === true : false,
     filterable: row ? row.filterable === true : false,
     sortable: row ? row.sortable === true : false,
+    colorScale: row ? row.colorScale === true : false,
   };
 }
 

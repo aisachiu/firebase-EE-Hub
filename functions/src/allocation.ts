@@ -28,23 +28,32 @@ import {
   parseSubjectCell,
   staffQuotaTokenRows,
   tokenFromDoc,
+  tokenPreviewRows,
   tokenSheetRows,
   TokenRecord,
   uniqueSubjects,
   workspaceFromDoc,
+  workspacePreviewRows,
   WorkspaceRecord,
+  AllocationPreviewRow,
 } from './allocationPure';
+import { WORKSPACE_SHEET_HELP } from './workspaceSheetHelp';
 import { Doc, HubError, normalizeEmail, nowIso, shortId, text } from './util';
 
 export interface AllocationIngestResult {
   cohortId: string;
   kind: 'workspace' | 'tokens';
   spreadsheetId: string;
+  sheet: string;
   incoming: number;
+  existing: number;
+  removing: number;
   writing: number;
   skipped: number;
   creating: number;
   warnings: string[];
+  rows: AllocationPreviewRow[];
+  note: string;
 }
 
 interface IngestDeps {
@@ -485,7 +494,20 @@ async function prepareStaffQuota(app: App, cohortId: string) {
   ops.push({ kind: 'config', cohortId: cohort.id, data: { ...settings, lastTokenSync: now } });
   return {
     ops,
-    preview: ingestPreview(cohort.id, 'tokens', '', parsed.rows.length, plan.eligibleUpdates.length, 0, plan.create.length, parsed.warnings.concat(plan.warnings)),
+    preview: ingestPreview({
+      cohortId: cohort.id,
+      kind: 'tokens',
+      spreadsheetId: '',
+      sheet: `SUPERVISORTOKENS: ${cohort.id}`,
+      incoming: parsed.rows.length,
+      existing: existing.length,
+      writing: plan.eligibleUpdates.length,
+      skipped: 0,
+      creating: plan.create.length,
+      warnings: parsed.warnings.concat(plan.warnings),
+      rows: tokenPreviewRows(parsed.rows, existing),
+      note: WORKSPACE_SHEET_HELP.tokenNote,
+    }),
   };
 }
 
@@ -536,9 +558,23 @@ async function prepareWorkspace(app: App, cohortId: string, grid: SheetGrid, spr
   });
   const next = { ...mergeDetected(settings, parsed.choiceKeys, parsed.dynamicKeys), lastWorkspaceSync: now };
   ops.push({ kind: 'config', cohortId, data: next });
+  const roster = members.map((member) => ({ studentId: normalizeEmail(member.StudentId), eeActive: member.eeActive }));
   return {
     ops,
-    preview: ingestPreview(cohortId, 'workspace', spreadsheetId, parsed.rows.length, writing, skipped, 0, parsed.warnings),
+    preview: ingestPreview({
+      cohortId,
+      kind: 'workspace',
+      spreadsheetId,
+      sheet: grid.title,
+      incoming: parsed.rows.length,
+      existing: existing.size,
+      writing,
+      skipped,
+      creating: 0,
+      warnings: parsed.warnings,
+      rows: workspacePreviewRows(parsed.rows, roster, [...existing.values()]),
+      note: WORKSPACE_SHEET_HELP.workspaceNote,
+    }),
   };
 }
 
@@ -561,12 +597,25 @@ async function prepareTokens(app: App, cohortId: string, grid: SheetGrid, spread
   ops.push({ kind: 'config', cohortId, data: { ...settings, lastTokenSync: now } });
   return {
     ops,
-    preview: ingestPreview(cohortId, 'tokens', spreadsheetId, parsed.rows.length, plan.eligibleUpdates.length, 0, plan.create.length, parsed.warnings.concat(plan.warnings)),
+    preview: ingestPreview({
+      cohortId,
+      kind: 'tokens',
+      spreadsheetId,
+      sheet: grid.title,
+      incoming: parsed.rows.length,
+      existing: existing.length,
+      writing: plan.eligibleUpdates.length,
+      skipped: 0,
+      creating: plan.create.length,
+      warnings: parsed.warnings.concat(plan.warnings),
+      rows: tokenPreviewRows(parsed.rows, existing),
+      note: WORKSPACE_SHEET_HELP.tokenNote,
+    }),
   };
 }
 
-function ingestPreview(cohortId: string, kind: 'workspace' | 'tokens', spreadsheetId: string, incoming: number, writing: number, skipped: number, creating: number, warnings: string[]): AllocationIngestResult {
-  return { cohortId, kind, spreadsheetId, incoming, writing, skipped, creating, warnings };
+function ingestPreview(input: Omit<AllocationIngestResult, 'removing'>): AllocationIngestResult {
+  return { ...input, removing: 0 };
 }
 
 async function requireActiveMember(app: App, cohortId: string, studentId: string): Promise<Doc> {

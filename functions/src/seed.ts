@@ -93,9 +93,9 @@ async function seed() {
     primaryChoiceKey: 'choice1', secondaryChoiceKey: 'choice2', interdisciplinaryKey: 'interdisciplinary',
     hlColumn: 'HL', supportColumn: 'Academic Flag',
     columns: [
-      { key: 'Y10 GPA', showOnCard: true, filterable: false, sortable: true },
-      { key: 'HL', showOnCard: true, filterable: false, sortable: false },
-      { key: 'Academic Flag', showOnCard: true, filterable: true, sortable: false },
+      { key: 'Y10 GPA', showOnCard: true, filterable: false, sortable: true, colorScale: false },
+      { key: 'HL', showOnCard: true, filterable: false, sortable: true, colorScale: false },
+      { key: 'Academic Flag', showOnCard: true, filterable: true, sortable: true, colorScale: false },
     ],
     detectedChoiceKeys: ['choice1', 'choice2', 'interdisciplinary'],
     detectedDynamicKeys: ['Academic Flag', 'HL', 'Y10 GPA'],
