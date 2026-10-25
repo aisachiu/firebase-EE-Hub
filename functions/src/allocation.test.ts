@@ -127,6 +127,10 @@ test('ingest writes workspace rows for roster students and tops up tokens once',
   const preview = await previewAllocationIngest(app, '2026', SHEET, 'workspace', { workbook: workbook([workspaceGrid, tokenGrid]) });
   assert.equal(preview.writing, 1);
   assert.equal(preview.skipped, 1);
+  assert.equal(preview.removing, 0);
+  assert.equal(preview.rows.find((row) => row.id === JANE)?.action, 'Add');
+  assert.equal(preview.rows.find((row) => row.id === 'missing@vsa.edu')?.action, 'Skip');
+  assert.match(preview.note, /does not remove/);
   assert.equal((await app.store.listWorkspace('2026')).length, 0);
 
   await applyAllocationIngest(app, '2026', SHEET, 'workspace', { workbook: workbook([workspaceGrid, tokenGrid]) });
@@ -135,8 +139,16 @@ test('ingest writes workspace rows for roster students and tops up tokens once',
   assert.equal(jane?.dynamicData['Y10 GPA'], 'Weak');
   const config = await app.store.getAllocationConfig('2026');
   assert.equal(config?.primaryChoiceKey, 'choice1');
+  assert.equal(config?.columns?.find((column: Doc) => column.key === 'Y10 GPA')?.sortable, true);
+  assert.equal(config?.columns?.find((column: Doc) => column.key === 'Y10 GPA')?.showOnCard, true);
+  assert.equal(config?.columns?.find((column: Doc) => column.key === 'Y10 GPA')?.colorScale, false);
   assert.ok(config?.lastWorkspaceSync);
 
+  const tokenPreview = await previewAllocationIngest(app, '2026', SHEET, 'tokens', { workbook: workbook([workspaceGrid, tokenGrid]) });
+  assert.equal(tokenPreview.removing, 0);
+  assert.equal(tokenPreview.creating, 2);
+  assert.equal(tokenPreview.rows.find((row) => row.id === SMITH)?.action, 'Add');
+  assert.match(tokenPreview.note, /does not remove/);
   await applyAllocationIngest(app, '2026', SHEET, 'tokens', { workbook: workbook([workspaceGrid, tokenGrid]) });
   await applyAllocationIngest(app, '2026', SHEET, 'tokens', { workbook: workbook([workspaceGrid, tokenGrid]) });
   const tokens = await app.store.listTokens('2026');
