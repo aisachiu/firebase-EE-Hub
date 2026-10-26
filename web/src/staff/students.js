@@ -5,7 +5,7 @@ import { escapeHtml, shortDate, textCompare } from '../shared/html.js';
 import { loadingLine } from '../shared/loading.js';
 import { advanceScene } from '../shared/scene.js';
 import { state } from '../shared/state.js';
-import { paintTabDot, renderShell } from '../shell.js';
+import { paintTabDot, rememberHeaderCohorts, renderShell } from '../shell.js';
 import { bindUnreadNotices, paintStudentPage, renderUnreadNotices } from '../student/home.js';
 import { dueSortKey, journeyDayLabel, milestoneMark, phaseCardAttrs, phaseRangeLabel } from '../student/journey.js';
 import { openMassMilestoneEditor } from '../student/milestones.js';
@@ -48,6 +48,7 @@ export function renderStaffHome() {
   callServer('getStaffHome', state.cohortId || '', state.actingAs).then(function(home) {
     state.staffHome = home;
     state.cohortId = home.cohortId || '';
+    rememberHeaderCohorts(home.cohorts);
     state.staffTicketUnread = home.unreadTicketCount || 0;
     paintTabDot('tickets', state.staffTicketUnread, 'Messages');
     paintStaffCards(home);
@@ -77,7 +78,7 @@ export function visibleStaffStudents(home) {
   const query = state.staffQuery.trim().toLowerCase();
   if (query) {
     students = students.filter(function(student) {
-      return (student.displayName + ' ' + student.surname + ' ' + student.subject + ' ' + student.hrm).toLowerCase().indexOf(query) >= 0;
+      return (student.displayName + ' ' + student.surname + ' ' + student.subject + ' ' + student.hrm + ' ' + (student.studentNumber || '')).toLowerCase().indexOf(query) >= 0;
     });
   }
   const sort = state.staffSort || 'surname';
@@ -102,7 +103,7 @@ export function rememberStaffJourneyExpanded(expanded) {
 }
 
 export function staffIdentityMarkup(student) {
-  const details = escapeHtml(student.subject || 'No subject yet') + (student.hrm ? ' · ' + escapeHtml(student.hrm) : '') + (student.surname ? ' · ' + escapeHtml(student.surname) : '');
+  const details = escapeHtml(student.subject || 'No subject yet') + (student.studentNumber ? ' · Student Number ' + escapeHtml(student.studentNumber) : '') + (student.hrm ? ' · ' + escapeHtml(student.hrm) : '') + (student.surname ? ' · ' + escapeHtml(student.surname) : '');
   return `<button type="button" class="name" data-open-student="${escapeHtml(student.email)}">${escapeHtml(student.displayName)}</button><div class="muted list-student-meta">${details}</div>`;
 }
 
@@ -311,10 +312,6 @@ export function paintStaffCards(home) {
   const main = document.getElementById('main');
   const layout = state.staffLayout === 'list' ? 'list' : 'tile';
   main.classList.toggle('staff-list', layout === 'list');
-  const roles = [];
-  if (state.user.permissions.canAdmin) roles.push(['coordinator', 'Coordinator']);
-  if (state.user.permissions.isSupervisor) roles.push(['supervisor', 'Supervisor']);
-  roles.push(['staff', 'Staff browse']);
   const knownStudents = {};
   (home.students || []).forEach(function(student) { knownStudents[student.email] = true; });
   state.staffSelected = (state.staffSelected || []).filter(function(email) { return knownStudents[email]; });
@@ -327,12 +324,6 @@ export function paintStaffCards(home) {
   (home.phases || []).forEach(function(phase) { phaseName[phase.phaseId] = phase.phaseTitle; });
   const supervisors = home.supervisors || [];
   main.innerHTML = `${renderUnreadNotices(home.unreadTickets)}<div class="toolbar">
-      <label for="staff-cohort">Cohort</label><select id="staff-cohort">${(home.cohorts || []).map(function(cohort) {
-        return `<option value="${escapeHtml(cohort.id)}" ${cohort.id === home.cohortId ? 'selected' : ''}>${escapeHtml(cohort.name)}</option>`;
-      }).join('')}</select>
-      <label for="acting-as">Acting as</label><select id="acting-as">${roles.map(function(role) {
-        return `<option value="${role[0]}" ${state.actingAs === role[0] ? 'selected' : ''}>${role[1]}</option>`;
-      }).join('')}</select>
       <label for="staff-sort">Sort</label><select id="staff-sort" aria-label="Sort students">
         <option value="surname" ${state.staffSort === 'surname' ? 'selected' : ''}>Last name</option>
         <option value="displayName" ${state.staffSort === 'displayName' ? 'selected' : ''}>Display name</option>
@@ -379,22 +370,6 @@ export function paintStaffCards(home) {
     renderStaffHome();
   });
   bindSupervisorTodoList(main, function() { renderStaffHome(); });
-  document.getElementById('staff-cohort').addEventListener('change', function(event) {
-    state.cohortId = event.target.value;
-    state.staffSupervisor = '';
-    state.staffSelected = [];
-    state.staffHome = null;
-    renderStaffHome();
-  });
-  document.getElementById('acting-as').addEventListener('change', function(event) {
-    state.actingAs = event.target.value;
-    state.staffSelected = [];
-    state.staffHome = null;
-    state.staffStudent = null;
-    state.staffStudentHome = null;
-    state.ticketBadgeFor = '';
-    renderShell();
-  });
   function syncStaffSelectionChrome() {
     const count = document.getElementById('staff-selected-count');
     if (count) count.textContent = state.staffSelected.length + ' selected';

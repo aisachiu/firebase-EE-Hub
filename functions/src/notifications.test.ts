@@ -73,6 +73,7 @@ function sweepInput(overrides: Partial<Parameters<typeof planSweep>[0]> = {}) {
     students: [{
       cohortId: '2026',
       email: 'student@vsa.example.edu',
+      studentEmail: 'student@vsa.example.edu',
       displayName: 'Jamie Wong',
       supervisorId: 'supervisor@vsa.example.edu',
     }],
@@ -102,6 +103,38 @@ test('trigger day is counted from the milestone due date', () => {
   assert.equal(timingLabel('on', 0), 'On the due date');
   assert.equal(audienceLabel('coordinator', 'student'), 'Coordinator only');
   assert.equal(audienceLabel('owner', 'supervisor'), 'Milestone owner · assigned supervisor');
+});
+
+test('student reminders use Student Email and never the login StudentId', () => {
+  const plan = planSweep(sweepInput({
+    students: [{
+      cohortId: '2026',
+      email: 'hub.login@vsa.example.edu',
+      studentEmail: 'jamie.mail@vsa.example.edu',
+      displayName: 'Jamie Wong',
+      supervisorId: 'supervisor@vsa.example.edu',
+    }],
+    tasks: [{
+      ...sweepInput().tasks[0],
+      studentId: 'hub.login@vsa.example.edu',
+    }],
+  }));
+  assert.equal(plan.sends.length, 1);
+  assert.equal(plan.sends[0].studentId, 'hub.login@vsa.example.edu');
+  assert.deepEqual(plan.sends[0].recipients, ['jamie.mail@vsa.example.edu']);
+  assert.equal(plan.sends[0].recipients.includes('hub.login@vsa.example.edu'), false);
+  const missing = planSweep(sweepInput({
+    students: [{
+      cohortId: '2026',
+      email: 'hub.login@vsa.example.edu',
+      studentEmail: '',
+      displayName: 'Jamie Wong',
+      supervisorId: 'supervisor@vsa.example.edu',
+    }],
+    tasks: [{ ...sweepInput().tasks[0], studentId: 'hub.login@vsa.example.edu' }],
+  }));
+  assert.equal(missing.sends.length, 0);
+  assert.equal(missing.skipped[0].reason, 'No recipient for this milestone owner.');
 });
 
 test('a cohort rule emails the milestone owner once on the trigger day', () => {
@@ -153,6 +186,7 @@ test('supervisor overlays add reminders only for that supervisor’s students', 
   const other = {
     cohortId: '2026',
     email: 'other@vsa.example.edu',
+    studentEmail: 'other@vsa.example.edu',
     displayName: 'Other Student',
     supervisorId: 'other-supervisor@vsa.example.edu',
   };

@@ -17,10 +17,13 @@ button { cursor: pointer; }
 .topbar { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 8px clamp(12px, 2.5vw, 32px); background: var(--ink); color: white; }
 .brand { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 700; letter-spacing: .04em; }
 .brand-mark { width: 22px; height: 22px; display: grid; place-items: center; color: var(--ink); background: white; font: 700 11px Helvetica, Arial, sans-serif; }
-.account { color: #e8f0f5; text-align: right; font-size: 11px; line-height: 1.25; }
+.account { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px 10px; color: #e8f0f5; text-align: right; font-size: 11px; line-height: 1.25; }
+.header-context { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; }
+.header-context label { font-size: 10px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: #d5e4ef; }
+.header-context select { max-width: 11rem; padding: 3px 6px; color: var(--ink); background: white; border: 0; border-radius: 3px; font-size: 12px; }
 .request-indicator { display: inline-flex; align-items: center; gap: 6px; min-height: 16px; color: #e8f0f5; font-size: 10px; opacity: 0; transition: opacity .18s ease; }
 .request-indicator.active { opacity: 1; }
-.request-indicator::before { width: 8px; height: 8px; border: 2px solid rgba(232, 240, 245, .35); border-top-color: var(--green); border-radius: 50%; content: ''; animation: request-spin .8s linear infinite; }
+.request-indicator.active::before { width: 8px; height: 8px; border: 2px solid rgba(232, 240, 245, .35); border-top-color: var(--green); border-radius: 50%; content: ''; animation: request-spin .8s linear infinite; }
 @keyframes request-spin { to { transform: rotate(360deg); } }
 .shell { max-width: 1440px; margin: 0 auto; padding: 10px clamp(12px, 2.5vw, 32px) 32px; }
 .nav { display: flex; align-items: center; gap: 2px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
@@ -421,7 +424,7 @@ main.plan-wide { max-width: none; padding-inline: clamp(12px, 2vw, 28px); }
   .scale label { grid-template-columns: auto auto 1fr; justify-items: start; align-items: center; text-align: left; }
   .field.wide { grid-column: auto; }
   .list-row { align-items: flex-start; }
-  .account { max-width: 48%; overflow-wrap: anywhere; }
+  .account { max-width: none; flex-basis: 100%; justify-content: flex-start; overflow-wrap: anywhere; }
   h1 { font-size: 25px; }
   .template-phase { padding: 14px; }
   #assignment-roster td, #assignment-roster th { padding: 9px 8px; }

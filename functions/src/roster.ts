@@ -1,6 +1,7 @@
 import { HubUser, normalizeStaffView } from './permissions';
 import { cohortSheetName, COLLECTIONS, normalizePhaseColor } from './schema';
 import { App, deny } from './session';
+import { canonicalStudentEmail, canonicalStudentNumber, studentLoginId } from './studentIdentity';
 import { dateOnlyValue, Doc, driveNamePart, HubError, normalizeEmail, text, toBoolean } from './util';
 
 export interface CohortEntry {
@@ -16,6 +17,7 @@ export interface CohortEntry {
 export interface Placement {
   cohortId: string;
   email: string;
+  studentEmail: string;
   displayName: string;
   surname: string;
   firstName: string;
@@ -60,14 +62,15 @@ export async function requireCohort(app: App, cohortId: string, includeInactive 
 }
 
 export function placementFromMember(cohortId: string, record: Doc): Placement {
-  const email = normalizeEmail(record.StudentId);
+  const email = studentLoginId(record);
   return {
     cohortId,
     email,
+    studentEmail: canonicalStudentEmail(record),
     displayName: text(record['Display Name']) || email,
     surname: text(record.Surname),
     firstName: text(record['First Name']),
-    studentNumber: text(record['Student ID']),
+    studentNumber: canonicalStudentNumber(record),
     hrm: text(record.HRM),
     subject: text(record.subject),
     supervisorId: normalizeEmail(record.supervisorId),

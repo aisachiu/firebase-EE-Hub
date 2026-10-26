@@ -8,6 +8,7 @@ import { getGoogleAuth, GOOGLE_AUTH_REJECTED, GoogleOAuthSource } from './google
 import { requireCohort } from './roster';
 import { COLLECTIONS } from './schema';
 import { App, audited, requireAdmin } from './session';
+import { canonicalStudentEmail, canonicalStudentNumber } from './studentIdentity';
 import { Doc, driveNamePart, HubError, normalizeEmail, text, toBoolean, validateEmail } from './util';
 
 const NAME_LIMIT = 80;
@@ -143,7 +144,7 @@ function expectedNames(records: Doc[], prefix: string, suffix: string) {
   const prepared = records.map((record) => ({
     studentId: normalizeEmail(record.StudentId),
     baseName: sanitizeName(String(prefix) + displayName(record) + String(suffix)),
-    token: text(record['Student ID']) || normalizeEmail(record.StudentId),
+    token: canonicalStudentNumber(record),
   }));
   const counts: Record<string, number> = {};
   prepared.forEach((item) => { if (item.baseName) counts[item.baseName] = (counts[item.baseName] || 0) + 1; });
@@ -151,7 +152,7 @@ function expectedNames(records: Doc[], prefix: string, suffix: string) {
   const used: Record<string, boolean> = {};
   prepared.forEach((item) => {
     if (!item.baseName) { names[item.studentId] = ''; return; }
-    let name = counts[item.baseName] > 1 ? sanitizeName(`${item.baseName} (${item.token})`) : item.baseName;
+    let name = counts[item.baseName] > 1 && item.token ? sanitizeName(`${item.baseName} (${item.token})`) : item.baseName;
     if (used[name]) name = sanitizeName(`${name} ${item.studentId}`);
     used[name] = true;
     names[item.studentId] = name;
@@ -716,8 +717,8 @@ async function placeDoc(drive: DriveClient, member: Doc, folderId: string, docNa
   }
 }
 
-function cohortStudentEmail(member: Doc): unknown {
-  return member['Student Email'];
+function cohortStudentEmail(member: Doc): string {
+  return canonicalStudentEmail(member);
 }
 
 function previewShares(member: Doc, options: { shareStudent: boolean; shareParent: boolean }): ShareResult[] {

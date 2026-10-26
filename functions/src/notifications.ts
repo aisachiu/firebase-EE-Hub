@@ -186,6 +186,7 @@ async function loadStudents(app: App, cohortIds: string[]): Promise<SweepStudent
       rows.push({
         cohortId,
         email: placement.email,
+        studentEmail: placement.studentEmail,
         displayName: placement.displayName,
         supervisorId: placement.supervisorId,
       });
@@ -614,7 +615,7 @@ function presentSend(row: Doc, templates: Map<string, SweepTemplate>) {
 }
 
 async function recordStudentEmail(app: App, send: PlannedSend, before: string[], after: string[]): Promise<void> {
-  if (!newlyEmailedStudent(send.studentId, before, after)) return;
+  if (!newlyEmailedStudent(send.studentEmail, before, after)) return;
   try {
     await audit(app, 'NOTIFICATION_EMAIL', {
       studentId: send.studentId,

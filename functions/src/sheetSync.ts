@@ -11,6 +11,7 @@ import { COLLECTIONS, normalizePhaseColor, staffHasAdminAccess, tableFields, val
 import { App, audited, requireAdmin } from './session';
 import { formatSubjectCell, preserveEeActive } from './allocationPure';
 import { planSheetImport, SheetGrid, SheetImportPlan, spreadsheetIdFrom } from './sheetImport';
+import { presentStoredIdentifiers, syncStudentUserFromMember } from './studentIdentity';
 import { dateOnlyValue, Doc, driveNamePart, HubError, normalizeEmail, text, toBoolean } from './util';
 
 const ROW_LIMIT = 5000;
@@ -172,7 +173,7 @@ export async function buildExportGrids(app: App, entities: string[]): Promise<Sh
         .sort();
       const fields = tableFields('cohortMembers').map((field) => field.name);
       for (const cohortId of cohorts) {
-        const members = sortBy(await app.store.listMembers(cohortId), 'Surname', 'StudentId');
+        const members = sortBy(await app.store.listMembers(cohortId), 'Surname', 'StudentId').map((member) => presentStoredIdentifiers(member));
         grids.push(gridFor('cohortMembers', sheetTabTitle(`COHORT: ${cohortId}`), fields, members));
       }
       if (!cohorts.length) grids.push(gridFor('cohortMembers', 'COHORT 2026', fields, []));
@@ -205,7 +206,8 @@ export async function buildExportGrids(app: App, entities: string[]): Promise<Sh
     }
     const item = catalogItem(id);
     const fields = tableFields(id).map((field) => field.name);
-    const records = sortRecords(id, id === 'ticketMessages' ? await allMessages(app) : await app.store.list(COLLECTIONS[id]));
+    let records = sortRecords(id, id === 'ticketMessages' ? await allMessages(app) : await app.store.list(COLLECTIONS[id]));
+    if (id === 'studentUsers') records = records.map((record) => presentStoredIdentifiers(record));
     grids.push(gridFor(id, item.sheet, fields, records));
   }
   grids.forEach((grid) => {
@@ -441,7 +443,11 @@ async function writeIngest(app: App, plan: SheetImportPlan, entities: string[], 
         const prior = new Map(priorRows.map((member) => [normalizeEmail(member.StudentId), member]));
         const incoming = plan.members.filter((member) => member.cohortId === cohortId);
         const keep = new Set(incoming.map((member) => member.id));
-        for (const member of incoming) await app.store.setMember(cohortId, member.id, preserveEeActive(member.data, prior.get(member.id)));
+        for (const member of incoming) {
+          const stored = preserveEeActive(member.data, prior.get(member.id));
+          await app.store.setMember(cohortId, member.id, stored);
+          await syncStudentUserFromMember(app.store, stored);
+        }
         for (const existing of await app.store.listMembers(cohortId)) {
           const memberId = normalizeEmail(existing.StudentId);
           if (memberId && !keep.has(memberId)) await app.store.removeMember(cohortId, memberId);

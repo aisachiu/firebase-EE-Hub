@@ -206,7 +206,7 @@ test('notification planning uses the cohort milestone owner', () => {
   const plan = planSweep({
     today: '2026-10-15',
     tasks: [{ taskId: 'task-1', studentId: student.email, templateId: 'm1', dueDate: '2026-10-15', status: 'Pending', creatorType: 'System', title: 'Question' }],
-    students: [{ cohortId: '2027', email: student.email, displayName: 'Jamie', supervisorId: 'supervisor@vsa.example.edu' }],
+    students: [{ cohortId: '2027', email: student.email, studentEmail: student.email, displayName: 'Jamie', supervisorId: 'supervisor@vsa.example.edu' }],
     templates: [
       { milestoneId: 'm1', title: 'Template question', mOwner: 'student' },
       { cohortId: '2027', milestoneId: 'm1', title: 'Cohort question', mOwner: 'supervisor' },

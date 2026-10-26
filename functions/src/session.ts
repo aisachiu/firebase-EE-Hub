@@ -48,9 +48,8 @@ export async function currentUser(app: App): Promise<HubUser> {
     };
     return app.user;
   }
-  const student = await app.store.findBy(COLLECTIONS.studentUsers, 'StudentId', app.email)
-    || await app.store.findBy(COLLECTIONS.studentUsers, 'studentEmail', app.email);
-  if (student) {
+  const student = await app.store.get(COLLECTIONS.studentUsers, app.email);
+  if (student && normalizeEmail(student.StudentId || app.email) === app.email) {
     app.user = { email: app.email, displayName: text(student.DisplayName) || app.email, role: 'student' };
     return app.user;
   }

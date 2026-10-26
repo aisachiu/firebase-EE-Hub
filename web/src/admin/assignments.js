@@ -4,6 +4,7 @@ import { showError, showSuccess } from '../shared/feedback.js';
 import { escapeHtml } from '../shared/html.js';
 import { loadingLine } from '../shared/loading.js';
 import { advanceScene } from '../shared/scene.js';
+import { syncHeaderCohortSelect } from '../shared/staffContext.js';
 import { state } from '../shared/state.js';
 import {
   bindCollapsibleHeaders,
@@ -20,6 +21,7 @@ export function renderAssignmentManager(target) {
     if (!cohorts.length) { target.innerHTML = '<div class="empty">Create a cohort before assigning milestone templates.</div>'; return; }
     const current = cohorts.some(function(cohort) { return cohort.id === state.cohortId; }) ? state.cohortId : cohorts[0].id;
     state.cohortId = current;
+    syncHeaderCohortSelect();
     target.innerHTML = `${collapsibleHeader('assignment-selection', 'Cohort and selection', `<div class="toolbar"><label for="assignment-cohort">Cohort</label><select id="assignment-cohort">${cohorts.map(function(cohort) {
       return `<option value="${escapeHtml(cohort.id)}" ${cohort.id === current ? 'selected' : ''}>${escapeHtml(cohort.name)}</option>`;
     }).join('')}</select><label for="baseline-anchor">Baseline anchor date</label><input id="baseline-anchor" type="date"><button type="button" class="button" id="assign-milestones">Assign selected</button><label><input type="checkbox" id="select-all-assignment"> Select all</label><span id="assignment-count" class="muted">${state.assignmentStudentIds.length} selected</span></div>`)}
@@ -27,6 +29,7 @@ export function renderAssignmentManager(target) {
     bindCollapsibleHeaders(target);
     document.getElementById('assignment-cohort').addEventListener('change', function(event) {
       state.cohortId = event.target.value;
+      syncHeaderCohortSelect();
       state.assignmentStudentIds = [];
       renderAssignmentManager(target);
     });
@@ -59,7 +62,9 @@ export function paintAssignmentRoster(cohortId) {
     const record = item.record;
     const index = item.index;
     const checked = state.assignmentStudentIds.indexOf(record.StudentId) >= 0;
-    return `<tr><td><input type="checkbox" data-assignment-student="${index}" value="${escapeHtml(record.StudentId)}" ${checked ? 'checked' : ''}></td><td>${escapeHtml(record['Display Name'])}<br><small>${escapeHtml(record.StudentId)}</small></td><td>${escapeHtml(record['Year Group'])}</td><td>${escapeHtml(String(record.Anchor_Date || '').slice(0, 10))}</td><td><button type="button" class="link-button" data-edit-assignment="${index}">Edit</button></td></tr>`;
+    const number = record['Student Number'] || record['Student ID'] || '';
+    const identity = (number ? 'Student Number ' + number + ' · ' : '') + 'StudentId ' + (record.StudentId || '');
+    return `<tr><td><input type="checkbox" data-assignment-student="${index}" value="${escapeHtml(record.StudentId)}" ${checked ? 'checked' : ''}></td><td>${escapeHtml(record['Display Name'])}<br><small>${escapeHtml(identity)}</small></td><td>${escapeHtml(record['Year Group'])}</td><td>${escapeHtml(String(record.Anchor_Date || '').slice(0, 10))}</td><td><button type="button" class="link-button" data-edit-assignment="${index}">Edit</button></td></tr>`;
   }).join('')}</tbody></table></div>` : '<div class="empty">No students are listed in this cohort.</div>';
   bindSortableHeaders(target, function() { paintAssignmentRoster(cohortId); });
   target.querySelectorAll('[data-assignment-student]').forEach(function(input) {
