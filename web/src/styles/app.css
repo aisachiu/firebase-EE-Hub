@@ -743,8 +743,14 @@ main.staff-list { max-width: 1480px; }
 .subject-chip.on { border-color: var(--gold); background: #fff4e5; color: #263746; }
 .alloc-side { position: sticky; top: 52px; background: white; border: 1px solid var(--line); }
 .alloc-side header, .alloc-side footer { padding: 12px; }
-.alloc-side header { border-bottom: 1px solid var(--line); }
+.alloc-side header { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; border-bottom: 1px solid var(--line); }
 .alloc-side header h2 { margin: 0; font-size: 14px; }
+.alloc-side header .view-toggle { margin-left: 0; }
+.alloc-subject-load th { position: static; background: #f8fafb; }
+.alloc-subject-load tbody th { background: transparent; color: inherit; font-size: 14px; letter-spacing: 0; text-transform: none; }
+.alloc-subject-load th:last-child,
+.alloc-subject-load td:last-child { text-align: right; white-space: nowrap; }
+.alloc-load-note { margin: 0; padding: 10px 12px 12px; font-size: 12px; }
 .alloc-load { padding: 12px; border-bottom: 1px solid var(--line); }
 .alloc-load p { margin: 0 0 6px; }
 .alloc-meter { height: 8px; background: var(--line); }

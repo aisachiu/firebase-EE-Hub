@@ -1,4 +1,4 @@
-import { colorScaleFill, columnScaleExtent, scaleNumber } from '../../../functions/src/allocationPure.ts';
+import { colorScaleFill, columnScaleExtent, scaleNumber, subjectTokenLoad } from '../../../functions/src/allocationPure.ts';
 import { adminDialogKind, closeAdminDialog, openAdminDialog } from '../admin/records.js';
 import { openStaffQuotas } from '../admin/staff.js';
 import { callServer } from '../shared/api.js';
@@ -151,8 +151,7 @@ export function allocationDashboardMarkup(desk) {
       </table></div>
     </div>
     <aside class="alloc-side">
-      <header><h2>Supervisor token load</h2></header>
-      ${supervisors.length ? supervisors.map(allocationLoadMarkup).join('') : '<div class="empty">No tokens yet. Build them in Staff users → EE quotas, or ingest a token sheet from Settings.</div>'}
+      ${allocationLoadPanel(desk, supervisors)}
       <footer>
         <p class="muted">Allocations stay in draft until they are published to the hub.</p>
         <button type="button" class="button" id="alloc-publish" ${publish.blocked || (!publish.drafts && !publish.clears) ? 'disabled' : ''}>Publish allocations to hub</button>
@@ -199,6 +198,47 @@ function scaleStyle(fill) {
   const color = /^#[0-9a-fA-F]{6}$/.test(fill.color) ? fill.color : '';
   if (!background || !color) return '';
   return 'background:' + background + ';color:' + color;
+}
+
+export function allocationTokenSlots(desk) {
+  if (desk && Array.isArray(desk.tokenSlots)) return desk.tokenSlots;
+  const slots = [];
+  ((desk && desk.supervisors) || []).forEach(function(person) {
+    const subjects = person.eligibleSubjects || [];
+    const available = Math.max(0, Number(person.available) || 0);
+    const used = Math.max(0, Number(person.used) || 0);
+    for (let index = 0; index < available; index += 1) slots.push({ status: 'available', eligibleSubjects: subjects });
+    for (let index = 0; index < used; index += 1) slots.push({ status: 'committed', eligibleSubjects: subjects });
+  });
+  return slots;
+}
+
+export function subjectTokenLoadMarkup(load) {
+  const subjects = load.subjects || [];
+  if (!subjects.length) {
+    if (load.untied) return untiedTokenNote(load.untied);
+    return '<div class="empty">No tokens yet. Build them in Staff users → EE quotas, or ingest a token sheet from Settings.</div>';
+  }
+  const rows = subjects.map(function(item) {
+    return `<tr><th scope="row">${escapeHtml(item.subject)}</th><td>${item.remaining}</td></tr>`;
+  }).join('');
+  const untied = load.untied ? untiedTokenNote(load.untied) : '';
+  const note = load.overlaps ? '<p class="muted alloc-load-note">An open token counts toward every subject it can take.</p>' : '';
+  return `<table class="alloc-subject-load"><caption class="sr-only">Tokens remaining by subject</caption><thead><tr><th scope="col">Subject</th><th scope="col">Tokens remaining</th></tr></thead><tbody>${rows}</tbody></table>${untied}${note}`;
+}
+
+function untiedTokenNote(count) {
+  const noun = count === 1 ? 'token is' : 'tokens are';
+  return `<div class="alloc-load"><p class="muted">${count} remaining ${noun} not tied to a subject.</p></div>`;
+}
+
+export function allocationLoadPanel(desk, supervisors) {
+  const view = state.allocationLoadView === 'supervisor' ? 'supervisor' : 'subject';
+  const heading = view === 'subject' ? 'Subject token load' : 'Supervisor token load';
+  const body = view === 'subject'
+    ? subjectTokenLoadMarkup(subjectTokenLoad(allocationTokenSlots(desk)))
+    : (supervisors.length ? supervisors.map(allocationLoadMarkup).join('') : '<div class="empty">No tokens yet. Build them in Staff users → EE quotas, or ingest a token sheet from Settings.</div>');
+  return `<header><h2>${heading}</h2><div class="view-toggle" role="group" aria-label="Token load"><button type="button" data-alloc-load="subject" aria-pressed="${view === 'subject' ? 'true' : 'false'}">Subject</button><button type="button" data-alloc-load="supervisor" aria-pressed="${view === 'supervisor' ? 'true' : 'false'}">Supervisor</button></div></header>${body}`;
 }
 
 export function allocationLoadMarkup(person) {
@@ -288,6 +328,14 @@ export function bindAllocation(target, desk) {
   target.querySelectorAll('[data-alloc-status]').forEach(function(button) {
     button.addEventListener('click', function() {
       state.allocationStatus = button.dataset.allocStatus;
+      paintAllocation();
+    });
+  });
+  target.querySelectorAll('[data-alloc-load]').forEach(function(button) {
+    button.addEventListener('click', function() {
+      const next = button.getAttribute('data-alloc-load') === 'supervisor' ? 'supervisor' : 'subject';
+      if (state.allocationLoadView === next) return;
+      state.allocationLoadView = next;
       paintAllocation();
     });
   });

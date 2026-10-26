@@ -134,6 +134,8 @@ export interface AllocationDesk {
   cohortId: string;
   students: DeskStudent[];
   supervisors: DeskSupervisor[];
+  /** Same cohort tokens the supervisor load is built from, without student assignment. */
+  tokenSlots: { status: TokenStatus; eligibleSubjects: string[] }[];
   settings: AllocationSettings;
   summary: { staffCount: number; tokenCount: number; activeStudents: number; buffer: number };
   publish: { drafts: number; clears: number; blocked: number };
@@ -523,6 +525,42 @@ export interface QuotaCapacity {
   totalQuota: number;
   untiedQuota: number;
   subjects: { subject: string; capacity: number }[];
+}
+
+export interface SubjectTokenLoad {
+  subjects: { subject: string; remaining: number }[];
+  /** Available tokens with no eligible subject. */
+  untied: number;
+  /** An available token can be taken in more than one subject, so those remaining counts overlap. */
+  overlaps: boolean;
+}
+
+/** Remaining slots for each subject on the tokens that feed supervisor load. An open token counts once per subject it can take. */
+export function subjectTokenLoad(tokens: { status: string; eligibleSubjects?: unknown }[]): SubjectTokenLoad {
+  let untied = 0;
+  let overlaps = false;
+  const groups = new Map<string, { subject: string; remaining: number }>();
+  tokens.forEach((token) => {
+    const subjects = uniqueSubjects(token.eligibleSubjects);
+    const open = token.status === 'available';
+    if (!subjects.length) {
+      if (open) untied += 1;
+      return;
+    }
+    if (open && subjects.length > 1) overlaps = true;
+    subjects.forEach((subject) => {
+      const key = subject.toLowerCase();
+      const current = groups.get(key);
+      const add = open ? 1 : 0;
+      if (current) current.remaining += add;
+      else groups.set(key, { subject, remaining: add });
+    });
+  });
+  return {
+    untied,
+    overlaps,
+    subjects: [...groups.values()].sort((left, right) => left.subject.localeCompare(right.subject, undefined, { sensitivity: 'base' })),
+  };
 }
 
 /** Per-subject capacity counts a teacher's full quota once for every subject they can take. */
@@ -924,6 +962,10 @@ export function buildDesk(input: {
     cohortId: input.cohortId,
     students,
     supervisors,
+    tokenSlots: input.tokens.map((token) => ({
+      status: token.status,
+      eligibleSubjects: token.eligibleSubjects.slice(),
+    })),
     settings: input.settings,
     summary: {
       staffCount: supervisors.length,
