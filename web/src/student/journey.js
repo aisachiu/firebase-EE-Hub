@@ -195,10 +195,11 @@ export function journeyHereCard(home, current, phaseTitle, zoom, currentPhaseId)
   const shownPhase = milestonePhaseId(current.template, item);
   const title = phaseTitle[shownPhase] || shownPhase;
   const due = item && item.DueDate ? shortDate(item.DueDate) : '';
-  const actions = journeyActions(item, current.template);
-  const check = journeyCheck(item, 'Mark ' + shownTitle + ' done', !!(item && item.canUpdate));
-  const edit = milestoneEditButton(home, item, shownTitle);
-  return `<section class="here-card" data-task-id="${item ? escapeHtml(item.TaskId) : ''}"><p class="eyebrow">You are here · ${escapeHtml(title)}</p><div class="step-top">${check}<div class="step-title"><h2>${escapeHtml(shownTitle)}</h2>${edit}</div></div><p>${escapeHtml(milestoneDescriptionText(current.template, item) || 'This is your next step.')}</p><div class="step-actions">${due ? `<span class="chip">${escapeHtml(due)}</span>` : ''}${actions || `<span class="chip">${escapeHtml(milestoneProgressLabel(item, current.template))}</span>`}</div></section>`;
+  const canCheck = milestoneWritable(home, item);
+  const actions = journeyActions(item, current.template, home);
+  const check = journeyCheck(item, 'Mark ' + shownTitle + ' done', canCheck, current.template.milestoneId);
+  const edit = milestoneEditButton(home, item, shownTitle, current.template);
+  return `<section class="here-card" data-task-id="${item ? escapeHtml(item.TaskId) : ''}" data-milestone-id="${escapeHtml(current.template.milestoneId || '')}"><p class="eyebrow">You are here · ${escapeHtml(title)}</p><div class="step-top">${check}<div class="step-title"><h2>${escapeHtml(shownTitle)}</h2>${edit}</div></div><p>${escapeHtml(milestoneDescriptionText(current.template, item) || 'This is your next step.')}</p><div class="step-actions">${due ? `<span class="chip">${escapeHtml(due)}</span>` : ''}${actions || `<span class="chip">${escapeHtml(milestoneStatusText(home, item, current.template))}</span>`}</div></section>`;
 }
 
 export function renderJourneyPhase(home, phase, phaseTitle, current, zoom, currentPhaseId) {
@@ -240,22 +241,29 @@ export function dueSortKey(value) {
   return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : '9999-99-99';
 }
 
-export function journeyCheck(item, label, enabled) {
+export function milestoneWritable(home, item) {
+  return !!((item && item.canUpdate) || (home && home.canUpdateMilestones));
+}
+
+export function journeyCheck(item, label, enabled, milestoneId) {
   const checked = item && item.Status === 'Completed';
-  const interactive = !!(enabled && item && item.TaskId);
-  return `<input type="checkbox" class="rail-check" data-milestone-check ${checked ? 'checked' : ''} ${interactive ? '' : 'disabled'} aria-label="${escapeHtml(label)}">`;
+  const interactive = !!enabled;
+  const milestone = milestoneId ? ` data-milestone-id="${escapeHtml(milestoneId)}"` : '';
+  return `<input type="checkbox" class="rail-check" data-milestone-check${milestone} ${checked ? 'checked' : ''} ${interactive ? '' : 'disabled'} aria-label="${escapeHtml(label)}">`;
 }
 
 export function renderJourneyMilestone(home, template, item, detailed, current, zoom) {
   const title = milestoneTitleText(template, item);
   const status = item ? item.Status : 'Pending';
   const isHere = current && current.template.milestoneId === template.milestoneId && status !== 'Completed';
-  const showActions = item && item.canUpdate && (zoom !== 'all' || status === 'Completed' || template.type === 'form');
+  const coordinator = !!home.canUpdateMilestones;
+  const canAct = milestoneWritable(home, item);
+  const showActions = canAct && (zoom !== 'all' || status === 'Completed' || template.type === 'form' || (coordinator && (template.type === 'approval' || template.type === 'meeting')));
   const due = item && item.DueDate ? shortDate(item.DueDate) : '';
   const closed = template.type === 'form' && item && item.formOpen === false ? ' · Form closed' : '';
-  const check = journeyCheck(item, 'Mark ' + title + ' done', !!(item && item.canUpdate));
-  const edit = milestoneEditButton(home, item, title);
-  return `<li class="step ${status === 'Completed' ? 'done' : ''} ${isHere ? 'here' : ''}" data-task-id="${item ? escapeHtml(item.TaskId) : ''}" data-creator-type="System">${check}<div><div class="step-top"><div class="step-title"><h3>${escapeHtml(title)}</h3>${edit}</div><span class="muted">${escapeHtml(milestoneKind(template))}${due ? ' · ' + escapeHtml(due) : ''}${closed}</span></div>${detailed ? `<p class="muted">${escapeHtml(milestoneDescriptionText(template, item))}</p>` : ''}${item && item.returnedComment ? `<p class="notice">Returned: ${escapeHtml(item.returnedComment)}</p>` : ''}<div class="step-actions"><span class="muted">${escapeHtml(milestoneProgressLabel(item, template))}</span>${showActions ? journeyActions(item, template) : ''}</div></div></li>`;
+  const check = journeyCheck(item, 'Mark ' + title + ' done', canAct, template.milestoneId);
+  const edit = milestoneEditButton(home, item, title, template);
+  return `<li class="step ${status === 'Completed' ? 'done' : ''} ${isHere ? 'here' : ''}" data-task-id="${item ? escapeHtml(item.TaskId) : ''}" data-milestone-id="${escapeHtml(template.milestoneId || '')}" data-creator-type="System">${check}<div><div class="step-top"><div class="step-title"><h3>${escapeHtml(title)}</h3>${edit}</div><span class="muted">${escapeHtml(milestoneKind(template))}${due ? ' · ' + escapeHtml(due) : ''}${closed}</span></div>${detailed ? `<p class="muted">${escapeHtml(milestoneDescriptionText(template, item))}</p>` : ''}${item && item.returnedComment ? `<p class="notice">Returned: ${escapeHtml(item.returnedComment)}</p>` : ''}<div class="step-actions"><span class="muted">${escapeHtml(milestoneStatusText(home, item, template))}</span>${showActions ? journeyActions(item, template, home) : ''}</div></div></li>`;
 }
 
 export function renderJourneyTodo(item) {
@@ -269,20 +277,22 @@ export function renderJourneyTodo(item) {
   return `<li class="step todo ${item.Status === 'Completed' ? 'done' : ''}" data-task-id="${escapeHtml(item.TaskId)}" data-creator-type="Student">${check}<div><div class="step-top"><h3>${escapeHtml(item.Title)}</h3><span class="muted">To-do${due ? ' · ' + escapeHtml(shortDate(due)) : ''}</span></div>${item.Description && !editing ? `<p class="muted">${escapeHtml(item.Description)}</p>` : ''}${editing ? `<div class="todo-edit"><input data-todo-title value="${escapeHtml(item.Title)}" maxlength="240" aria-label="To-do title"><textarea data-todo-description aria-label="To-do note">${escapeHtml(item.Description || '')}</textarea><input type="date" data-todo-date value="${escapeHtml(due)}" aria-label="To-do date"><div class="step-actions"><button type="button" class="button" data-save-todo="${escapeHtml(item.TaskId)}">Save</button><button type="button" class="button secondary" data-close-todo>Close</button></div></div>` : actions}</div></li>`;
 }
 
-export function journeyActions(item, template) {
-  if (!item || !item.canUpdate) return '';
-  const completed = item.Status === 'Completed';
+export function journeyActions(item, template, home) {
+  const coordinator = !!(home && home.canUpdateMilestones);
+  if ((!item || !item.canUpdate) && !coordinator) return '';
+  const completed = !!(item && item.Status === 'Completed');
+  const staff = coordinator || !!(item && item.staffUpdate);
   let html = '';
-  if (item.staffUpdate && template && template.type === 'form') {
+  if (staff && template && template.type === 'form') {
     html += `<button type="button" class="button secondary" data-view-response="${escapeHtml(template.milestoneId)}">View form</button>`;
   } else if (template && template.type === 'form') {
     html += formJourneyButton(template, item);
   }
   if (completed) return html;
-  if (item.staffUpdate && template && template.type === 'approval') {
+  if (staff && template && template.type === 'approval') {
     return html + '<button type="button" class="button" data-decide="approve">Approve</button><button type="button" class="button secondary" data-decide="return">Return</button>';
   }
-  if (item.staffUpdate && template && template.type === 'meeting') {
+  if (staff && template && template.type === 'meeting') {
     return html + '<button type="button" class="button" data-decide="session">Log session</button>';
   }
   return html;
@@ -299,6 +309,11 @@ export function formJourneyButton(template, item) {
 export function milestoneKind(template) {
   const names = { form: 'Form', upload: 'Upload', doc: 'Document', approval: 'Approval', meeting: 'Session' };
   return names[template.type] || 'Milestone';
+}
+
+export function milestoneStatusText(home, item, template) {
+  if (!item && home && home.canUpdateMilestones) return 'You can update this';
+  return milestoneProgressLabel(item, template);
 }
 
 export function milestoneProgressLabel(item, template) {
@@ -331,67 +346,88 @@ export function bindJourney(main, home, currentPhaseId) {
   });
   main.querySelectorAll('[data-milestone-check]').forEach(function(box) {
     box.addEventListener('change', function() {
-      const card = box.closest('[data-task-id]');
-      const taskId = card && card.dataset.taskId;
+      const card = box.closest('[data-task-id], [data-milestone-id]');
+      const taskId = (card && card.dataset.taskId) || '';
+      const milestoneId = box.dataset.milestoneId || (card && card.dataset.milestoneId) || '';
+      const syncKey = taskId || milestoneId;
       if (box.disabled) return;
-      if (!taskId) {
-        box.checked = !box.checked;
-        return;
-      }
-      if (state.journeySync[taskId]) {
+      if (!syncKey || state.journeySync[syncKey]) {
         box.checked = !box.checked;
         return;
       }
       const record = activeJourneyRecord() || home;
-      const item = (record.actionItems || []).filter(function(entry) { return entry.TaskId === taskId; })[0];
-      if (!item) {
+      const item = taskId ? (record.actionItems || []).filter(function(entry) { return entry.TaskId === taskId; })[0] : null;
+      const nextStatus = box.checked ? 'Completed' : 'Pending';
+      if (item) {
+        const previous = item.Status;
+        item.Status = nextStatus;
+        state.journeySync[syncKey] = 'pending';
+        paintStudentJourney(record);
+        const studentEmail = home.staffView ? home.email : '';
+        const viewAs = home.staffView ? state.actingAs : '';
+        runMutation('setActionItemStatus', [taskId, nextStatus, studentEmail, home.cohort || '', viewAs], { key: 'action-item:' + taskId }).then(function() {
+          delete state.journeySync[syncKey];
+          flashJourneyRows(taskId, 'confirmed');
+          if (document.getElementById('my-activity')) repaintStudentPage(record);
+          showSuccess(nextStatus === 'Completed' ? 'Marked done.' : 'Marked not done.');
+        }).catch(function(error) {
+          delete state.journeySync[syncKey];
+          item.Status = previous;
+          paintStudentJourney(activeJourneyRecord() || home);
+          showError(error);
+        });
+        return;
+      }
+      if (!home.staffView || !home.canUpdateMilestones || !milestoneId) {
         box.checked = !box.checked;
         return;
       }
-      const previous = item.Status;
-      const nextStatus = box.checked ? 'Completed' : 'Pending';
-      item.Status = nextStatus;
-      state.journeySync[taskId] = 'pending';
-      paintStudentJourney(record);
-      const studentEmail = home.staffView ? home.email : '';
-      const viewAs = home.staffView ? state.actingAs : '';
-      runMutation('setActionItemStatus', [taskId, nextStatus, studentEmail, home.cohort || '', viewAs], { key: 'action-item:' + taskId }).then(function() {
-        delete state.journeySync[taskId];
-        flashJourneyRows(taskId, 'confirmed');
-        if (document.getElementById('my-activity')) repaintStudentPage(record);
+      state.journeySync[syncKey] = 'pending';
+      box.disabled = true;
+      runMutation('setStaffMilestoneStatus', [home.email, home.cohort || '', milestoneId, nextStatus, state.actingAs], {
+        key: 'milestone-status:' + milestoneId
+      }).then(function() {
+        return callServer('getStaffStudentHome', home.email, home.cohort || '', state.actingAs);
+      }).then(function(fresh) {
+        delete state.journeySync[syncKey];
+        state.staffStudentHome = fresh;
+        paintStudentJourney(fresh);
+        if (state.section === 'students') repaintStudentPage(fresh);
         showSuccess(nextStatus === 'Completed' ? 'Marked done.' : 'Marked not done.');
       }).catch(function(error) {
-        delete state.journeySync[taskId];
-        item.Status = previous;
-        paintStudentJourney(activeJourneyRecord() || home);
+        delete state.journeySync[syncKey];
+        box.disabled = false;
+        box.checked = nextStatus !== 'Completed';
         showError(error);
       });
     });
   });
   main.querySelectorAll('[data-decide]').forEach(function(button) {
     button.addEventListener('click', function() {
-      const card = button.closest('[data-task-id]');
-      const taskId = card && card.dataset.taskId;
-      if (!taskId || !home.staffView) return;
+      const card = button.closest('[data-task-id], [data-milestone-id]');
+      const taskId = (card && card.dataset.taskId) || '';
+      const milestoneId = (card && card.dataset.milestoneId) || '';
+      if ((!taskId && !milestoneId) || !home.staffView) return;
       const action = button.dataset.decide;
       const comment = action === 'approve' ? '' : window.prompt(action === 'return' ? 'Comments for the student' : 'Session summary');
       if (action !== 'approve' && !comment) return;
       button.disabled = true;
-      state.journeySync[taskId] = 'pending';
+      const syncKey = taskId || milestoneId;
+      state.journeySync[syncKey] = 'pending';
       flashJourneyRows(taskId, 'pending');
-      runMutation('recordMilestoneDecision', [taskId, action, comment || '', home.email, home.cohort || '', state.actingAs], {
-        key: 'milestone:' + taskId
+      runMutation('recordMilestoneDecision', [taskId, action, comment || '', home.email, home.cohort || '', state.actingAs, milestoneId], {
+        key: 'milestone:' + syncKey
       }).then(function() {
         return callServer('getStaffStudentHome', home.email, home.cohort || '', state.actingAs);
       }).then(function(fresh) {
-        delete state.journeySync[taskId];
+        delete state.journeySync[syncKey];
         state.staffStudentHome = fresh;
         paintStudentJourney(fresh);
         flashJourneyRows(taskId, 'confirmed');
         if (state.section === 'students') repaintStudentPage(fresh);
         showSuccess(action === 'return' ? 'Returned to the student.' : 'Milestone updated.');
       }).catch(function(error) {
-        delete state.journeySync[taskId];
+        delete state.journeySync[syncKey];
         button.disabled = false;
         flashJourneyRows(taskId, 'rejected');
         showError(error);
@@ -483,7 +519,7 @@ export function bindJourney(main, home, currentPhaseId) {
   });
   main.querySelectorAll('[data-edit-milestone]').forEach(function(button) {
     button.addEventListener('click', function() {
-      openMilestoneEditor(home, button.dataset.editMilestone);
+      openMilestoneEditor(home, button.dataset.editMilestone || '', button.dataset.milestoneId || '');
     });
   });
 }

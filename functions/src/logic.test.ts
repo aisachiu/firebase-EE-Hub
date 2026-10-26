@@ -77,6 +77,11 @@ test('milestone permissions follow owner and role', () => {
   assert.equal(canCompleteMilestone(lead, student.email, 'lead', 'approval', null), true);
   assert.equal(canCompleteMilestone(lead, student.email, 'coordinator', 'meeting', null), false);
   assert.equal(canCompleteMilestone(coordinator, student.email, 'student', 'upload', null), true);
+  const coordinatorOnly: HubUser = {
+    ...coordinator,
+    permissions: { isStaff: true, isSupervisor: false, isLead: false, isCoordinator: true, isAdmin: false, canAdmin: false },
+  };
+  assert.equal(canCompleteMilestone(coordinatorOnly, student.email, 'student', 'upload', null), true);
 });
 
 test('form answers enforce required fields, choices, and script limits', () => {

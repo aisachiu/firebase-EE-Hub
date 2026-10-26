@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { massUpdateMilestones, updateMilestoneAssignment } from './actions';
-import { getStaffHome } from './journey';
+import { massUpdateMilestones, recordMilestoneDecision, setActionItemStatus, setStaffMilestoneStatus, updateMilestoneAssignment } from './actions';
+import { getStaffHome, getStaffStudentHome } from './journey';
 import { COLLECTIONS } from './schema';
 import { App } from './session';
 import { Store } from './store';
@@ -144,7 +144,7 @@ test('mass edit updates only the chosen status, date, or both for a shared miles
   const store = new MemoryStore();
   await seed(store);
   const app = appFor(store, coordinatorEmail);
-  await assert.rejects(massUpdateMilestones(app, '2026', [studentEmail, otherEmail], 'm2', {
+  await assert.rejects(massUpdateMilestones(app, '2026', [studentEmail, otherEmail], 'not-a-milestone', {
     updateStatus: true, status: 'In Progress', updateDate: false, dueDate: '',
   }, 'coordinator'), /not assigned to every selected student/);
   const before = await store.get(COLLECTIONS.studentActionItems, 'task-m2-a');
@@ -207,4 +207,89 @@ test('the cohort listing reports shared milestone assignments and who may edit t
   assert.deepEqual(byEmail[otherEmail].map((item) => item.templateId), ['m1']);
   const supervisorHome = await getStaffHome(appFor(store, supervisorEmail), '2026', 'supervisor');
   assert.equal(supervisorHome.canEditMilestones, false);
+});
+
+test('a coordinator who is not an admin can still edit cohort milestones', async () => {
+  const store = new MemoryStore();
+  await seed(store);
+  const only = 'only-coord@vsa.example.edu';
+  await store.set(COLLECTIONS.staffUsers, only, {
+    EMAIL: only, DisplayName: 'Only Coord', isStaff: true, isCoordinator: true, isAdmin: false,
+  });
+  const home = await getStaffHome(appFor(store, only), '2026', 'coordinator');
+  assert.equal(home.canEditMilestones, true);
+  const checked = await setStaffMilestoneStatus(appFor(store, only), otherEmail, '2026', 'm2', 'Completed', 'coordinator');
+  assert.equal(checked.status, 'Completed');
+  const created = (await store.list(COLLECTIONS.studentActionItems)).find((item) => item.StudentId === otherEmail && item.TemplateId === 'm2');
+  assert.equal(created && created.Status, 'Completed');
+  assert.equal(created && created.CreatorType, 'System');
+});
+
+test('mass edit creates a missing cohort milestone and updates the students who already have it', async () => {
+  const store = new MemoryStore();
+  await seed(store);
+  const app = appFor(store, coordinatorEmail);
+  const result = await massUpdateMilestones(app, '2026', [studentEmail, otherEmail], 'm2', {
+    updateStatus: true, status: 'In Progress', updateDate: true, dueDate: '2027-03-01',
+  }, 'coordinator');
+  assert.equal(result.students, 2);
+  assert.equal(result.updated, 2);
+  const existing = await store.get(COLLECTIONS.studentActionItems, 'task-m2-a');
+  assert.equal(existing && existing.Status, 'In Progress');
+  assert.equal(String(existing && existing.DueDate).slice(0, 10), '2027-03-01');
+  const created = (await store.list(COLLECTIONS.studentActionItems)).find((item) => item.StudentId === otherEmail && item.TemplateId === 'm2');
+  assert.equal(created && created.Status, 'In Progress');
+  assert.equal(String(created && created.DueDate).slice(0, 10), '2027-03-01');
+});
+
+test('a coordinator can edit or approve a milestone before a task exists', async () => {
+  const store = new MemoryStore();
+  await seed(store);
+  await store.set(COLLECTIONS.milestoneTemplates, 'm3', {
+    milestoneId: 'm3', milestoneTitle: 'Supervisor approval', phase: 'research', type: 'approval', mOwner: 'supervisor', offsetDays: 10, position: 3,
+  });
+  const app = appFor(store, coordinatorEmail);
+  const saved = await updateMilestoneAssignment(app, '', otherEmail, '2026', 'coordinator', {
+    title: 'Question draft',
+    description: 'Added from the journey',
+    phaseId: 'research',
+    status: 'In Progress',
+    dueDate: '2027-04-01',
+    milestoneId: 'm2',
+  });
+  assert.equal(saved.status, 'In Progress');
+  assert.equal(saved.title, 'Question draft');
+  const row = await store.get(COLLECTIONS.studentActionItems, saved.taskId);
+  assert.equal(row && row.StudentId, otherEmail);
+  assert.equal(row && row.TemplateId, 'm2');
+  const approved = await recordMilestoneDecision(app, '', 'approve', '', studentEmail, '2026', 'coordinator', 'm3');
+  assert.equal(approved.status, 'Completed');
+  const approval = await store.get(COLLECTIONS.studentActionItems, approved.taskId);
+  assert.equal(approval && approval.TemplateId, 'm3');
+  assert.equal(approval && approval.Status, 'Completed');
+});
+
+test('a task stored under Student Email can still be checked off by a coordinator', async () => {
+  const store = new MemoryStore();
+  await seed(store);
+  const mail = 'jamie.mail@vsa.example.edu';
+  store.members['2026'][studentEmail]['Student Email'] = mail;
+  const stored = await store.get(COLLECTIONS.studentActionItems, 'task-m1-a');
+  if (!stored) throw new Error('missing task');
+  stored.StudentId = mail;
+  stored.CreatorType = 'system';
+  await store.set(COLLECTIONS.studentActionItems, 'task-m1-a', stored);
+  const app = appFor(store, coordinatorEmail);
+  const home = await getStaffHome(app, '2026', 'coordinator');
+  const student = home.students.find((entry) => entry.email === studentEmail);
+  assert.ok(student && student.assigned.some((item) => item.templateId === 'm1'));
+  const detail = await getStaffStudentHome(app, studentEmail, '2026', 'coordinator');
+  const item = detail.actionItems.find((entry) => entry.TaskId === 'task-m1-a');
+  assert.equal(item && item.canUpdate, true);
+  assert.equal(item && item.CreatorType, 'System');
+  assert.equal(detail.canUpdateMilestones, true);
+  await setActionItemStatus(app, 'task-m1-a', 'Completed', studentEmail, '2026', 'coordinator');
+  const updated = await store.get(COLLECTIONS.studentActionItems, 'task-m1-a');
+  assert.equal(updated && updated.Status, 'Completed');
+  assert.equal(updated && updated.StudentId, mail);
 });

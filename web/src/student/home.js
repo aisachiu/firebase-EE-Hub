@@ -116,9 +116,12 @@ export function pencilIcon() {
   return '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M11.2 1.6 14.4 4.8 5.2 14H2v-3.2zM3.1 11.9l.3 1.7 1.7.3 6.7-6.7-2-2z"/></svg>';
 }
 
-export function milestoneEditButton(home, item, title) {
-  if (!home || !home.canUpdateMilestones || !item || !item.TaskId) return '';
-  return `<button type="button" class="icon-button" data-edit-milestone="${escapeHtml(item.TaskId)}" aria-label="${escapeHtml('Edit ' + title)}">${pencilIcon()}</button>`;
+export function milestoneEditButton(home, item, title, template) {
+  if (!home || !home.canUpdateMilestones) return '';
+  const taskId = item && item.TaskId ? item.TaskId : '';
+  const milestoneId = (template && template.milestoneId) || (item && item.TemplateId) || '';
+  if (!taskId && !milestoneId) return '';
+  return `<button type="button" class="icon-button" data-edit-milestone="${escapeHtml(taskId)}" data-milestone-id="${escapeHtml(milestoneId)}" aria-label="${escapeHtml('Edit ' + title)}">${pencilIcon()}</button>`;
 }
 
 export function paintStudentPage(home) {
