@@ -11,6 +11,7 @@ import { showError } from '../shared/feedback.js';
 import { escapeHtml } from '../shared/html.js';
 import { loadingLine } from '../shared/loading.js';
 import { advanceScene } from '../shared/scene.js';
+import { syncHeaderCohortSelect } from '../shared/staffContext.js';
 import { state } from '../shared/state.js';
 import { requestPush, syncHistory } from '../router.js';
 import { renderShell } from '../shell.js';
@@ -100,6 +101,7 @@ export function loadAdminSection() {
     callServer('getCohorts').then(function(cohorts) {
       const current = cohorts.some(function(cohort) { return cohort.id === state.cohortId; }) ? state.cohortId : (cohorts[0] ? cohorts[0].id : '');
       state.cohortId = current;
+      syncHeaderCohortSelect();
       if (!current) {
         target.innerHTML = '<div class="empty">Create an active cohort before adding students.</div>';
         return;
@@ -110,6 +112,7 @@ export function loadAdminSection() {
       document.getElementById('admin-cohort').addEventListener('change', function(event) {
         closeMemberEditor();
         state.cohortId = event.target.value;
+        syncHeaderCohortSelect();
         state.editingRecord = null;
         state.selectedMemberIds = [];
         state.importRecords = null;
