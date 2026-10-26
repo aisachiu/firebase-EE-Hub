@@ -197,7 +197,7 @@ Hosting serves the built web app. The callable is `eeHub`. Firestore rules deny 
 
 ## Supervisor To Do
 
-On My Students, a supervisor sees Supervisor To Do. It lists the milestones that supervisor owns and still has to attend to. The next milestone for each student is in that same list, marked Next, along with any later open milestone they own. A lead or coordinator can add a to-do for a supervisor. Those added to-dos appear in the same list. Leads and coordinators open Supervisor to-dos on My Students to see every supervisor in the cohort, with that supervisor's milestones and to-dos, and to add one. Added to-dos are stored in `supervisorTodos`. Callable methods: `getSupervisorTodoDesk`, `addSupervisorTodo`, `setSupervisorTodoStatus`, and `deleteSupervisorTodo`.
+On My Students, a supervisor sees Supervisor To Do. It lists the milestones that supervisor owns and still has to attend to. The next milestone for each student is in that same list, marked Next, along with any later open milestone they own. The supervisor switches that list between By due date (earliest first) and Group by student. Student groups follow the most urgent item, and students with no due date follow display name. Items in a group follow the due date. A lead or coordinator can add a to-do for a supervisor. Those added to-dos appear in the same list. Leads and coordinators open Supervisor to-dos on My Students to see every supervisor in the cohort, with that supervisor's milestones and to-dos, and to add one. Added to-dos are stored in `supervisorTodos`. Callable methods: `getSupervisorTodoDesk`, `addSupervisorTodo`, `setSupervisorTodoStatus`, and `deleteSupervisorTodo`.
 
 ## Email notifications
 

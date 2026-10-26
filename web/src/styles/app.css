@@ -237,7 +237,14 @@ body.has-journey.journey-open { padding-right: clamp(300px, 34vw, 420px); }
 .staff-board.solo { grid-template-columns: minmax(0, 1fr); }
 .next-steps { position: sticky; top: 52px; padding: 12px; background: white; border: 1px solid var(--line); border-top: 3px solid var(--ink); }
 .next-steps h2 { margin: 0; font-size: 16px; }
-.next-steps ul { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 6px; max-height: min(70vh, 640px); overflow: auto; }
+.next-steps .todo-view { display: grid; gap: 8px; }
+.next-steps .todo-view .view-toggle { margin-left: 0; display: flex; width: 100%; }
+.next-steps .todo-view .view-toggle button { flex: 1 1 0; min-width: 0; display: flex; align-items: center; justify-content: center; line-height: 1.25; white-space: normal; }
+.next-steps .todo-scroll { max-height: min(70vh, 640px); overflow: auto; }
+.next-steps ul { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 6px; }
+.next-steps .todo-student + .todo-student { margin-top: 10px; }
+.next-steps .todo-student h3 { margin: 0; font-size: 13px; }
+.next-steps .todo-student ul { margin-top: 4px; }
 .next-steps .todo-open { display: grid; gap: 2px; width: 100%; padding: 8px 10px; text-align: left; border: 1px solid var(--line); border-left: 3px solid var(--green); background: #f8fafb; color: inherit; }
 .next-steps .todo-open.is-next { border-left-color: var(--ink); }
 .next-steps .todo-open.is-overdue { border-left-color: var(--coral); }

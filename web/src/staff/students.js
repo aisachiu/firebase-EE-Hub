@@ -369,7 +369,7 @@ export function paintStaffCards(home) {
     state.supervisorDesk = true;
     renderStaffHome();
   });
-  bindSupervisorTodoList(main, function() { renderStaffHome(); });
+  bindSupervisorTodoList(main, function() { renderStaffHome(); }, function() { paintStaffCards(home); });
   function syncStaffSelectionChrome() {
     const count = document.getElementById('staff-selected-count');
     if (count) count.textContent = state.staffSelected.length + ' selected';
