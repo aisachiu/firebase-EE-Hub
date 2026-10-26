@@ -60,28 +60,51 @@ export function enqueueTicket(ticketId, work) {
   return operation;
 }
 
+const READ_METHOD = /^(get|list|preview|check)(?=[A-Z]|$)/;
+
+export function requestKind(method) {
+  return READ_METHOD.test(String(method || '')) ? 'read' : 'write';
+}
+
+function bumpRequests(kind, delta) {
+  const key = kind === 'read' ? 'reads' : 'writes';
+  state.requests[key] = Math.max(0, (state.requests[key] || 0) + delta);
+  state.requests.active = (state.requests.reads || 0) + (state.requests.writes || 0);
+}
+
 export function beginRequest(label) {
-  state.requests.active += 1;
+  bumpRequests(requestKind(label), 1);
+  paintRequestIndicator();
+}
+
+export function endRequest(label) {
+  bumpRequests(requestKind(label), -1);
+  paintRequestIndicator();
+}
+
+export function paintRequestIndicator() {
   const indicator = document.getElementById('request-indicator');
-  if (indicator) {
-    indicator.textContent = label ? 'Saving ' + humanizeRequestLabel(label) + '...' : 'Working...';
+  if (!indicator) return;
+  const writes = state.requests.writes || 0;
+  const reads = state.requests.reads || 0;
+  if (writes > 0) {
+    indicator.textContent = 'Saving...';
+    indicator.dataset.state = 'saving';
     indicator.classList.add('active');
     indicator.setAttribute('aria-busy', 'true');
+    return;
   }
-}
-
-export function endRequest() {
-  state.requests.active = Math.max(0, state.requests.active - 1);
-  const indicator = document.getElementById('request-indicator');
-  if (indicator && state.requests.active === 0) {
-    indicator.textContent = '';
-    indicator.classList.remove('active');
-    indicator.setAttribute('aria-busy', 'false');
+  if (reads > 0) {
+    indicator.textContent = 'Loading...';
+    indicator.dataset.state = 'loading';
+    indicator.classList.add('active');
+    indicator.setAttribute('aria-busy', 'true');
+    return;
   }
-}
-
-export function humanizeRequestLabel(label) {
-  return String(label).replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase();
+  indicator.textContent = '';
+  indicator.dataset.state = 'idle';
+  indicator.classList.remove('active');
+  indicator.setAttribute('aria-busy', 'false');
 }
 
 export function markSync(element, status) {

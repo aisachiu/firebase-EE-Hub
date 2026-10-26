@@ -3,6 +3,7 @@ import { showError } from '../shared/feedback.js';
 import { escapeHtml, shortDate, textCompare } from '../shared/html.js';
 import { loadingLine } from '../shared/loading.js';
 import { isStale } from '../shared/scene.js';
+import { syncHeaderCohortSelect } from '../shared/staffContext.js';
 import { state } from '../shared/state.js';
 
 export function mayManageSupervisorTodos(user) {
@@ -185,6 +186,7 @@ function paintSupervisorDesk(main, desk, hooks) {
   const cohort = document.getElementById('supervisor-todo-cohort');
   if (cohort) cohort.addEventListener('change', function(event) {
     state.cohortId = event.target.value;
+    syncHeaderCohortSelect();
     state.staffHome = null;
     state.staffSupervisor = '';
     hooks.reload();
@@ -198,6 +200,7 @@ export function renderSupervisorDesk(main, hooks) {
   callServer('getSupervisorTodoDesk', sceneCohort).then(function(desk) {
     if (!main.isConnected) return;
     state.cohortId = desk.cohortId || state.cohortId;
+    syncHeaderCohortSelect();
     paintSupervisorDesk(main, desk, hooks);
   }).catch(function(error) {
     if (isStale(error)) return;

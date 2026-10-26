@@ -7,6 +7,7 @@ import { escapeHtml, safeUrl } from '../shared/html.js';
 import { loadingLine } from '../shared/loading.js';
 import { advanceScene } from '../shared/scene.js';
 import { renderSheetIngestPreview } from '../shared/sheetPreview.js';
+import { syncHeaderCohortSelect } from '../shared/staffContext.js';
 import { state } from '../shared/state.js';
 import {
   adminSortState,
@@ -64,6 +65,7 @@ export function loadAllocation() {
       return null;
     }
     if (!state.allocationCohorts.some(function(cohort) { return cohort.id === state.cohortId; })) state.cohortId = state.allocationCohorts[0].id;
+    syncHeaderCohortSelect();
     return callServer('getAllocationDesk', state.cohortId);
   }).then(function(desk) {
     if (!desk) return;
@@ -277,6 +279,7 @@ export function bindAllocation(target, desk) {
   if (cohort) cohort.addEventListener('change', function(event) {
     if (adminDialogKind() === 'cohort-token') closeAdminDialog();
     state.cohortId = event.target.value;
+    syncHeaderCohortSelect();
     state.allocationSelected = [];
     state.allocationSubjects = {};
     state.tokenEditId = '';

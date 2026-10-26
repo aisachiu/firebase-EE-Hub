@@ -1,13 +1,14 @@
 import { closeMemberEditor } from './admin/records.js';
 import { renderAdmin } from './admin/sections.js';
 import { renderAllocation } from './allocation/desk.js';
-import { callServer } from './shared/api.js';
+import { callServer, paintRequestIndicator } from './shared/api.js';
 import { rememberOpeningMessages } from './shared/desk.js';
 import { showFatal } from './shared/feedback.js';
 import { escapeHtml } from './shared/html.js';
 import { rememberQuotes } from './shared/loading.js';
 import { renderResources } from './shared/resources.js';
 import { advanceScene } from './shared/scene.js';
+import { actingAsOptions } from './shared/staffContext.js';
 import { state } from './shared/state.js';
 import { renderStaffTickets } from './staff/messages.js';
 import { mountNotesPanel, renderStaffNotes, setNotesOpen } from './staff/notes.js';
@@ -98,7 +99,7 @@ export function renderShell() {
       <nav class="tabs" aria-label="Sections">${tabs.map(function(tab) {
         return `<button type="button" data-view="${tab[0]}" aria-current="${state.section === tab[0] ? 'page' : 'false'}">${tabLabel(tab)}</button>`;
       }).join('')}</nav>
-      <div class="account">${showNotes ? `<button type="button" class="journey-toggle" id="notes-toggle" aria-expanded="${state.notesOpen ? 'true' : 'false'}" aria-controls="notes-panel">Notes</button>` : ''}${showJourney ? `<button type="button" class="journey-toggle" id="journey-toggle" aria-expanded="${state.journeyOpen ? 'true' : 'false'}" aria-controls="journey-panel">Journey</button>` : ''}<span id="request-indicator" class="request-indicator" aria-live="polite" aria-busy="false"></span><div>${escapeHtml(state.user.displayName)} <button type="button" id="sign-out" style="margin-left:8px;border:0;background:transparent;color:#e8f0f5;font-weight:700;">Sign out</button></div></div>
+      <div class="account">${headerContextMarkup()}${showNotes ? `<button type="button" class="journey-toggle" id="notes-toggle" aria-expanded="${state.notesOpen ? 'true' : 'false'}" aria-controls="notes-panel">Notes</button>` : ''}${showJourney ? `<button type="button" class="journey-toggle" id="journey-toggle" aria-expanded="${state.journeyOpen ? 'true' : 'false'}" aria-controls="journey-panel">Journey</button>` : ''}<span id="request-indicator" class="request-indicator" aria-live="polite" aria-busy="false"></span><div>${escapeHtml(state.user.displayName)} <button type="button" id="sign-out" style="margin-left:8px;border:0;background:transparent;color:#e8f0f5;font-weight:700;">Sign out</button></div></div>
     </header>
     <div id="feedback-region" aria-live="polite"></div>
     ${showNotes ? `<aside id="notes-panel" class="notes-panel${state.notesOpen ? ' open' : ''}" aria-label="Notes for this student">
@@ -117,6 +118,7 @@ export function renderShell() {
       </div>
     </aside>` : ''}
     <div id="form-dialog" class="form-dialog" hidden></div>`;
+  bindHeaderContext();
   const signOutButton = document.getElementById('sign-out');
   if (signOutButton) signOutButton.addEventListener('click', function() {
     const done = window.eeSignOut ? window.eeSignOut() : Promise.resolve();
@@ -190,6 +192,88 @@ export function renderShell() {
     }).catch(function() { state.ticketBadgeFor = ''; });
   }
   syncHistory();
+  ensureHeaderCohorts();
+  paintRequestIndicator();
+}
+
+let headerCohortsRequest = null;
+
+function normalizeCohorts(cohorts) {
+  return (cohorts || []).map(function(cohort) {
+    return { id: cohort.id, name: cohort.name || cohort.id };
+  }).filter(function(cohort) { return cohort.id; });
+}
+
+function headerCohortOptions() {
+  const cohorts = state.headerCohorts;
+  if (!cohorts) return '<option value="">Loading cohorts...</option>';
+  if (!cohorts.length) return '<option value="">No cohorts</option>';
+  return cohorts.map(function(cohort) {
+    return `<option value="${escapeHtml(cohort.id)}" ${cohort.id === state.cohortId ? 'selected' : ''}>${escapeHtml(cohort.name || cohort.id)}</option>`;
+  }).join('');
+}
+
+function headerContextMarkup() {
+  if (!state.user || state.user.role === 'student') return '';
+  const ready = !!(state.headerCohorts && state.headerCohorts.length);
+  return `<div class="header-context"><label for="header-cohort">Cohort</label><select id="header-cohort"${ready ? '' : ' disabled'}>${headerCohortOptions()}</select><label for="header-acting-as">Acting as</label><select id="header-acting-as">${actingAsOptions(state.user, state.actingAs)}</select></div>`;
+}
+
+function bindHeaderContext() {
+  const cohort = document.getElementById('header-cohort');
+  const acting = document.getElementById('header-acting-as');
+  if (cohort) cohort.addEventListener('change', function(event) {
+    const next = event.target.value;
+    if (!next || next === state.cohortId) return;
+    state.cohortId = next;
+    state.staffSupervisor = '';
+    state.staffSelected = [];
+    state.staffHome = null;
+    state.staffStudent = null;
+    state.staffStudentHome = null;
+    renderShell();
+  });
+  if (acting) acting.addEventListener('change', function(event) {
+    const next = event.target.value;
+    if (!next || next === state.actingAs) return;
+    state.actingAs = next;
+    state.staffSelected = [];
+    state.staffHome = null;
+    state.staffStudent = null;
+    state.staffStudentHome = null;
+    state.ticketBadgeFor = '';
+    renderShell();
+  });
+}
+
+export function rememberHeaderCohorts(cohorts) {
+  if (!Array.isArray(cohorts)) return;
+  state.headerCohorts = normalizeCohorts(cohorts);
+  paintHeaderCohortSelect();
+}
+
+export function paintHeaderCohortSelect() {
+  const select = document.getElementById('header-cohort');
+  if (!select || !state.user || state.user.role === 'student') return;
+  const signature = (state.headerCohorts || []).map(function(cohort) { return cohort.id + '\0' + cohort.name; }).join('\n');
+  if (select.dataset.cohorts !== signature) {
+    select.dataset.cohorts = signature;
+    select.innerHTML = headerCohortOptions();
+  }
+  select.disabled = !(state.headerCohorts && state.headerCohorts.length);
+  if (state.cohortId) select.value = state.cohortId;
+}
+
+export function ensureHeaderCohorts() {
+  if (!state.user || state.user.role === 'student') return;
+  if (state.headerCohorts || headerCohortsRequest) return;
+  headerCohortsRequest = callServer('getCohorts').then(function(cohorts) {
+    if (!state.headerCohorts) state.headerCohorts = normalizeCohorts(cohorts);
+    paintHeaderCohortSelect();
+  }, function(error) {
+    headerCohortsRequest = null;
+    if (error && error.stale) ensureHeaderCohorts();
+  });
 }
 
 export function tabLabel(tab) {

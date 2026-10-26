@@ -7,6 +7,7 @@ import { showError, showSuccess } from '../shared/feedback.js';
 import { cssEscape, escapeHtml, safeUrl } from '../shared/html.js';
 import { loadingLine } from '../shared/loading.js';
 import { isStale } from '../shared/scene.js';
+import { syncHeaderCohortSelect } from '../shared/staffContext.js';
 import { state } from '../shared/state.js';
 import {
   bindCollapsibleHeaders,
@@ -321,6 +322,7 @@ export function renderStaffQuotas(target) {
     });
     if (state.quotaCohorts.length && !state.quotaCohorts.some(function(cohort) { return cohort.id === state.cohortId; })) {
       state.cohortId = state.quotaCohorts[0].id;
+      syncHeaderCohortSelect();
     }
     paintStaffQuotas();
   }).catch(showError);
@@ -611,7 +613,10 @@ export function bindQuotaPageActions() {
     }).catch(function(error) { save.disabled = false; showError(error); });
   });
   const cohort = document.getElementById('quota-cohort');
-  if (cohort) cohort.addEventListener('change', function(event) { state.cohortId = event.target.value; });
+  if (cohort) cohort.addEventListener('change', function(event) {
+    state.cohortId = event.target.value;
+    syncHeaderCohortSelect();
+  });
   const exportButton = document.getElementById('quota-export');
   if (exportButton) exportButton.addEventListener('click', exportQuotaSheet);
   const ingest = document.getElementById('quota-ingest');
