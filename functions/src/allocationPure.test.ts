@@ -27,6 +27,7 @@ import {
   formatSubjectCell,
   parseSubjectCell,
   quotaCapacity,
+  subjectTokenLoad,
   staffQuotaTokenRows,
   subjectsOverlap,
   tokenSheetRows,
@@ -193,6 +194,29 @@ test('a batch stops when the supervisor runs out of slots', () => {
   assert.equal(plan.tokenWrites[0].allocatedTo, JANE);
 });
 
+test('subject token load groups remaining slots by subject', () => {
+  const load = subjectTokenLoad([
+    { status: 'available', eligibleSubjects: ['History', 'Geography'] },
+    { status: 'available', eligibleSubjects: ['history', 'History'] },
+    { status: 'available', eligibleSubjects: ['Biology'] },
+    { status: 'draft', eligibleSubjects: ['Art'] },
+    { status: 'committed', eligibleSubjects: ['Biology'] },
+    { status: 'available', eligibleSubjects: [] },
+    { status: 'draft', eligibleSubjects: [] },
+  ]);
+  assert.equal(load.untied, 1);
+  assert.equal(load.overlaps, true);
+  assert.deepEqual(load.subjects, [
+    { subject: 'Art', remaining: 0 },
+    { subject: 'Biology', remaining: 1 },
+    { subject: 'Geography', remaining: 1 },
+    { subject: 'History', remaining: 2 },
+  ]);
+  const single = subjectTokenLoad([{ status: 'available', eligibleSubjects: ['Chemistry'] }]);
+  assert.equal(single.overlaps, false);
+  assert.equal(single.untied, 0);
+});
+
 test('publish writes drafts and clears a released supervisor', () => {
   const tokens = [
     token({ id: 'draft', staffId: SMITH, status: 'draft', allocatedTo: JANE, assignedSubject: 'History' }),
@@ -237,6 +261,11 @@ test('the desk marks subject match, an HL miss, and support flags from the saved
   assert.equal(desk.students[0].choices.interdisciplinary, true);
   assert.equal(desk.supervisors[0].displayName, 'Mr. Smith');
   assert.equal(desk.supervisors[0].used, 1);
+  assert.deepEqual(desk.tokenSlots, [{ status: 'draft', eligibleSubjects: ['History', 'Geography'] }]);
+  assert.deepEqual(subjectTokenLoad(desk.tokenSlots).subjects, [
+    { subject: 'Geography', remaining: 0 },
+    { subject: 'History', remaining: 0 },
+  ]);
   assert.equal(desk.summary.buffer, 0);
   assert.equal(subjectsOverlap('Vis Art', ['Visual Arts']), true);
 

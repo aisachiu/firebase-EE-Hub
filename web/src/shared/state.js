@@ -8,6 +8,7 @@ export const state = {
   allocationDesk: null,
   allocationCohorts: [],
   allocationStatus: 'all',
+  allocationLoadView: 'subject',
   allocationSupport: 'all',
   allocationSort: 'name',
   allocationSortDir: 1,
