@@ -59,7 +59,9 @@ export function paintAssignmentRoster(cohortId) {
     const record = item.record;
     const index = item.index;
     const checked = state.assignmentStudentIds.indexOf(record.StudentId) >= 0;
-    return `<tr><td><input type="checkbox" data-assignment-student="${index}" value="${escapeHtml(record.StudentId)}" ${checked ? 'checked' : ''}></td><td>${escapeHtml(record['Display Name'])}<br><small>${escapeHtml(record.StudentId)}</small></td><td>${escapeHtml(record['Year Group'])}</td><td>${escapeHtml(String(record.Anchor_Date || '').slice(0, 10))}</td><td><button type="button" class="link-button" data-edit-assignment="${index}">Edit</button></td></tr>`;
+    const number = record['Student Number'] || record['Student ID'] || '';
+    const identity = (number ? 'Student Number ' + number + ' · ' : '') + 'StudentId ' + (record.StudentId || '');
+    return `<tr><td><input type="checkbox" data-assignment-student="${index}" value="${escapeHtml(record.StudentId)}" ${checked ? 'checked' : ''}></td><td>${escapeHtml(record['Display Name'])}<br><small>${escapeHtml(identity)}</small></td><td>${escapeHtml(record['Year Group'])}</td><td>${escapeHtml(String(record.Anchor_Date || '').slice(0, 10))}</td><td><button type="button" class="link-button" data-edit-assignment="${index}">Edit</button></td></tr>`;
   }).join('')}</tbody></table></div>` : '<div class="empty">No students are listed in this cohort.</div>';
   bindSortableHeaders(target, function() { paintAssignmentRoster(cohortId); });
   target.querySelectorAll('[data-assignment-student]').forEach(function(input) {

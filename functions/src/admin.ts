@@ -7,6 +7,7 @@ import { adminSchema, cohortSheetName, COLLECTIONS, docIdFor, fieldConfig, norma
 import { App, audited, requireAdmin } from './session';
 import { validateTicketCategory } from './messaging';
 import { assertSafeResourceHtml } from './formsPure';
+import { canonicalStudentEmail, canonicalStudentNumber, presentStoredIdentifiers, STUDENT_EMAIL_FIELD, STUDENT_NUMBER_FIELD, syncStudentUserFromMember, writeStudentIdentifiers } from './studentIdentity';
 import { Doc, driveNamePart, HubError, normalizeEmail, text, toBoolean, uuid, validateEmail } from './util';
 
 const BUILTIN_QUOTES = [
@@ -56,13 +57,14 @@ export async function getAdminRecords(app: App, entity: string) {
   let records = await app.store.list(COLLECTIONS[entity]);
   if (entity === 'phases') records = records.sort((left, right) => Number(left.sequence) - Number(right.sequence));
   if (entity === 'milestoneTemplates') records = records.sort((left, right) => Number(left.position || 0) - Number(right.position || 0));
+  if (entity === 'studentUsers') records = records.map((record) => presentStoredIdentifiers(record));
   return { schema, headers, records };
 }
 
 export async function getCohortMembersForAdmin(app: App, cohortId: unknown) {
   await requireAdmin(app, 'LIST_COHORT_MEMBERS');
   const cohort = await requireCohort(app, text(cohortId), true);
-  const records = (await app.store.listMembers(cohort.id)).map((record) => ({ ...record, hasStudentIdConflict: false }));
+  const records = (await app.store.listMembers(cohort.id)).map((record) => ({ ...presentStoredIdentifiers(record), hasStudentIdConflict: false }));
   return { schema: adminSchema('cohortMembers', await phases(app)), headers: tableHeaders('cohortMembers'), records };
 }
 
@@ -80,8 +82,14 @@ export async function saveAdminRecord(app: App, entity: string, record: Doc, ori
   const keyName = originalKey ? text(originalKey) : '';
   if (entity === 'cohorts') return saveCohort(app, user.email, record || {}, keyName);
   const values = coerce(entity, { ...(record || {}) });
+  if (entity === 'studentUsers') {
+    values.StudentId = normalizeEmail(values.StudentId);
+    values[STUDENT_EMAIL_FIELD] = canonicalStudentEmail(values);
+    values[STUDENT_NUMBER_FIELD] = canonicalStudentNumber(values);
+    delete values.studentEmail;
+    delete values['Student ID'];
+  }
   validateRecordFields(entity, values, keyName);
-  if (entity === 'studentUsers') values.studentEmail = normalizeEmail(values.StudentId);
   if (entity === 'milestoneTemplates') {
     values.type = text(values.type).toLowerCase();
     values.mOwner = text(values.mOwner).toLowerCase();
@@ -132,7 +140,8 @@ export async function saveAdminRecord(app: App, entity: string, record: Doc, ori
       const all = await app.store.list(COLLECTIONS.milestoneTemplates);
       values.position = all.reduce((max, row) => Math.max(max, Number(row.position) || 0), 0) + 1;
     }
-    const stored = existing ? { ...existing, ...values } : values;
+    const stored = existing ? { ...existing, ...values } : { ...values };
+    if (entity === 'studentUsers') writeStudentIdentifiers(stored);
     await app.store.set(COLLECTIONS[entity], id, stored);
     if (entity === 'milestoneTemplates' && toBoolean(stored.isAnchor)) await releaseOtherAnchors(app, id);
     return { key: id };
@@ -239,19 +248,20 @@ export async function saveCohortMember(app: App, cohortId: unknown, record: Doc,
   await requireCohort(app, cohort, true);
   const values = coerce('cohortMembers', { ...(record || {}) });
   const original = text(originalStudentId);
-  validateRecordFields('cohortMembers', values, original);
   values.StudentId = normalizeEmail(values.StudentId);
-  values['Student Email'] = normalizeEmail(values['Student Email']);
+  writeStudentIdentifiers(values);
+  validateRecordFields('cohortMembers', values, original);
   values['Year Group'] = Number(values['Year Group']);
   return audited(app, user, original ? 'UPDATE_COHORT_MEMBER' : 'CREATE_COHORT_MEMBER', { cohort, studentId: normalizeEmail(original || values.StudentId) }, async () => {
     const currentId = normalizeEmail(original || values.StudentId);
     const existing = await app.store.getMember(cohort, currentId);
     if (original && !existing) throw new HubError('Cohort student not found. Refresh and try again.');
     if (!original && existing) throw new HubError('This student is already in the cohort.');
-    const stored: Doc = { ...(existing || {}), ...values, StudentId: values.StudentId };
+    const stored: Doc = writeStudentIdentifiers({ ...(existing || {}), ...values, StudentId: values.StudentId });
     if (stored.eeActive === undefined || stored.eeActive === '') stored.eeActive = true;
     if (original && original !== values.StudentId) await app.store.removeMember(cohort, original);
     await app.store.setMember(cohort, values.StudentId, stored);
+    await syncStudentUserFromMember(app.store, stored);
     return { studentId: values.StudentId };
   });
 }
@@ -282,16 +292,17 @@ export async function importCohortMembers(app: App, cohortId: unknown, records: 
     const seen: Record<string, boolean> = {};
     for (const record of records) {
       const values = coerce('cohortMembers', { ...(record || {}) });
-      validateRecordFields('cohortMembers', values);
       const studentId = normalizeEmail(values.StudentId);
       values.StudentId = studentId;
-      values['Student Email'] = normalizeEmail(values['Student Email']);
+      writeStudentIdentifiers(values);
+      validateRecordFields('cohortMembers', values);
       values['Year Group'] = Number(values['Year Group']);
       if (values.eeActive === undefined || values.eeActive === '') values.eeActive = true;
       if (seen[studentId]) throw new HubError(`StudentId appears more than once in the import: ${studentId}`);
       if (existing[studentId]) throw new HubError(`StudentId is already in this cohort: ${studentId}`);
       seen[studentId] = true;
       await app.store.setMember(cohort, studentId, values);
+      await syncStudentUserFromMember(app.store, values);
     }
     return { imported: records.length };
   });
@@ -317,15 +328,27 @@ export async function createStudentUsersFromCohort(app: App, cohortId: unknown, 
     for (const studentId of Object.keys(selected)) {
       const member = byId[studentId];
       if (!member) throw new HubError(`Student is not in this cohort: ${studentId}`);
-      if (member.hasStudentIdConflict) throw new HubError(`Resolve the duplicate Student ID values before creating a user for ${studentId}.`);
+      if (member.hasStudentIdConflict) throw new HubError(`Resolve the duplicate Student Number values before creating a user for ${studentId}.`);
       const displayName = text(member['Display Name'] || member.DisplayName || member['Preferred Name'] || studentId);
+      const identifiers = {
+        [STUDENT_NUMBER_FIELD]: canonicalStudentNumber(member),
+        [STUDENT_EMAIL_FIELD]: canonicalStudentEmail(member),
+      };
       const existing = await app.store.get(COLLECTIONS.studentUsers, studentId);
-      if (existing) { alreadyExists += 1; continue; }
+      if (existing) {
+        await app.store.set(COLLECTIONS.studentUsers, studentId, writeStudentIdentifiers({
+          ...existing,
+          StudentId: studentId,
+          ...identifiers,
+        }));
+        alreadyExists += 1;
+        continue;
+      }
       await app.store.set(COLLECTIONS.studentUsers, studentId, {
         StudentId: studentId,
         DisplayName: displayName,
         Cohort: cohort,
-        studentEmail: studentId,
+        ...identifiers,
         parentEmail: text(member['Family Email']),
       });
       created += 1;

@@ -1,5 +1,6 @@
 import { parseSubjectCell } from './allocationPure';
 import { APP_TABLES, COLLECTIONS, FieldDef, tableFields } from './schema';
+import { canonicalStudentHeader, writeStudentIdentifiers } from './studentIdentity';
 import { dateOnlyValue, Doc, driveNamePart, normalizeEmail, serializeDateOnly, text, toBoolean } from './util';
 
 export interface SheetGrid {
@@ -127,6 +128,7 @@ function readTable(plan: SheetImportPlan, entity: string, grid: SheetGrid): void
 function readCohortMembers(plan: SheetImportPlan, cohortId: string, grid: SheetGrid): void {
   const seen = new Set<string>();
   recordsFrom(plan, grid, tableFields('cohortMembers'), true).forEach((record) => {
+    writeStudentIdentifiers(record);
     const id = docId(normalizeEmail(record.StudentId));
     if (!id) {
       warn(plan, `${grid.title} row is missing StudentId.`);
@@ -229,7 +231,8 @@ function recordsFrom(plan: SheetImportPlan, grid: SheetGrid, fields: FieldDef[],
     warn(plan, `${grid.title} has no header row.`);
     return [];
   }
-  const headers = grid.rows[0].map((cell) => text(cell));
+  const knownNames = fields.map((field) => field.name);
+  const headers = grid.rows[0].map((cell) => canonicalStudentHeader(text(cell), knownNames));
   const seenHeaders = new Set<string>();
   headers.forEach((header, index) => {
     if (!header || !seenHeaders.has(header)) {
@@ -313,7 +316,7 @@ function ensureCohortsForMembers(plan: SheetImportPlan): void {
 
 function fillStudentEmails(plan: SheetImportPlan): void {
   (plan.docs[COLLECTIONS.studentUsers] || []).forEach((doc) => {
-    if (!text(doc.data.studentEmail)) doc.data.studentEmail = doc.id;
+    writeStudentIdentifiers(doc.data);
   });
 }
 

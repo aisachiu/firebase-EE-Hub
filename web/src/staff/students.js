@@ -77,7 +77,7 @@ export function visibleStaffStudents(home) {
   const query = state.staffQuery.trim().toLowerCase();
   if (query) {
     students = students.filter(function(student) {
-      return (student.displayName + ' ' + student.surname + ' ' + student.subject + ' ' + student.hrm).toLowerCase().indexOf(query) >= 0;
+      return (student.displayName + ' ' + student.surname + ' ' + student.subject + ' ' + student.hrm + ' ' + (student.studentNumber || '')).toLowerCase().indexOf(query) >= 0;
     });
   }
   const sort = state.staffSort || 'surname';
@@ -102,7 +102,7 @@ export function rememberStaffJourneyExpanded(expanded) {
 }
 
 export function staffIdentityMarkup(student) {
-  const details = escapeHtml(student.subject || 'No subject yet') + (student.hrm ? ' · ' + escapeHtml(student.hrm) : '') + (student.surname ? ' · ' + escapeHtml(student.surname) : '');
+  const details = escapeHtml(student.subject || 'No subject yet') + (student.studentNumber ? ' · Student Number ' + escapeHtml(student.studentNumber) : '') + (student.hrm ? ' · ' + escapeHtml(student.hrm) : '') + (student.surname ? ' · ' + escapeHtml(student.surname) : '');
   return `<button type="button" class="name" data-open-student="${escapeHtml(student.email)}">${escapeHtml(student.displayName)}</button><div class="muted list-student-meta">${details}</div>`;
 }
 

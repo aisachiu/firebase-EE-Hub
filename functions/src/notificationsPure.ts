@@ -17,7 +17,10 @@ export interface SweepTask {
 
 export interface SweepStudent {
   cohortId: string;
+  /** Login StudentId. Used to match tasks, not to address mail. */
   email: string;
+  /** Student Email. Gmail uses this and never the login StudentId. */
+  studentEmail: string;
   displayName: string;
   supervisorId: string;
 }
@@ -61,6 +64,7 @@ export interface PlannedSend {
   milestoneId: string;
   milestoneTitle: string;
   studentId: string;
+  studentEmail: string;
   studentName: string;
   dueDate: string;
   when: NotifyWhen;
@@ -202,7 +206,7 @@ export function audienceHint(audience: NotifyAudience, mOwner: string): string {
   if (mOwner === 'supervisor') return 'The email goes to the supervisor assigned on the cohort roster.';
   if (mOwner === 'lead') return 'The email goes to staff marked as EE lead.';
   if (mOwner === 'coordinator') return 'The email goes to coordinators and admins, because they own this milestone.';
-  return 'The email goes to the student on the cohort roster.';
+  return 'The email goes to the Student Email on the cohort roster.';
 }
 
 export function buildMessage(input: {
@@ -256,7 +260,7 @@ export function recipientEmails(audience: NotifyAudience, mOwner: string, studen
   if (owner === 'supervisor') return uniqueEmails([student.supervisorId]);
   if (owner === 'lead') return leads;
   if (owner === 'coordinator') return coordinators;
-  return uniqueEmails([student.email]);
+  return uniqueEmails([student.studentEmail]);
 }
 
 export function planSweep(input: {
@@ -292,7 +296,12 @@ export function planSweep(input: {
     const email = normalizeEmail(student.email);
     if (!cohortId || !email) return;
     const bucket = studentsByCohort.get(cohortId) || [];
-    bucket.push({ ...student, email, supervisorId: normalizeEmail(student.supervisorId) });
+    bucket.push({
+      ...student,
+      email,
+      studentEmail: normalizeEmail(student.studentEmail),
+      supervisorId: normalizeEmail(student.supervisorId),
+    });
     studentsByCohort.set(cohortId, bucket);
   });
 
@@ -356,6 +365,7 @@ export function planSweep(input: {
           milestoneId: rule.milestoneId,
           milestoneTitle: template.title || task.title,
           studentId: student.email,
+          studentEmail: student.studentEmail,
           studentName: student.displayName || student.email,
           dueDate,
           when: rule.when,

@@ -126,7 +126,7 @@ export function renderAdminData(data, options) {
       const record = item.record;
       const index = item.index;
       const selected = isCohortMembers && state.selectedMemberIds.indexOf(record.StudentId) >= 0;
-      return `<tr>${isCohortMembers ? `<td><input type="checkbox" data-select-member value="${escapeHtml(record.StudentId)}" ${selected ? 'checked' : ''} ${record.hasStudentIdConflict ? 'disabled title="Resolve Student ID conflicts first"' : ''}></td>` : ''}${columns.map(function(field) { return `<td>${escapeHtml(displayField(field, record))}</td>`; }).join('')}<td><div class="actions"><button type="button" class="link-button" data-edit="${index}" ${record.hasStudentIdConflict ? 'disabled title="Reconcile duplicate Student ID values first"' : ''}>Edit</button><button type="button" class="link-button" data-delete="${index}">Delete</button></div>${record.hasStudentIdConflict ? '<div class="notice">Duplicate Student ID values disagree.</div>' : ''}</td></tr>`;
+      return `<tr>${isCohortMembers ? `<td><input type="checkbox" data-select-member value="${escapeHtml(record.StudentId)}" ${selected ? 'checked' : ''} ${record.hasStudentIdConflict ? 'disabled title="Resolve Student Number conflicts first"' : ''}></td>` : ''}${columns.map(function(field) { return `<td>${escapeHtml(displayField(field, record))}</td>`; }).join('')}<td><div class="actions"><button type="button" class="link-button" data-edit="${index}" ${record.hasStudentIdConflict ? 'disabled title="Reconcile duplicate Student Number values first"' : ''}>Edit</button><button type="button" class="link-button" data-delete="${index}">Delete</button></div>${record.hasStudentIdConflict ? '<div class="notice">Duplicate Student Number values disagree.</div>' : ''}</td></tr>`;
     }).join('')}</tbody></table></div>` : '<div class="empty">No records yet.</div>'}
     <div id="roster-import-panel"></div>`;
   document.getElementById('new-record').addEventListener('click', function() { openEditor(null); });
@@ -180,6 +180,12 @@ export function openRosterImport() {
   });
 }
 
+export function canonicalRosterHeader(header) {
+  if (header === 'Student ID') return 'Student Number';
+  if (header === 'studentEmail') return 'Student Email';
+  return header;
+}
+
 export function parseRosterText(sourceText, requiredHeaders) {
   const firstLine = String(sourceText).split(/\r?\n/, 1)[0] || '';
   const delimiter = firstLine.indexOf('\t') >= 0 ? '\t' : ',';
@@ -211,7 +217,7 @@ export function parseRosterText(sourceText, requiredHeaders) {
   if (row.some(function(value) { return value.trim() !== ''; })) rows.push(row);
   if (rows.length < 2) throw new Error('Include a header row and at least one student.');
 
-  const headers = rows.shift().map(function(value) { return value.trim(); });
+  const headers = rows.shift().map(function(value) { return canonicalRosterHeader(value.trim()); });
   if (headers.some(function(header) { return !header; })) throw new Error('Every column needs a header.');
   if (new Set(headers).size !== headers.length) throw new Error('Duplicate column headers are ambiguous.');
   (requiredHeaders || []).forEach(function(header) {
@@ -260,7 +266,7 @@ export function confirmRosterImport(event) {
 
 export function createSelectedUsers() {
   const button = document.getElementById('create-selected-users');
-  if (!state.selectedMemberIds.length || !window.confirm('Add the selected students as user accounts? Existing accounts will be skipped.')) return;
+  if (!state.selectedMemberIds.length || !window.confirm('Add the selected students as user accounts? Existing accounts stay, and their Student Number and Student Email are updated from the cohort.')) return;
   button.disabled = true;
   runMutation('createStudentUsersFromCohort', [state.cohortId, state.selectedMemberIds], { key: 'cohort-users:' + state.cohortId }).then(function(result) {
     state.status = result.created + ' user accounts added; ' + result.alreadyExists + ' already existed.';
@@ -420,7 +426,7 @@ export function renderCohortImport() {
         if (!cohortSelect.value) return;
         callServer('getCohortMembersForAdmin', cohortSelect.value).then(function(result) {
           studentSelect.innerHTML = '<option value="">Choose a student</option>' + (result.records || []).map(function(member, index) {
-            return `<option value="${index}" ${member.hasStudentIdConflict ? 'disabled' : ''}>${escapeHtml(member['Display Name'] || member.StudentId)} · ${escapeHtml(member.StudentId)}${member.hasStudentIdConflict ? ' · ID conflict' : ''}</option>`;
+            return `<option value="${index}" ${member.hasStudentIdConflict ? 'disabled' : ''}>${escapeHtml(member['Display Name'] || member.StudentId)} · StudentId ${escapeHtml(member.StudentId)}${member.hasStudentIdConflict ? ' · Student Number conflict' : ''}</option>`;
           }).join('');
           studentSelect.onchange = function() {
             const member = result.records[Number(studentSelect.value)];
@@ -428,7 +434,8 @@ export function renderCohortImport() {
             setField('DisplayName', member['Display Name']);
             setField('Cohort', cohortSelect.value);
             setField('StudentId', member.StudentId);
-            setField('studentEmail', member['Student Email']);
+            setField('Student Number', member['Student Number'] || member['Student ID'] || '');
+            setField('Student Email', member['Student Email'] || '');
             setField('parentEmail', member['Family Email']);
           };
         }).catch(showError);

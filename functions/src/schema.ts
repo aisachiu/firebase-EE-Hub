@@ -71,10 +71,11 @@ export const APP_TABLES: Record<string, TableDef> = {
   studentUsers: {
     sheet: 'USERS-STUDENTS',
     fields: [
-      { name: 'StudentId', type: 'email', required: true, key: true, validator: 'email' },
+      { name: 'StudentId', type: 'email', required: true, key: true, validator: 'email', label: 'StudentId' },
       { name: 'DisplayName', type: 'text', required: true },
       { name: 'Cohort', type: 'text' },
-      { name: 'studentEmail', type: 'email', editable: false, serverDerived: true, table: false },
+      { name: 'Student Number', type: 'text', validator: 'studentNumber', label: 'Student Number' },
+      { name: 'Student Email', type: 'email', validator: 'email', label: 'Student Email' },
       { name: 'parentEmail', type: 'email' },
     ],
   },
@@ -144,16 +145,16 @@ export const APP_TABLES: Record<string, TableDef> = {
     sheet: 'COHORT: [Cohort]',
     sheetPattern: 'COHORT: [Cohort]',
     fields: [
-      { name: 'StudentId', type: 'email', required: true, key: true, validator: 'email' },
+      { name: 'StudentId', type: 'email', required: true, key: true, validator: 'email', label: 'StudentId' },
       { name: 'Display Name', type: 'text', required: true },
       { name: 'HRM', type: 'text', table: false },
       { name: 'Surname', type: 'text' },
       { name: 'First Name', type: 'text' },
       { name: 'Preferred Name', type: 'text', table: false },
       { name: 'Chinese Name', type: 'text', table: false },
-      { name: 'Student ID', type: 'text', required: true, validator: 'studentId' },
+      { name: 'Student Number', type: 'text', required: true, validator: 'studentNumber', label: 'Student Number' },
       { name: 'Family Email', type: 'email', table: false },
-      { name: 'Student Email', type: 'email', required: true, validator: 'email' },
+      { name: 'Student Email', type: 'email', required: true, validator: 'email', label: 'Student Email' },
       { name: 'Date of Birth', type: 'date', table: false },
       { name: 'House', type: 'text', table: false },
       { name: 'Gender', type: 'text', table: false },
@@ -390,7 +391,7 @@ export function validateRecordFields(entity: string, values: Record<string, any>
       throw new HubError(`${field.name} must be checked or unchecked.`);
     }
     if (field.validator === 'email') validateEmailLoose(value, field.name);
-    if (field.validator === 'studentId' && !/^\d{8}$/.test(text(value))) throw new HubError(`${field.name} must be an 8-digit number.`);
+    if (field.validator === 'studentNumber' && !/^\d{8}$/.test(text(value))) throw new HubError(`${field.name} must be an 8-digit number.`);
     if (field.validator === 'yearGroup' && (!Number.isInteger(Number(value)) || Number(value) <= 0)) {
       throw new HubError(`${field.name} must be a positive whole number.`);
     }

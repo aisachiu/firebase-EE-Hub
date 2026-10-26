@@ -197,6 +197,34 @@ test('removing a message thread also removes its replies', async () => {
   assert.deepEqual(await app.store.listMessages('t1'), []);
 });
 
+test('roster ingest stores Student Number and copies it onto the student user', async () => {
+  const app = appFor();
+  await seed(app);
+  const store = app.store as unknown as ReturnType<typeof memory>;
+  await store.set(COLLECTIONS.studentUsers, STUDENT, {
+    StudentId: STUDENT,
+    DisplayName: 'Jamie Wong',
+    studentEmail: STUDENT,
+  });
+  const grid: SheetGrid = {
+    title: 'COHORT: 2026',
+    rows: [
+      ['StudentId', 'Display Name', 'Student ID', 'Student Email', 'Year Group', 'Surname'],
+      [STUDENT, 'Jamie Wong', '20260001', 'jamie.mail@vsa.edu', 12, 'Wong'],
+    ],
+  };
+  await applySheetIngest(app, SHEET, ['cohortMembers'], true, { workbook: workbook([grid]) });
+  const member = (await store.listMembers('2026'))[0];
+  assert.equal(member['Student Number'], '20260001');
+  assert.equal(member['Student ID'], undefined);
+  assert.equal(member['Student Email'], 'jamie.mail@vsa.edu');
+  const user = await store.get(COLLECTIONS.studentUsers, STUDENT);
+  assert.equal(user?.['Student Number'], '20260001');
+  assert.equal(user?.['Student Email'], 'jamie.mail@vsa.edu');
+  assert.equal(user?.studentEmail, undefined);
+  assert.equal(user?.StudentId, STUDENT);
+});
+
 test('roster ingest keeps eeActive when the sheet has no column for it', async () => {
   const app = appFor();
   await seed(app);

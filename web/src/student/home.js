@@ -253,7 +253,7 @@ export function renderEssayStats(stats) {
 export function staffStudentBar(home) {
   if (!home || !home.staffView) return '';
   return `<button type="button" class="link-button back" id="staff-back">← My Students</button>
-    <p class="muted">${escapeHtml(home.hrm || '')}${home.studentNumber ? ' · ' + escapeHtml(home.studentNumber) : ''}${home.viewLabel ? ' · ' + escapeHtml(home.viewLabel) : ''}</p>`;
+    <p class="muted">${escapeHtml(home.hrm || '')}${home.studentNumber ? ' · Student Number ' + escapeHtml(home.studentNumber) : ''}${home.viewLabel ? ' · ' + escapeHtml(home.viewLabel) : ''}</p>`;
 }
 
 export function bindStaffStudentChrome() {

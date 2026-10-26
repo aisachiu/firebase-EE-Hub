@@ -56,6 +56,9 @@ test('a workbook becomes staff, roster, form answers, and messages', () => {
   assert.equal(plan.docs.staffUsers[0].data.isCoordinator, true);
   assert.equal(plan.docs.cohorts[0].data.FolderPrefix, 'EE ');
   assert.equal(plan.members[0].id, 'jamie.wong@vsa.edu');
+  assert.equal(plan.members[0].data['Student Number'], '20260001');
+  assert.equal(plan.members[0].data['Student ID'], undefined);
+  assert.equal(plan.members[0].data['Student Email'], 'jamie.wong@vsa.edu');
   assert.equal(plan.members[0].data.Anchor_Date, '2026-12-15');
   assert.equal(plan.members[0].data.supervisorId, 'alex.chen@vsa.edu');
   assert.equal(plan.docs.milestoneTemplates[0].data.position, 1);
@@ -98,6 +101,21 @@ test('content pages become resources when that resource id is new', () => {
   const words = plan.docs.resources.find((doc) => doc.id === 'words');
   assert.equal(words?.data['Body Format'], 'html');
   assert.equal(words?.data.Category, 'Guide');
+});
+
+test('a student user sheet keeps Student Email separate from StudentId', () => {
+  const plan = planSheetImport([
+    grid('USERS-STUDENTS', ['StudentId', 'DisplayName', 'studentEmail', 'Student ID'], [
+      ['Hub.Login@VSA.EDU', 'Jamie Wong', 'Jamie.Mail@VSA.EDU', '20260001'],
+    ]),
+  ]);
+  const user = plan.docs.studentUsers[0];
+  assert.equal(user.id, 'hub.login@vsa.edu');
+  assert.equal(user.data['Student Email'], 'jamie.mail@vsa.edu');
+  assert.equal(user.data.studentEmail, undefined);
+  assert.equal(user.data['Student Number'], '20260001');
+  assert.equal(user.data['Student ID'], undefined);
+  assert.notEqual(user.data['Student Email'], user.id);
 });
 
 test('a roster sheet without a cohort registry row still creates the cohort', () => {
