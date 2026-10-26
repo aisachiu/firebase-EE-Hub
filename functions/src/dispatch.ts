@@ -7,6 +7,7 @@ import {
   massUpdateMilestones,
   recordMilestoneDecision,
   saveStudentAnchorAndSync,
+  setStaffMilestoneStatus,
   updateMilestoneAssignment,
   saveStudentTodo,
   saveTodoTemplate,
@@ -127,7 +128,8 @@ export async function dispatch(app: App, method: string, args: unknown[]): Promi
     case 'saveStudentTodo': return saveStudentTodo(app, args[0], args[1], args[2], args[3]);
     case 'addStudentTodo': return addStudentTodo(app, args[0], args[1]);
     case 'addStaffStudentTodo': return addStaffStudentTodo(app, args[0], args[1], args[2], args[3], args[4]);
-    case 'recordMilestoneDecision': return recordMilestoneDecision(app, args[0], args[1], args[2], args[3], args[4], args[5]);
+    case 'recordMilestoneDecision': return recordMilestoneDecision(app, args[0], args[1], args[2], args[3], args[4], args[5], args[6]);
+    case 'setStaffMilestoneStatus': return setStaffMilestoneStatus(app, args[0], args[1], args[2], args[3], args[4]);
     case 'updateMilestoneAssignment': return updateMilestoneAssignment(app, args[0], args[1], args[2], args[3], args[4]);
     case 'massUpdateMilestones': return massUpdateMilestones(app, args[0], args[1], args[2], args[3], args[4]);
     case 'saveTodoTemplate': return saveTodoTemplate(app, args[0]);

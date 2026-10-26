@@ -1,7 +1,7 @@
 import { activityFeed } from './activity';
 import { getStudentActionItems, latestReturned, readActionItemsForEmails, readEvents } from './actions';
 import { canCompleteMilestone, HubUser, normalizeStaffView } from './permissions';
-import { findPlacement, orderTemplates, readPhases, readRoster, readStaffTables, readTemplates, staffMayAddStudentTodo, staffMayUpdateAllMilestones, staffStudentContext } from './roster';
+import { coordinatorOrAdmin, findPlacement, loginAliasMap, orderTemplates, readPhases, readRoster, readStaffTables, readTemplates, staffMayAddStudentTodo, staffMayUpdateAllMilestones, staffStudentContext } from './roster';
 import { COLLECTIONS } from './schema';
 import { App, deny, requireStaff, requireUser } from './session';
 import { staffUnreadNotices, studentTicketNotice } from './messaging';
@@ -161,7 +161,7 @@ export async function getStaffHome(app: App, cohortId: unknown, viewAs: unknown)
   if (view === 'supervisor') roster = roster.filter((student) => student.supervisorId === user.email);
   const emails: Record<string, boolean> = {};
   roster.forEach((student) => { emails[student.email] = true; });
-  const items = await readActionItemsForEmails(app, emails);
+  const items = await readActionItemsForEmails(app, emails, loginAliasMap(roster));
   const events = await readEvents(app, Object.keys(emails));
   const returned = latestReturned(events);
   const today = todayUtc();
@@ -178,7 +178,7 @@ export async function getStaffHome(app: App, cohortId: unknown, viewAs: unknown)
     viewAs: view,
     viewerEmail: user.email,
     canAct: view !== 'staff',
-    canEditMilestones: view !== 'staff' && !!user.permissions?.canAdmin,
+    canEditMilestones: view !== 'staff' && coordinatorOrAdmin(user),
     phases,
     templates,
     supervisors: supervisorChoices(roster, await staffDirectory(app)),

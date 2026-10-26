@@ -158,7 +158,35 @@ export function staffMayAddStudentTodo(user: HubUser, context: { view: string; r
 
 export function staffMayUpdateAllMilestones(user: HubUser, roster: Placement | null, view: string): boolean {
   if (!user || user.role !== 'staff' || view === 'staff' || !roster) return false;
-  return !!(user.permissions && user.permissions.canAdmin);
+  return coordinatorOrAdmin(user);
+}
+
+export function coordinatorOrAdmin(user: HubUser | null | undefined): boolean {
+  const permissions = user?.permissions;
+  return !!(permissions && (permissions.canAdmin || permissions.isCoordinator || permissions.isAdmin));
+}
+
+/** Login StudentId plus Student Email, so a task stored under either id still belongs to the student. */
+export function identityAliases(roster: { email?: string; studentEmail?: string } | null | undefined, email: string): string[] {
+  const ids = new Set<string>();
+  [email, roster?.email, roster?.studentEmail].forEach((value) => {
+    const id = normalizeEmail(value);
+    if (id) ids.add(id);
+  });
+  return [...ids];
+}
+
+/** Map a login id or Student Email onto the roster login id. */
+export function loginAliasMap(students: { email?: string; studentEmail?: string }[]): Record<string, string> {
+  const map: Record<string, string> = {};
+  students.forEach((student) => {
+    const login = normalizeEmail(student.email);
+    if (!login) return;
+    map[login] = login;
+    const mail = normalizeEmail(student.studentEmail);
+    if (mail) map[mail] = login;
+  });
+  return map;
 }
 
 export async function cohortPathwaySeeded(app: App, cohortId: unknown): Promise<boolean> {

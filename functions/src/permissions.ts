@@ -29,7 +29,7 @@ export function canCompleteMilestone(
 ): boolean {
   const milestoneOwner = text(owner).toLowerCase();
   if (!user) return false;
-  if (user.role === 'staff' && user.permissions && user.permissions.canAdmin) return true;
+  if (user.role === 'staff' && user.permissions && (user.permissions.canAdmin || user.permissions.isCoordinator || user.permissions.isAdmin)) return true;
   if (milestoneOwner === 'student') return user.role === 'student' && user.email === normalizeEmail(studentEmail);
   if (user.role !== 'staff') return false;
   const placement = knownPlacement || null;

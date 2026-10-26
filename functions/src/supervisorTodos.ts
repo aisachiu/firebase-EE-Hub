@@ -1,5 +1,5 @@
 import { HubUser } from './permissions';
-import { readPhases, readStaffTables, readTemplates, orderTemplates, requireCohort } from './roster';
+import { loginAliasMap, readPhases, readStaffTables, readTemplates, orderTemplates, requireCohort } from './roster';
 import { COLLECTIONS } from './schema';
 import { App, audited, deny, requireStaff } from './session';
 import { dateOnlyValue, Doc, HubError, normalizeEmail, nowIso, parseActionDate, serializeDateOnly, shortId, text } from './util';
@@ -33,6 +33,7 @@ interface MilestoneStudent {
   displayName: string;
   surname?: string;
   supervisorId?: string;
+  studentEmail?: string;
 }
 
 interface MilestoneTemplateRef {
@@ -153,7 +154,7 @@ export async function supervisorMilestoneTodosForCohort(app: App, cohortId: stri
     const email = normalizeEmail(student.email);
     if (email) emails[email] = true;
   });
-  const items = await readActionItemsForEmails(app, emails);
+  const items = await readActionItemsForEmails(app, emails, loginAliasMap(roster));
   return supervisorOwnedMilestones(roster, templates, items);
 }
 

@@ -6,6 +6,7 @@ import { state } from '../shared/state.js';
 import { renderStaffHome } from '../staff/students.js';
 import { milestonePhaseId, milestoneTitleText, setJourneyOpen } from './home.js';
 import { paintStudentJourney, repaintStudentPage } from './journey.js';
+import { commonMilestoneChoices } from './milestoneChoices.js';
 
 export function bindFormButtons(main) {
   main.querySelectorAll('[data-open-form]').forEach(function(button) {
@@ -103,23 +104,24 @@ export function milestoneDialogError(error) {
   node.textContent = error && error.message ? error.message : String(error);
 }
 
-export function openMilestoneEditor(home, taskId) {
-  if (!home || !home.canUpdateMilestones || !taskId) return;
-  const item = (home.actionItems || []).filter(function(entry) {
+export function openMilestoneEditor(home, taskId, milestoneId) {
+  if (!home || !home.canUpdateMilestones) return;
+  const item = taskId ? (home.actionItems || []).filter(function(entry) {
     return entry.TaskId === taskId && entry.CreatorType === 'System';
-  })[0];
-  if (!item) return;
-  const template = (home.templates || []).filter(function(entry) { return entry.milestoneId === item.TemplateId; })[0] || {};
-  const title = milestoneTitleText(template, item);
-  const due = item.DueDate ? String(item.DueDate).slice(0, 10) : '';
-  const phase = milestonePhaseId(template, item);
+  })[0] : null;
+  const templateId = (item && item.TemplateId) || milestoneId || '';
+  const template = (home.templates || []).filter(function(entry) { return entry.milestoneId === templateId; })[0] || {};
+  if (!item && !template.milestoneId) return;
+  const title = item ? milestoneTitleText(template, item) : (template.title || template.milestoneId);
+  const due = item && item.DueDate ? String(item.DueDate).slice(0, 10) : '';
+  const phase = item ? milestonePhaseId(template, item) : (template.phase || '');
   openMilestoneDialog(`<div class="form-panel" role="dialog" aria-modal="true" aria-labelledby="milestone-editor-title"><div class="toolbar"><h2 id="milestone-editor-title">Edit milestone</h2><button type="button" class="button secondary" data-close-milestone>Close</button></div>
-    <p class="muted">${escapeHtml(home.displayName || 'Student')} · ${escapeHtml(template.milestoneId || item.TemplateId || '')}</p>
+    <p class="muted">${escapeHtml(home.displayName || 'Student')} · ${escapeHtml(template.milestoneId || (item && item.TemplateId) || '')}</p>
     <form id="milestone-edit-form"><div class="form-grid">
       <div class="field wide"><label for="milestone-title">Title</label><input id="milestone-title" maxlength="500" required value="${escapeHtml(title)}"></div>
-      <div class="field wide"><label for="milestone-description">Description</label><textarea id="milestone-description" maxlength="8000">${escapeHtml(item.Description || '')}</textarea></div>
+      <div class="field wide"><label for="milestone-description">Description</label><textarea id="milestone-description" maxlength="8000">${escapeHtml((item && item.Description) || template.description || '')}</textarea></div>
       <div class="field"><label for="milestone-phase">Phase</label><select id="milestone-phase" required>${phaseOptionMarkup(home, phase)}</select></div>
-      <div class="field"><label for="milestone-status">Status</label><select id="milestone-status" required>${statusOptionMarkup(item.Status)}</select></div>
+      <div class="field"><label for="milestone-status">Status</label><select id="milestone-status" required>${statusOptionMarkup(item && item.Status)}</select></div>
       <div class="field"><label for="milestone-date">Due date</label><input id="milestone-date" type="date" value="${escapeHtml(due)}"></div>
     </div>
     <p class="notice error" id="milestone-edit-error" hidden></p>
@@ -137,10 +139,12 @@ export function openMilestoneEditor(home, taskId) {
       description: document.getElementById('milestone-description').value,
       phaseId: document.getElementById('milestone-phase').value,
       status: document.getElementById('milestone-status').value,
-      dueDate: document.getElementById('milestone-date').value
+      dueDate: document.getElementById('milestone-date').value,
+      milestoneId: template.milestoneId || templateId
     };
-    runMutation('updateMilestoneAssignment', [taskId, home.email, home.cohort || '', state.actingAs, payload], {
-      key: 'milestone-edit:' + taskId
+    const savedTaskId = item ? item.TaskId : '';
+    runMutation('updateMilestoneAssignment', [savedTaskId, home.email, home.cohort || '', state.actingAs, payload], {
+      key: 'milestone-edit:' + (savedTaskId || templateId)
     }).then(function() {
       return callServer('getStaffStudentHome', home.email, home.cohort || '', state.actingAs);
     }).then(function(fresh) {
@@ -162,30 +166,7 @@ export function selectedStaffStudents(home) {
   return (home.students || []).filter(function(student) { return chosen[student.email]; });
 }
 
-export function commonMilestoneChoices(home, students) {
-  if (!students.length) return [];
-  const counts = {};
-  students.forEach(function(student) {
-    const seen = {};
-    (student.assigned || []).forEach(function(item) {
-      const id = item && item.templateId;
-      if (!id || seen[id]) return;
-      seen[id] = true;
-      counts[id] = (counts[id] || 0) + 1;
-    });
-  });
-  const listed = {};
-  const choices = (home.templates || []).filter(function(template) {
-    listed[template.milestoneId] = true;
-    return counts[template.milestoneId] === students.length;
-  }).map(function(template) {
-    return { id: template.milestoneId, title: template.title || template.milestoneId };
-  });
-  Object.keys(counts).forEach(function(id) {
-    if (counts[id] === students.length && !listed[id]) choices.push({ id: id, title: id });
-  });
-  return choices;
-}
+export { commonMilestoneChoices } from './milestoneChoices.js';
 
 export function sharedAssignmentValues(students, templateId) {
   const rows = [];
@@ -194,7 +175,7 @@ export function sharedAssignmentValues(students, templateId) {
       if (item.templateId === templateId) rows.push(item);
     });
   });
-  if (!rows.length) return { status: '', due: '', uniformStatus: false, uniformDate: false };
+  if (!rows.length) return { status: 'Pending', due: '', uniformStatus: true, uniformDate: true };
   const status = rows[0].status || '';
   const due = String(rows[0].due || '').slice(0, 10);
   return {
@@ -224,7 +205,7 @@ export function openMassMilestoneEditor(home) {
     <p>${students.length} student${students.length === 1 ? '' : 's'} selected. ${escapeHtml(selectedStudentSummary(students))}</p>
     <form id="mass-milestone-form">
       <div class="field"><label for="mass-milestone">Milestone</label><select id="mass-milestone" required>${options}</select>
-        <p class="muted mass-hint" id="mass-milestone-hint">${choices.length ? 'Only milestones assigned to every selected student are listed.' : 'The selected students do not share a milestone.'}</p>
+        <p class="muted mass-hint" id="mass-milestone-hint">${choices.length ? 'The change applies to every selected student.' : 'The selected students do not share a milestone.'}</p>
       </div>
       <div class="mass-fields">
         <div class="mass-field">

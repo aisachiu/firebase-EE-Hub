@@ -5,7 +5,7 @@
     "dev": "vite",
     "build": "vite build",
     "build:functions": "npm --prefix functions run build",
-    "test": "npm --prefix functions test",
+    "test": "npm --prefix functions test && node --test web/src/student/milestoneChoices.test.mjs",
     "schema": "npm --prefix functions run schema",
     "seed": "npm --prefix functions run seed",
     "import-sheet": "npm --prefix functions run import-sheet --",
