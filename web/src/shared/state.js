@@ -86,5 +86,9 @@ export const state = {
   noticeEdit: null,
   noticeDesk: null,
   emailDesk: false,
-  supervisorDesk: false
+  supervisorDesk: false,
+  supervisorTodoView: (function() {
+    try { return window.localStorage.getItem('ee-hub-supervisor-todo-view') === 'student' ? 'student' : 'due'; }
+    catch (error) { return 'due'; }
+  })(),
 };

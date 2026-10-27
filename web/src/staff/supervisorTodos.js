@@ -5,6 +5,7 @@ import { loadingLine } from '../shared/loading.js';
 import { isStale } from '../shared/scene.js';
 import { syncHeaderCohortSelect } from '../shared/staffContext.js';
 import { state } from '../shared/state.js';
+import { supervisorTodoStudentGroups, supervisorTodosByDueDate } from './supervisorTodoViews.js';
 
 export function mayManageSupervisorTodos(user) {
   const permissions = (user && user.permissions) || {};
@@ -68,13 +69,25 @@ function completedEntries(added) {
   });
 }
 
-function todoEntryHtml(entry, mode) {
+export function supervisorTodoView() {
+  return state.supervisorTodoView === 'student' ? 'student' : 'due';
+}
+
+export function rememberSupervisorTodoView(view) {
+  state.supervisorTodoView = view === 'student' ? 'student' : 'due';
+  try { window.localStorage.setItem('ee-hub-supervisor-todo-view', state.supervisorTodoView); }
+  catch (error) { /* the choice still applies for this visit */ }
+}
+
+function todoEntryHtml(entry, mode, options) {
+  const grouped = !!(options && options.grouped);
   if (entry.kind === 'milestone') {
     const when = entry.due ? shortDate(entry.due) : '';
     const overdue = !!(entry.due && entry.due < todayStamp());
-    const detail = [entry.title, when, overdue ? 'Overdue' : ''].filter(Boolean).join(' · ');
+    const detail = (grouped ? [when, overdue ? 'Overdue' : ''] : [entry.title, when, overdue ? 'Overdue' : '']).filter(Boolean).join(' · ');
     const flag = entry.next ? '<span class="todo-flag">Next</span>' : '';
-    return `<li><button type="button" class="todo-open${entry.next ? ' is-next' : ''}${overdue ? ' is-overdue' : ''}" data-open-student="${escapeHtml(entry.studentEmail)}"><strong>${escapeHtml(entry.studentName)}</strong><span>${escapeHtml(detail)}</span>${flag}</button></li>`;
+    const heading = grouped ? (entry.title || 'Milestone') : entry.studentName;
+    return `<li><button type="button" class="todo-open${entry.next ? ' is-next' : ''}${overdue ? ' is-overdue' : ''}" data-open-student="${escapeHtml(entry.studentEmail)}"><strong>${escapeHtml(heading)}</strong>${detail ? `<span>${escapeHtml(detail)}</span>` : ''}${flag}</button></li>`;
   }
   const when = entry.due ? shortDate(entry.due) : '';
   const bits = [entry.note, when].filter(Boolean).join(' · ');
@@ -88,13 +101,38 @@ function todoEntryHtml(entry, mode) {
   return `<li class="added${done ? ' done' : ''}"><div><strong>${escapeHtml(entry.title)}</strong>${bits ? `<span>${escapeHtml(bits)}</span>` : ''}</div><div class="todo-actions">${action}${remove}</div></li>`;
 }
 
+function supervisorTodoViewToggle(view) {
+  const grouped = view === 'student';
+  return `<div class="view-toggle" role="group" aria-label="Supervisor to-do view"><button type="button" data-supervisor-todo-view="due" aria-pressed="${grouped ? 'false' : 'true'}">By due date</button><button type="button" data-supervisor-todo-view="student" aria-pressed="${grouped ? 'true' : 'false'}">Group by student</button></div>`;
+}
+
+function supervisorTodoItemsHtml(entries, options) {
+  return entries.map(function(entry) { return todoEntryHtml(entry, 'sidebar', options); }).join('');
+}
+
+function supervisorTodoDueHtml(entries) {
+  const items = entries.length
+    ? supervisorTodoItemsHtml(supervisorTodosByDueDate(entries))
+    : '<li class="muted">Nothing is waiting on you.</li>';
+  return `<ul>${items}</ul>`;
+}
+
+function supervisorTodoGroupsHtml(entries) {
+  const groups = supervisorTodoStudentGroups(entries);
+  if (!groups.length) return '<ul><li class="muted">Nothing is waiting on you.</li></ul>';
+  return groups.map(function(group, index) {
+    const id = 'supervisor-todo-group-' + index;
+    const items = supervisorTodoItemsHtml(group.items, { grouped: group.kind === 'student' });
+    return `<section class="todo-student" aria-labelledby="${id}"><h3 id="${id}">${escapeHtml(group.name)}</h3><ul>${items}</ul></section>`;
+  }).join('');
+}
+
 export function supervisorTodoList(home) {
   if (!home || home.viewAs !== 'supervisor') return '';
   const entries = supervisorTodoEntries(home);
-  const items = entries.length
-    ? entries.map(function(entry) { return todoEntryHtml(entry, 'sidebar'); }).join('')
-    : '<li class="muted">Nothing is waiting on you.</li>';
-  return `<aside class="next-steps supervisor-todos" aria-labelledby="supervisor-todo-heading"><h2 id="supervisor-todo-heading">Supervisor To Do</h2><p class="muted">Milestones you own, including each student's next milestone, and to-dos added for you.</p><ul>${items}</ul></aside>`;
+  const view = supervisorTodoView();
+  const body = view === 'student' ? supervisorTodoGroupsHtml(entries) : supervisorTodoDueHtml(entries);
+  return `<aside class="next-steps supervisor-todos" aria-labelledby="supervisor-todo-heading"><div class="todo-view"><h2 id="supervisor-todo-heading">Supervisor To Do</h2>${supervisorTodoViewToggle(view)}</div><p class="muted">Milestones you own, including each student's next milestone, and to-dos added for you.</p><div class="todo-scroll">${body}</div></aside>`;
 }
 
 function changeStatus(todoId, status, hooks) {
@@ -156,8 +194,22 @@ export function bindSupervisorTodoActions(root, hooks) {
   });
 }
 
-export function bindSupervisorTodoList(root, reload) {
+function bindSupervisorTodoView(root, repaint) {
+  root.querySelectorAll('[data-supervisor-todo-view]').forEach(function(button) {
+    button.addEventListener('click', function() {
+      const next = button.dataset.supervisorTodoView === 'student' ? 'student' : 'due';
+      if (supervisorTodoView() === next) return;
+      rememberSupervisorTodoView(next);
+      if (repaint) repaint();
+      const again = document.querySelector('[data-supervisor-todo-view="' + next + '"]');
+      if (again) again.focus();
+    });
+  });
+}
+
+export function bindSupervisorTodoList(root, reload, repaint) {
   bindSupervisorTodoActions(root, { reload: reload });
+  bindSupervisorTodoView(root, repaint || reload);
 }
 
 function supervisorCard(supervisor) {
