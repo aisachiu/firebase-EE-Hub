@@ -9,6 +9,7 @@ import { advanceScene } from './shared/scene.js';
 import { closeOpenMemberEditor, hideListJourneyTip } from './shared/sessionChrome.js';
 import { actingAsOptions } from './shared/staffContext.js';
 import { state } from './shared/state.js';
+import { staffStudentDrawersHtml } from './shared/studentDrawers.js';
 import { applyLocation, installHistory, requestPush, sectionTabs, syncHistory } from './router.js';
 
 export let booted = false;
@@ -178,24 +179,19 @@ export function renderShell() {
   document.body.classList.toggle('journey-open', showJourney && state.journeyOpen);
   document.body.classList.toggle('has-notes', showNotes);
   document.body.classList.toggle('notes-open', showNotes && state.notesOpen);
+  document.body.classList.toggle('student-drawers', showNotes);
   document.getElementById('app').innerHTML = `
     <header class="topbar">
       <div class="brand"><span class="brand-mark">EE</span><span>EE Hub</span>${student ? '' : '<span class="staff-pill">Staff</span>'}</div>
       <nav class="tabs" aria-label="Sections">${tabs.map(function(tab) {
         return `<button type="button" data-view="${tab[0]}" aria-current="${state.section === tab[0] ? 'page' : 'false'}">${tabLabel(tab)}</button>`;
       }).join('')}</nav>
-      <div class="account">${headerContextMarkup()}${showNotes ? `<button type="button" class="journey-toggle" id="notes-toggle" aria-expanded="${state.notesOpen ? 'true' : 'false'}" aria-controls="notes-panel">Notes</button>` : ''}${showJourney ? `<button type="button" class="journey-toggle" id="journey-toggle" aria-expanded="${state.journeyOpen ? 'true' : 'false'}" aria-controls="journey-panel">Journey</button>` : ''}<span id="request-indicator" class="request-indicator" aria-live="polite" aria-busy="false"></span><div>${escapeHtml(state.user.displayName)} <button type="button" id="sign-out" style="margin-left:8px;border:0;background:transparent;color:#e8f0f5;font-weight:700;">Sign out</button></div></div>
+      <div class="account">${headerContextMarkup()}${showNotes ? `<button type="button" class="journey-toggle" id="notes-toggle" aria-expanded="${state.notesOpen ? 'true' : 'false'}" aria-controls="notes-panel">Notes</button>` : ''}${showJourney ? `<button type="button" class="journey-toggle" id="journey-toggle" aria-expanded="${state.journeyOpen ? 'true' : 'false'}" aria-controls="journey-panel">${showNotes ? 'Student Journey' : 'Journey'}</button>` : ''}<span id="request-indicator" class="request-indicator" aria-live="polite" aria-busy="false"></span><div>${escapeHtml(state.user.displayName)} <button type="button" id="sign-out" style="margin-left:8px;border:0;background:transparent;color:#e8f0f5;font-weight:700;">Sign out</button></div></div>
     </header>
     <div id="feedback-region" aria-live="polite"></div>
-    ${showNotes ? `<aside id="notes-panel" class="notes-panel${state.notesOpen ? ' open' : ''}" aria-label="Notes for this student">
-      <button type="button" class="notes-peek" id="notes-peek" aria-expanded="${state.notesOpen ? 'true' : 'false'}" aria-controls="notes-drawer">Notes</button>
-      <div class="notes-drawer" id="notes-drawer"${state.notesOpen ? '' : ' inert'} aria-hidden="${state.notesOpen ? 'false' : 'true'}">
-        <div class="journey-panel-bar"><strong>Notes</strong><button type="button" id="notes-close">Close</button></div>
-        <div id="notes-body" class="notes-scroll"></div>
-      </div>
-    </aside>` : ''}
+    ${showNotes ? staffStudentDrawersHtml({ journeyOpen: state.journeyOpen, notesOpen: state.notesOpen }) : ''}
     <main id="main"></main>
-    ${showJourney ? `<aside id="journey-panel" class="journey-panel${state.journeyOpen ? ' open' : ''}" aria-label="Journey and to-dos">
+    ${showJourney && !showNotes ? `<aside id="journey-panel" class="journey-panel${state.journeyOpen ? ' open' : ''}" aria-label="Journey and to-dos">
       <button type="button" class="journey-peek" id="journey-peek" aria-expanded="${state.journeyOpen ? 'true' : 'false'}" aria-controls="journey-drawer">Journey</button>
       <div class="journey-drawer" id="journey-drawer"${state.journeyOpen ? '' : ' inert'} aria-hidden="${state.journeyOpen ? 'false' : 'true'}">
         <div class="journey-panel-bar"><strong>Journey</strong><button type="button" id="journey-close">Close</button></div>

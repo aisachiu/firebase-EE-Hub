@@ -53,13 +53,15 @@ export const state = {
   staffStudent: null,
   staffQuery: '',
   staffSort: 'surname',
-  staffLayout: (function() {
-    try { return window.localStorage.getItem('ee-hub-staff-layout') === 'list' ? 'list' : 'tile'; }
-    catch (error) { return 'tile'; }
-  })(),
-  staffJourneyExpanded: (function() {
-    try { return window.localStorage.getItem('ee-hub-staff-journey') === 'expanded'; }
-    catch (error) { return false; }
+  staffViewMode: (function() {
+    try {
+      const saved = window.localStorage.getItem('ee-hub-staff-view-mode');
+      if (saved === 'tiles' || saved === 'list-collapsed' || saved === 'list-expanded') return saved;
+      if (window.localStorage.getItem('ee-hub-staff-layout') === 'list') {
+        return window.localStorage.getItem('ee-hub-staff-journey') === 'expanded' ? 'list-expanded' : 'list-collapsed';
+      }
+    } catch (error) { /* keep the default */ }
+    return 'tiles';
   })(),
   staffTrack: 'all',
   staffMine: false,
