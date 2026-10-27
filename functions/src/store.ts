@@ -6,7 +6,8 @@ export type AllocationOp =
   | { kind: 'member'; cohortId: string; id: string; data: Doc }
   | { kind: 'token'; cohortId: string; id: string; data: Doc }
   | { kind: 'workspace'; cohortId: string; id: string; data: Doc }
-  | { kind: 'config'; cohortId: string; data: Doc };
+  | { kind: 'config'; cohortId: string; data: Doc }
+  | { kind: 'student'; id: string; data: Doc };
 
 export class Store {
   constructor(public db: Firestore) {}
@@ -175,6 +176,7 @@ export class Store {
         if (op.kind === 'member') batch.set(this.members(op.cohortId).doc(op.id), cleanDoc(op.data));
         else if (op.kind === 'token') batch.set(this.tokens(op.cohortId).doc(op.id), cleanDoc(op.data));
         else if (op.kind === 'workspace') batch.set(this.workspace(op.cohortId).doc(op.id), cleanDoc(op.data));
+        else if (op.kind === 'student') batch.set(this.col(COLLECTIONS.studentUsers).doc(op.id), cleanDoc(op.data), { merge: true });
         else batch.set(this.allocationConfig(op.cohortId), cleanDoc(op.data));
       });
       await batch.commit();

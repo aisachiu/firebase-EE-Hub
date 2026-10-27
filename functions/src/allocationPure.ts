@@ -423,6 +423,18 @@ export function planReopen(tokens: TokenRecord[], studentId: string): { token: T
   return { token: { ...mine[0], status: 'draft' }, error: '' };
 }
 
+/** Subject written when a draft is published. A blank token keeps the student's primary choice. */
+export function publishedAllocationSubject(
+  assigned: unknown,
+  choices: Record<string, string | number | boolean> | undefined,
+  primaryChoiceKey: string,
+): string {
+  const explicit = text(assigned);
+  if (explicit) return explicit;
+  if (!primaryChoiceKey) return '';
+  return text(choices?.[primaryChoiceKey]);
+}
+
 export function planCommit(tokens: TokenRecord[], workspaces: WorkspaceRecord[]): CommitPlan {
   const drafts = tokens.filter((token) => token.status === 'draft' && token.allocatedTo);
   const byStudent = new Map<string, TokenRecord[]>();

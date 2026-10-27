@@ -21,6 +21,7 @@ import {
   planCommit,
   planDraft,
   planReopen,
+  publishedAllocationSubject,
   planTokenTopUp,
   settingsFromDoc,
   activeSubjectNamesFrom,
@@ -191,21 +192,35 @@ export async function commitAllocations(app: App, cohortId: unknown) {
     if (plan.warnings.length) throw new HubError(plan.warnings[0]);
     const missing = plan.assignments.concat(plan.clears.map((studentId) => ({ studentId, staffId: '', subject: '', tokenId: '' }))).filter((row) => !byStudent.has(row.studentId));
     if (missing.length) throw new HubError(`${missing[0].studentId} is not on the cohort roster.`);
+    const settings = settingsFromDoc(await app.store.getAllocationConfig(cohort.id));
+    const workspaceByStudent = new Map(workspaces.map((workspace) => [workspace.studentId, workspace]));
+    const touched = plan.assignments.map((row) => row.studentId).concat(plan.clears);
+    const profileByStudent = new Map<string, Doc | null>();
+    await Promise.all(touched.map(async (studentId) => {
+      profileByStudent.set(studentId, await app.store.get(COLLECTIONS.studentUsers, studentId));
+    }));
     const now = nowIso();
     const ops: AllocationOp[] = [];
     const tokenById = new Map(tokens.map((token) => [token.id, token]));
+    const writeStudentSubject = (studentId: string, subject: string) => {
+      if (!profileByStudent.get(studentId)) return;
+      ops.push({ kind: 'student', id: studentId, data: { subject } });
+    };
     plan.assignments.forEach((row) => {
-      const member = { ...byStudent.get(row.studentId)!, supervisorId: row.staffId, subject: row.subject };
+      const workspace = workspaceByStudent.get(row.studentId);
+      const subject = publishedAllocationSubject(row.subject, workspace?.subjectChoices, settings.primaryChoiceKey);
+      const member = { ...byStudent.get(row.studentId)!, supervisorId: row.staffId, subject };
       ops.push({ kind: 'member', cohortId: cohort.id, id: row.studentId, data: member });
+      writeStudentSubject(row.studentId, subject);
       const token = tokenById.get(row.tokenId);
-      if (token) ops.push({ kind: 'token', cohortId: cohort.id, id: token.id, data: { ...token, status: 'committed' } });
-      const workspace = workspaces.find((item) => item.studentId === row.studentId);
+      if (token) ops.push({ kind: 'token', cohortId: cohort.id, id: token.id, data: { ...token, assignedSubject: subject, status: 'committed' } });
       if (workspace?.pendingClear) ops.push({ kind: 'workspace', cohortId: cohort.id, id: row.studentId, data: { ...workspace, pendingClear: false, updatedAt: now } });
     });
     plan.clears.forEach((studentId) => {
       const member = { ...byStudent.get(studentId)!, supervisorId: '', subject: '' };
       ops.push({ kind: 'member', cohortId: cohort.id, id: studentId, data: member });
-      const workspace = workspaces.find((item) => item.studentId === studentId);
+      writeStudentSubject(studentId, '');
+      const workspace = workspaceByStudent.get(studentId);
       if (workspace) ops.push({ kind: 'workspace', cohortId: cohort.id, id: studentId, data: { ...workspace, pendingClear: false, updatedAt: now } });
     });
     await app.store.applyAllocationOps(ops);

@@ -19,6 +19,7 @@ import {
   workspacePreviewRows,
   planBatchDraft,
   planCommit,
+  publishedAllocationSubject,
   planDraft,
   planTokenTopUp,
   preserveEeActive,
@@ -230,6 +231,9 @@ test('publish writes drafts and clears a released supervisor', () => {
   assert.deepEqual(plan.assignments.map((row) => row.studentId), [JANE]);
   assert.deepEqual(plan.clears, [MARK]);
   assert.equal(plan.warnings.length, 0);
+  assert.equal(publishedAllocationSubject('History', { choice1: 'Biology' }, 'choice1'), 'History');
+  assert.equal(publishedAllocationSubject('', { choice1: 'Biology' }, 'choice1'), 'Biology');
+  assert.equal(publishedAllocationSubject('  ', { choice1: 'Biology' }, ''), '');
 });
 
 test('the desk marks subject match, an HL miss, and support flags from the saved columns', () => {
