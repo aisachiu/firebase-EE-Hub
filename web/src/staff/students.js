@@ -1,11 +1,12 @@
-import { renderEmailDesk } from '../admin/email.js';
+import { paintTabDot, renderShell } from '../navigation.js';
 import { callServer } from '../shared/api.js';
 import { showError } from '../shared/feedback.js';
+import { rememberHeaderCohorts } from '../shared/headerCohorts.js';
 import { escapeHtml, shortDate, textCompare } from '../shared/html.js';
 import { loadingLine } from '../shared/loading.js';
-import { advanceScene } from '../shared/scene.js';
+import { advanceScene, sameScene } from '../shared/scene.js';
+import { hideListJourneyTip } from '../shared/sessionChrome.js';
 import { state } from '../shared/state.js';
-import { paintTabDot, rememberHeaderCohorts, renderShell } from '../shell.js';
 import { bindUnreadNotices, paintStudentPage, renderUnreadNotices } from '../student/home.js';
 import { dueSortKey, journeyDayLabel, milestoneMark, phaseCardAttrs, phaseRangeLabel } from '../student/journey.js';
 import { openMassMilestoneEditor } from '../student/milestones.js';
@@ -41,7 +42,19 @@ export function renderStaffHome() {
   advanceScene();
   const main = document.getElementById('main');
   if (state.supervisorDesk && !mayManageSupervisorTodos(state.user)) state.supervisorDesk = false;
-  if (state.emailDesk) { renderEmailDesk(main, { back: true }); return; }
+  if (state.emailDesk) {
+    const scene = state.scene;
+    main.innerHTML = loadingLine('Loading email notifications...');
+    import('../admin/email.js').then(function(mod) {
+      if (!sameScene(scene) || !state.emailDesk) return;
+      const target = document.getElementById('main');
+      if (target) mod.renderEmailDesk(target, { back: true });
+    }).catch(function(error) {
+      if (!sameScene(scene)) return;
+      showError(error);
+    });
+    return;
+  }
   if (state.staffStudentHome) { paintStaffAsStudent(state.staffStudentHome); return; }
   if (state.supervisorDesk) { renderSupervisorDesk(main, supervisorDeskHooks()); return; }
   main.innerHTML = loadingLine('Loading students...');
@@ -260,10 +273,7 @@ export function listJourneyTipNode() {
   return tip;
 }
 
-export function hideListJourneyTip() {
-  const tip = document.getElementById('list-journey-tip');
-  if (tip) tip.hidden = true;
-}
+export { hideListJourneyTip };
 
 export function showListJourneyTip(mark) {
   const text = mark.getAttribute('data-tip');
@@ -411,7 +421,9 @@ export function paintStaffCards(home) {
     });
   }
   const editMilestones = document.getElementById('edit-milestones');
-  if (editMilestones) editMilestones.addEventListener('click', function() { openMassMilestoneEditor(home); });
+  if (editMilestones) editMilestones.addEventListener('click', function() {
+    openMassMilestoneEditor(home, function() { renderStaffHome(); });
+  });
   function repaintFilters() { paintStaffCards(home); }
   document.getElementById('staff-sort').addEventListener('change', function(event) {
     state.staffSort = event.target.value;

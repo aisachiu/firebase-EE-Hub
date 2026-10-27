@@ -4,7 +4,7 @@ import { showError } from '../shared/feedback.js';
 import { loadingLine } from '../shared/loading.js';
 import { advanceScene } from '../shared/scene.js';
 import { state } from '../shared/state.js';
-import { bindTicketList, refreshMessageDesk, renderTicket, syncStaffUnread } from '../shared/tickets.js';
+import { bindTicketList, openFocusedTicket, refreshMessageDesk, renderTicket, syncStaffUnread } from '../shared/tickets.js';
 
 export function renderStaffTickets() {
   advanceScene();
@@ -36,12 +36,4 @@ export function paintStaffTickets(hub) {
   document.getElementById('refresh-messages').addEventListener('click', function(event) { refreshMessageDesk(event.currentTarget, true); });
   bindTicketList(main, tickets, true);
   openFocusedTicket(main);
-}
-
-export function openFocusedTicket(main) {
-  if (!state.focusTicket || !main) return;
-  const id = state.focusTicket;
-  state.focusTicket = '';
-  const details = main.querySelector('details[data-ticket="' + id.replace(/"/g, '') + '"]');
-  if (details) details.open = true;
 }

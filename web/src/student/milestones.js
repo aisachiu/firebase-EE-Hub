@@ -1,9 +1,9 @@
 import { callServer, runMutation } from '../shared/api.js';
 import { showError, showSuccess } from '../shared/feedback.js';
-import { openFormShell, openStudentForm } from '../shared/forms.js';
+import { openFormShell } from '../shared/forms.js';
 import { escapeHtml } from '../shared/html.js';
 import { state } from '../shared/state.js';
-import { renderStaffHome } from '../staff/students.js';
+import { openStudentForm } from './studentForm.js';
 import { milestonePhaseId, milestoneTitleText, setJourneyOpen } from './home.js';
 import { paintStudentJourney, repaintStudentPage } from './journey.js';
 import { commonMilestoneChoices } from './milestoneChoices.js';
@@ -192,7 +192,7 @@ export function selectedStudentSummary(students) {
   return names.slice(0, 3).join(', ') + ', and ' + (names.length - 3) + ' more';
 }
 
-export function openMassMilestoneEditor(home) {
+export function openMassMilestoneEditor(home, onSaved) {
   const students = selectedStaffStudents(home);
   if (!home || !home.canEditMilestones || !students.length) return;
   const choices = commonMilestoneChoices(home, students);
@@ -277,7 +277,7 @@ export function openMassMilestoneEditor(home) {
       closeMilestoneDialog();
       showSuccess('Updated ' + (result.students || emails.length) + ' student' + ((result.students || emails.length) === 1 ? '' : 's') + '.');
       state.staffHome = null;
-      renderStaffHome();
+      if (onSaved) onSaved();
     }).catch(function(error) {
       save.disabled = false;
       milestoneDialogError(error);

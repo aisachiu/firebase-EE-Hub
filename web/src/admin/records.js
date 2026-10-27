@@ -6,6 +6,7 @@ import { subjectList } from '../shared/checks.js';
 import { showError } from '../shared/feedback.js';
 import { cssEscape, escapeHtml, formatValue, toBoolean } from '../shared/html.js';
 import { renderResourceCard } from '../shared/resources.js';
+import { registerMemberEditorCloser } from '../shared/sessionChrome.js';
 import { state } from '../shared/state.js';
 import {
   bindCollapsibleHeaders,
@@ -79,6 +80,8 @@ export function closeMemberEditor() {
   if (listingDialogKind(adminDialogKind())) closeAdminDialog();
   else memberEditorReturn = null;
 }
+
+registerMemberEditorCloser(closeMemberEditor);
 
 export function adminFieldSortValue(field, record) {
   const value = record[field.name];

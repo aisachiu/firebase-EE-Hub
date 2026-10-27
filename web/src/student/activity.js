@@ -1,7 +1,9 @@
 import { callServer } from '../shared/api.js';
-import { escapeHtml } from '../shared/html.js';
+import { escapeHtml, formatActivityWhen } from '../shared/html.js';
 import { loadingLine } from '../shared/loading.js';
 import { state } from '../shared/state.js';
+
+export { formatActivityWhen };
 
 export function paintStudentActivity(home) {
   const host = document.getElementById('my-activity');
@@ -308,14 +310,4 @@ export function activityOutcomeLabel(outcome) {
   if (outcome === 'started') return 'Started';
   if (outcome === 'info') return 'Recorded';
   return 'Saved';
-}
-
-export function formatActivityWhen(value) {
-  const text = String(value || '');
-  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);
-  if (dateOnly) return Number(dateOnly[3]) + ' ' + months[Number(dateOnly[2]) - 1] + ' ' + dateOnly[1];
-  const stamp = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/.exec(text);
-  if (!stamp) return text || '—';
-  return Number(stamp[3]) + ' ' + months[Number(stamp[2]) - 1] + ' ' + stamp[1] + ', ' + stamp[4] + ':' + stamp[5];
 }

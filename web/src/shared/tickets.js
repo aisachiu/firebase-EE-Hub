@@ -4,8 +4,19 @@ import { showError } from './feedback.js';
 import { escapeHtml } from './html.js';
 import { sameScene } from './scene.js';
 import { state } from './state.js';
-import { paintTabDot } from '../shell.js';
-import { routeNote } from '../student/help.js';
+import { paintTabDot } from '../navigation.js';
+
+export function routeNote(route) {
+  return route === 'coordinator' ? 'This message goes to the EE Coordinator.' : 'This message goes to your supervisor.';
+}
+
+export function openFocusedTicket(main) {
+  if (!state.focusTicket || !main) return;
+  const id = state.focusTicket;
+  state.focusTicket = '';
+  const details = main.querySelector('details[data-ticket="' + id.replace(/"/g, '') + '"]');
+  if (details) details.open = true;
+}
 
 export function syncStudentUnread(hub) {
   if (!hub) return;
