@@ -1,7 +1,8 @@
 import { parseSubjectCell } from './allocationPure';
+import { COLLECTIONS_REGISTRY, CollectionRegistryEntry, sheetCollectionRejection } from './collectionsRegistry';
 import { APP_TABLES, COLLECTIONS, FieldDef, tableFields } from './schema';
 import { canonicalStudentHeader, writeStudentIdentifiers } from './studentIdentity';
-import { dateOnlyValue, Doc, driveNamePart, normalizeEmail, serializeDateOnly, text, toBoolean } from './util';
+import { dateOnlyValue, Doc, driveNamePart, HubError, normalizeEmail, serializeDateOnly, text, toBoolean } from './util';
 
 export interface SheetGrid {
   title: string;
@@ -52,6 +53,14 @@ export function emptyPlan(): SheetImportPlan {
   return { docs: {}, members: [], messages: [], audits: [], warnings: [], warningCount: 0 };
 }
 
+export function guardSheetCollection(id: string, action: 'export' | 'import'): CollectionRegistryEntry {
+  const reason = sheetCollectionRejection(id, action);
+  if (reason) throw new HubError(reason);
+  const entry = COLLECTIONS_REGISTRY.find((item) => item.id === id);
+  if (!entry) throw new HubError(`Collection "${id}" is not registered for sheet import or export.`);
+  return entry;
+}
+
 export function planSheetImport(grids: SheetGrid[]): SheetImportPlan {
   const plan = emptyPlan();
   const byTitle = new Map<string, SheetGrid>();
@@ -61,41 +70,71 @@ export function planSheetImport(grids: SheetGrid[]): SheetImportPlan {
     if (entity === 'cohortMembers' || entity === 'auditLogs') return;
     const grid = byTitle.get(normalizeTitle(APP_TABLES[entity].sheet));
     if (!grid) return;
+    const entry = COLLECTIONS_REGISTRY.find((item) => item.id === entity);
+    if (!entry || (!entry.exportable && !entry.importable)) {
+      byTitle.delete(normalizeTitle(grid.title));
+      warn(plan, `Skipped sheet "${grid.title}". Collection "${entity}" is not registered for sheet import or export.`);
+      return;
+    }
+    if (!entry.importable) {
+      byTitle.delete(normalizeTitle(grid.title));
+      warn(plan, `Skipped sheet "${grid.title}". ${sheetCollectionRejection(entity, 'import')}`);
+      return;
+    }
     byTitle.delete(normalizeTitle(grid.title));
     if (entity === 'ticketMessages') readMessages(plan, grid);
     else readTable(plan, entity, grid);
   });
 
+  COLLECTIONS_REGISTRY.forEach((entry) => {
+    if (sheetCollectionRejection(entry.id, 'import')) return;
+    if (APP_TABLES[entry.id] || entry.id === 'cohortMembers' || entry.id === 'formResponses') return;
+    const grid = byTitle.get(normalizeTitle(entry.sheet));
+    if (!grid) return;
+    byTitle.delete(normalizeTitle(grid.title));
+    readTable(plan, entry.id, grid);
+  });
+
   const legacyMilestones = byTitle.get('milestones');
   if (legacyMilestones && !plan.docs[COLLECTIONS.milestoneTemplates]) {
     byTitle.delete('milestones');
-    readTable(plan, SHEET_ALIASES.milestones, legacyMilestones);
+    const blocked = sheetCollectionRejection('milestoneTemplates', 'import');
+    if (blocked) warn(plan, `Skipped sheet "${legacyMilestones.title}". ${blocked}`);
+    else readTable(plan, SHEET_ALIASES.milestones, legacyMilestones);
   }
 
   const pages = byTitle.get('content_pages');
   if (pages) {
     byTitle.delete('content_pages');
-    mergeContentPages(plan, pages);
+    const blocked = sheetCollectionRejection('resources', 'import');
+    if (blocked) warn(plan, `Skipped sheet "${pages.title}". ${blocked}`);
+    else mergeContentPages(plan, pages);
   }
 
+  const cohortBlocked = sheetCollectionRejection('cohortMembers', 'import');
+  const formBlocked = sheetCollectionRejection('formResponses', 'import');
   grids.forEach((grid) => {
     const cohort = /^(?:cohort:\s*|cohort\s+)(\d{4})$/i.exec(grid.title.trim());
     if (cohort) {
       byTitle.delete(normalizeTitle(grid.title));
-      readCohortMembers(plan, cohort[1], grid);
+      if (cohortBlocked) warn(plan, `Skipped sheet "${grid.title}". ${cohortBlocked}`);
+      else readCohortMembers(plan, cohort[1], grid);
       return;
     }
     const form = /^(?:form:\s*|form\s+)([a-z][a-z0-9_-]*)$/i.exec(grid.title.trim());
     if (form) {
       byTitle.delete(normalizeTitle(grid.title));
-      readFormResponses(plan, form[1], grid);
+      if (formBlocked) warn(plan, `Skipped sheet "${grid.title}". ${formBlocked}`);
+      else readFormResponses(plan, form[1], grid);
     }
   });
 
   const audits = grids.find((grid) => normalizeTitle(grid.title) === 'audit_logs');
   if (audits) {
     byTitle.delete('audit_logs');
-    readAudits(plan, audits);
+    const known = COLLECTIONS_REGISTRY.find((entry) => entry.id === 'auditLogs' && (entry.exportable || entry.importable));
+    if (!known) warn(plan, `Skipped sheet "${audits.title}". Collection "auditLogs" is not registered for sheet import or export.`);
+    else readAudits(plan, audits);
   }
 
   byTitle.forEach((grid) => warn(plan, `Skipped sheet "${grid.title}". It is not an EE Hub table.`));
@@ -105,12 +144,20 @@ export function planSheetImport(grids: SheetGrid[]): SheetImportPlan {
   return plan;
 }
 
+function fieldsFor(entity: string): FieldDef[] {
+  if (APP_TABLES[entity]) return tableFields(entity);
+  const columns = guardSheetCollection(entity, 'import').expectedColumns || [];
+  if (!columns.length) throw new HubError(`Collection "${entity}" needs expectedColumns in the sheet registry.`);
+  return columns.map((name, index) => ({ name, type: 'text', key: index === 0 }));
+}
+
 function readTable(plan: SheetImportPlan, entity: string, grid: SheetGrid): void {
-  const fields = tableFields(entity);
+  const entry = guardSheetCollection(entity, 'import');
+  const fields = fieldsFor(entity);
   const keyName = fields.find((field) => field.key)?.name || '';
-  const collection = COLLECTIONS[entity];
+  const collection = entry.collectionId;
   const seen = new Set<string>();
-    recordsFrom(plan, grid, fields, true).forEach((record) => {
+  recordsFrom(plan, grid, fields, true).forEach((record) => {
     const rawKey = record[keyName];
     const id = docId(keyName.toLowerCase().includes('email') || fields.find((field) => field.name === keyName)?.type === 'email'
       ? normalizeEmail(rawKey)
@@ -126,6 +173,7 @@ function readTable(plan: SheetImportPlan, entity: string, grid: SheetGrid): void
 }
 
 function readCohortMembers(plan: SheetImportPlan, cohortId: string, grid: SheetGrid): void {
+  guardSheetCollection('cohortMembers', 'import');
   const seen = new Set<string>();
   recordsFrom(plan, grid, tableFields('cohortMembers'), true).forEach((record) => {
     writeStudentIdentifiers(record);
@@ -144,6 +192,7 @@ function readCohortMembers(plan: SheetImportPlan, cohortId: string, grid: SheetG
 }
 
 function readFormResponses(plan: SheetImportPlan, milestoneId: string, grid: SheetGrid): void {
+  guardSheetCollection('formResponses', 'import');
   const custom = formFieldTypes(plan, milestoneId);
   const fields = Object.values(FORM_SYSTEM).concat(custom);
   const seen = new Set<string>();
@@ -163,6 +212,7 @@ function readFormResponses(plan: SheetImportPlan, milestoneId: string, grid: She
 }
 
 function readMessages(plan: SheetImportPlan, grid: SheetGrid): void {
+  guardSheetCollection('ticketMessages', 'import');
   const seen = new Set<string>();
   recordsFrom(plan, grid, tableFields('ticketMessages')).forEach((record) => {
     const ticketId = docId(text(record.TicketId));
@@ -182,6 +232,7 @@ function readMessages(plan: SheetImportPlan, grid: SheetGrid): void {
 }
 
 function readAudits(plan: SheetImportPlan, grid: SheetGrid): void {
+  guardSheetCollection('auditLogs', 'export');
   recordsFrom(plan, grid, tableFields('auditLogs')).forEach((record) => {
     if (!text(record.Action) && !text(record.User)) return;
     plan.audits.push(record);
@@ -189,6 +240,7 @@ function readAudits(plan: SheetImportPlan, grid: SheetGrid): void {
 }
 
 function mergeContentPages(plan: SheetImportPlan, grid: SheetGrid): void {
+  guardSheetCollection('resources', 'import');
   const existing = new Set((plan.docs[COLLECTIONS.resources] || []).map((doc) => doc.id));
   recordsFrom(plan, grid, []).forEach((page) => {
     const id = docId(text(page['Page ID']));

@@ -1,10 +1,29 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { dateOnlyFromSheet, dateTimeFromSheet, planSheetImport, SheetGrid, spreadsheetIdFrom } from './sheetImport';
+import { COLLECTIONS_REGISTRY } from './collectionsRegistry';
+import { dateOnlyFromSheet, dateTimeFromSheet, guardSheetCollection, planSheetImport, SheetGrid, spreadsheetIdFrom } from './sheetImport';
 
 function grid(title: string, headers: string[], rows: unknown[][]): SheetGrid {
   return { title, rows: [headers, ...rows] };
 }
+
+test('sheet import rejects a collection that is not in the registry', () => {
+  assert.throws(() => guardSheetCollection('functionSecrets', 'import'), /functionSecrets.*not registered/);
+  assert.throws(() => guardSheetCollection('functionSecrets', 'export'), /functionSecrets.*not registered/);
+  assert.throws(() => guardSheetCollection('docWordLogs', 'import'), /docWordLogs.*not registered/);
+  const index = COLLECTIONS_REGISTRY.findIndex((entry) => entry.id === 'subjects');
+  assert.ok(index >= 0);
+  const [removed] = COLLECTIONS_REGISTRY.splice(index, 1);
+  try {
+    const plan = planSheetImport([
+      grid('SUBJECTS', ['Subject ID', 'Name', 'Active'], [['eng', 'English', true]]),
+    ]);
+    assert.equal(plan.docs.subjects, undefined);
+    assert.ok(plan.warnings.some((warning) => /subjects/.test(warning) && /not registered/.test(warning)));
+  } finally {
+    COLLECTIONS_REGISTRY.splice(index, 0, removed);
+  }
+});
 
 test('spreadsheet ids come from a url or a bare id', () => {
   assert.equal(spreadsheetIdFrom('https://docs.google.com/spreadsheets/d/abc123_XYZ-000000000000/edit#gid=0'), 'abc123_XYZ-000000000000');
