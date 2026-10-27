@@ -225,6 +225,43 @@ test('roster ingest stores Student Number and copies it onto the student user', 
   assert.equal(user?.StudentId, STUDENT);
 });
 
+test('sheet ingest keeps a published subject when the column is absent', async () => {
+  const app = appFor();
+  await seed(app);
+  const store = app.store as unknown as ReturnType<typeof memory>;
+  const member = (await store.listMembers('2026'))[0];
+  member.subject = 'History';
+  await store.setMember('2026', STUDENT, member);
+  await store.set(COLLECTIONS.studentUsers, STUDENT, {
+    StudentId: STUDENT,
+    DisplayName: 'Jamie Wong',
+    subject: 'History',
+  });
+  const roster: SheetGrid = {
+    title: 'COHORT: 2026',
+    rows: [
+      ['StudentId', 'Display Name', 'Student ID', 'Student Email', 'Year Group', 'Surname'],
+      [STUDENT, 'Jamie Wong', '20260001', STUDENT, 12, 'Wong-Li'],
+    ],
+  };
+  await applySheetIngest(app, SHEET, ['cohortMembers'], true, { workbook: workbook([roster]) });
+  assert.equal((await store.listMembers('2026'))[0].subject, 'History');
+  assert.equal((await store.listMembers('2026'))[0].Surname, 'Wong-Li');
+  assert.equal((await store.get(COLLECTIONS.studentUsers, STUDENT))?.subject, 'History');
+
+  const users: SheetGrid = {
+    title: 'USERS-STUDENTS',
+    rows: [
+      ['StudentId', 'DisplayName'],
+      [STUDENT, 'Jamie Wong'],
+    ],
+  };
+  await applySheetIngest(app, SHEET, ['studentUsers'], true, { workbook: workbook([users]) });
+  const user = await store.get(COLLECTIONS.studentUsers, STUDENT);
+  assert.equal(user?.DisplayName, 'Jamie Wong');
+  assert.equal(user?.subject, 'History');
+});
+
 test('roster ingest keeps eeActive when the sheet has no column for it', async () => {
   const app = appFor();
   await seed(app);

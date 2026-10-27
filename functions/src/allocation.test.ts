@@ -20,6 +20,7 @@ import {
   updateCohortToken,
 } from './allocation';
 import { getAdminRecords, saveAdminRecord } from './admin';
+import { getStaffHome, getStudentHome } from './journey';
 import { COLLECTIONS } from './schema';
 import { SheetGrid } from './sheetImport';
 import { SheetWorkbook } from './sheetSync';
@@ -40,14 +41,19 @@ function memory() {
   const workspace = new Map<string, Doc>();
   const config = new Map<string, Doc>();
   const audits: Doc[] = [];
+  const lastAllocationOps: AllocationOp[][] = [];
   const key = (name: string, id: string) => `${name}\u0000${id}`;
   const copy = (row: Doc | undefined) => (row ? { ...row } : null);
   const store = {
     audits,
+    lastAllocationOps,
     async get(name: string, id: string) { return copy(docs.get(key(name, id))); },
     async list(name: string) { return [...docs.keys()].filter((id) => id.startsWith(`${name}\u0000`)).map((id) => ({ ...docs.get(id)! })); },
     async set(name: string, id: string, data: Doc) { docs.set(key(name, id), { ...data }); },
     async remove(name: string, id: string) { docs.delete(key(name, id)); },
+    async whereEqual(name: string, field: string, value: unknown) {
+      return (await store.list(name)).filter((row) => row[field] === value);
+    },
     async getMeta() { return null; },
     async listMembers(cohortId: string) { return [...members.keys()].filter((id) => id.startsWith(`${cohortId}\u0000`)).map((id) => ({ ...members.get(id)! })); },
     async getMember(cohortId: string, id: string) { return copy(members.get(`${cohortId}\u0000${id}`)); },
@@ -65,11 +71,15 @@ function memory() {
     async getAllocationConfig(cohortId: string) { return copy(config.get(cohortId)); },
     async setAllocationConfig(cohortId: string, data: Doc) { config.set(cohortId, { ...data }); },
     async applyAllocationOps(ops: AllocationOp[]) {
+      lastAllocationOps.push(ops);
       for (const op of ops) {
         if (op.kind === 'member') await store.setMember(op.cohortId, op.id, op.data);
         else if (op.kind === 'token') await store.setToken(op.cohortId, op.id, op.data);
         else if (op.kind === 'workspace') await store.setWorkspace(op.cohortId, op.id, op.data);
-        else await store.setAllocationConfig(op.cohortId, op.data);
+        else if (op.kind === 'student') {
+          const current = await store.get(COLLECTIONS.studentUsers, op.id);
+          await store.set(COLLECTIONS.studentUsers, op.id, { ...(current || {}), ...op.data });
+        } else await store.setAllocationConfig(op.cohortId, op.data);
       }
     },
     async addAudit(entry: Doc) { audits.push(entry); },
@@ -190,6 +200,65 @@ test('draft, publish, release, and publish again update the live roster', async 
   const desk = await getAllocationDesk(app, '2026');
   assert.equal(desk.students.find((student) => student.studentId === JANE)?.flags.needsSupport, true);
   assert.equal(desk.publish.drafts, 0);
+});
+
+test('publishing writes the allocated subject onto the student profile and the live views', async () => {
+  const app = appFor();
+  await seed(app);
+  await app.store.set(COLLECTIONS.studentUsers, JANE, { StudentId: JANE, DisplayName: 'Jane Doe', subject: '' });
+  await applyAllocationIngest(app, '2026', SHEET, 'workspace', { workbook: workbook([workspaceGrid]) });
+  await applyAllocationIngest(app, '2026', SHEET, 'tokens', { workbook: workbook([tokenGrid]) });
+  await app.store.setMember('2026', MARK, { StudentId: MARK, 'Display Name': 'Mark Lee', Surname: 'Lee', 'First Name': 'Mark', supervisorId: '', subject: '', eeActive: true });
+
+  await draftAllocation(app, '2026', JANE, SMITH, '');
+  await draftAllocation(app, '2026', MARK, SMITH, 'Geography');
+  const store = app.store as unknown as ReturnType<typeof memory>;
+  const published = await commitAllocations(app, '2026');
+  assert.equal(published.published, 2);
+  const batch = store.lastAllocationOps[store.lastAllocationOps.length - 1];
+  assert.ok(batch.some((op) => op.kind === 'member' && op.id === JANE && op.data.subject === 'History'));
+  assert.ok(batch.some((op) => op.kind === 'student' && op.id === JANE && op.data.subject === 'History'));
+  assert.equal(batch.some((op) => op.kind === 'student' && op.id === MARK), false);
+  assert.equal((await app.store.getMember('2026', JANE))?.subject, 'History');
+  assert.equal((await app.store.getMember('2026', MARK))?.subject, 'Geography');
+  const janeUser = await app.store.get(COLLECTIONS.studentUsers, JANE);
+  assert.equal(janeUser?.subject, 'History');
+  assert.equal(janeUser?.DisplayName, 'Jane Doe');
+  assert.equal(await app.store.get(COLLECTIONS.studentUsers, MARK), null);
+  assert.equal((await app.store.listTokens('2026')).find((token) => token.allocatedTo === JANE)?.assignedSubject, 'History');
+
+  const supervisor = await getStaffHome({ store: app.store, email: SMITH, timeZone: 'Asia/Hong_Kong' }, '2026', 'supervisor');
+  const supervisorByEmail = new Map(supervisor.students.map((student) => [student.email, student.subject]));
+  assert.equal(supervisorByEmail.get(JANE), 'History');
+  assert.equal(supervisorByEmail.get(MARK), 'Geography');
+  const janeHome = await getStudentHome({ store: app.store, email: JANE, timeZone: 'Asia/Hong_Kong' });
+  assert.equal(janeHome.subject, 'History');
+
+  await draftAllocation(app, '2026', JANE, '', '');
+  const cleared = await commitAllocations(app, '2026');
+  assert.equal(cleared.cleared, 1);
+  const clearBatch = store.lastAllocationOps[store.lastAllocationOps.length - 1];
+  assert.ok(clearBatch.some((op) => op.kind === 'member' && op.id === JANE && op.data.subject === ''));
+  assert.ok(clearBatch.some((op) => op.kind === 'student' && op.id === JANE && op.data.subject === ''));
+  assert.equal((await app.store.getMember('2026', JANE))?.subject, '');
+  assert.equal((await app.store.get(COLLECTIONS.studentUsers, JANE))?.subject, '');
+  const afterClear = await getStaffHome({ store: app.store, email: COORDINATOR, timeZone: 'Asia/Hong_Kong' }, '2026', 'coordinator');
+  assert.equal(afterClear.students.find((student) => student.email === JANE)?.subject, '');
+  assert.equal(afterClear.students.find((student) => student.email === MARK)?.subject, 'Geography');
+  const supervisorAfter = await getStaffHome({ store: app.store, email: SMITH, timeZone: 'Asia/Hong_Kong' }, '2026', 'supervisor');
+  assert.equal(supervisorAfter.students.some((student) => student.email === JANE), false);
+  assert.equal(supervisorAfter.students.find((student) => student.email === MARK)?.subject, 'Geography');
+  assert.equal((await getStudentHome({ store: app.store, email: JANE, timeZone: 'Asia/Hong_Kong' })).subject, '');
+});
+
+test('staff and student views read the profile subject when the roster subject is blank', async () => {
+  const app = appFor();
+  await seed(app);
+  await app.store.setMember('2026', JANE, { StudentId: JANE, 'Display Name': 'Jane Doe', Surname: 'Doe', supervisorId: SMITH, subject: '' });
+  await app.store.set(COLLECTIONS.studentUsers, JANE, { StudentId: JANE, DisplayName: 'Jane Doe', subject: 'History' });
+  const home = await getStaffHome({ store: app.store, email: SMITH, timeZone: 'Asia/Hong_Kong' }, '2026', 'supervisor');
+  assert.equal(home.students.find((student) => student.email === JANE)?.subject, 'History');
+  assert.equal((await getStudentHome({ store: app.store, email: JANE, timeZone: 'Asia/Hong_Kong' })).subject, 'History');
 });
 
 test('export writes the allocation sheet and records the export time', async () => {

@@ -4,6 +4,7 @@ import { COLLECTIONS } from './schema';
 import {
   canonicalStudentEmail,
   canonicalStudentNumber,
+  keepPublishedSubject,
   STUDENT_EMAIL_FIELD,
   STUDENT_NUMBER_FIELD,
   syncStudentUserFromMember,
@@ -59,6 +60,7 @@ test('saving a cohort member copies Student Number and Student Email onto the st
     StudentId: login,
     'Student Number': '20260001',
     'Student Email': 'jamie.mail@vsa.example.edu',
+    subject: 'History',
   });
   assert.equal(updated, true);
   const user = docs.get(login);
@@ -66,6 +68,10 @@ test('saving a cohort member copies Student Number and Student Email onto the st
   assert.equal(user?.[STUDENT_EMAIL_FIELD], 'jamie.mail@vsa.example.edu');
   assert.equal(user?.studentEmail, undefined);
   assert.equal(user?.StudentId, login);
+  assert.equal(user?.subject, 'History');
+  const kept = keepPublishedSubject({ StudentId: login, DisplayName: 'Jamie Wong' }, user);
+  assert.equal(kept.subject, 'History');
+  assert.equal(keepPublishedSubject({ StudentId: login, subject: 'Art' }, user).subject, 'Art');
   assert.equal(await syncStudentUserFromMember(store as unknown as Store, {
     StudentId: 'missing@vsa.example.edu',
     'Student Number': '20260002',

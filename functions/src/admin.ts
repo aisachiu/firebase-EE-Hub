@@ -335,12 +335,15 @@ export async function createStudentUsersFromCohort(app: App, cohortId: unknown, 
         [STUDENT_EMAIL_FIELD]: canonicalStudentEmail(member),
       };
       const existing = await app.store.get(COLLECTIONS.studentUsers, studentId);
+      const subject = text(member.subject);
       if (existing) {
-        await app.store.set(COLLECTIONS.studentUsers, studentId, writeStudentIdentifiers({
+        const next = writeStudentIdentifiers({
           ...existing,
           StudentId: studentId,
           ...identifiers,
-        }));
+        });
+        if (!text(next.subject) && subject) next.subject = subject;
+        await app.store.set(COLLECTIONS.studentUsers, studentId, next);
         alreadyExists += 1;
         continue;
       }
@@ -350,6 +353,7 @@ export async function createStudentUsersFromCohort(app: App, cohortId: unknown, 
         Cohort: cohort,
         ...identifiers,
         parentEmail: text(member['Family Email']),
+        subject,
       });
       created += 1;
     }

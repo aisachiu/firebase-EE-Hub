@@ -11,7 +11,7 @@ import { COLLECTIONS, normalizePhaseColor, staffHasAdminAccess, tableFields, val
 import { App, audited, requireAdmin } from './session';
 import { formatSubjectCell, preserveEeActive } from './allocationPure';
 import { planSheetImport, SheetGrid, SheetImportPlan, spreadsheetIdFrom } from './sheetImport';
-import { presentStoredIdentifiers, syncStudentUserFromMember } from './studentIdentity';
+import { keepPublishedSubject, presentStoredIdentifiers, syncStudentUserFromMember } from './studentIdentity';
 import { dateOnlyValue, Doc, driveNamePart, HubError, normalizeEmail, text, toBoolean } from './util';
 
 const ROW_LIMIT = 5000;
@@ -444,7 +444,8 @@ async function writeIngest(app: App, plan: SheetImportPlan, entities: string[], 
         const incoming = plan.members.filter((member) => member.cohortId === cohortId);
         const keep = new Set(incoming.map((member) => member.id));
         for (const member of incoming) {
-          const stored = preserveEeActive(member.data, prior.get(member.id));
+          const previous = prior.get(member.id);
+          const stored = keepPublishedSubject(preserveEeActive(member.data, previous), previous);
           await app.store.setMember(cohortId, member.id, stored);
           await syncStudentUserFromMember(app.store, stored);
         }
@@ -481,7 +482,14 @@ async function writeIngest(app: App, plan: SheetImportPlan, entities: string[], 
     const collection = COLLECTIONS[id];
     const incoming = plan.docs[collection] || [];
     const keep = new Set(incoming.map((doc) => doc.id));
-    for (const doc of incoming) await app.store.set(collection, doc.id, id === 'cohorts' ? await keepCohortPlan(app, doc.id, doc.data) : doc.data);
+    for (const doc of incoming) {
+      const data = id === 'cohorts'
+        ? await keepCohortPlan(app, doc.id, doc.data)
+        : id === 'studentUsers'
+          ? keepPublishedSubject(doc.data, await app.store.get(collection, doc.id))
+          : doc.data;
+      await app.store.set(collection, doc.id, data);
+    }
     for (const existing of await app.store.list(collection)) {
       const existingId = rowId(id, existing);
       if (!existingId || keep.has(existingId)) continue;

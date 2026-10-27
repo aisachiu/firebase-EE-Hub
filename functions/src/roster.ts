@@ -61,7 +61,12 @@ export async function requireCohort(app: App, cohortId: string, includeInactive 
   return cohort;
 }
 
-export function placementFromMember(cohortId: string, record: Doc): Placement {
+/** Roster subject wins. The student profile is the fallback My Students and /my-ee use. */
+export function allocatedSubject(member: Doc | null | undefined, profile?: Doc | null): string {
+  return text(member?.subject) || text(profile?.subject);
+}
+
+export function placementFromMember(cohortId: string, record: Doc, profile?: Doc | null): Placement {
   const email = studentLoginId(record);
   return {
     cohortId,
@@ -72,7 +77,7 @@ export function placementFromMember(cohortId: string, record: Doc): Placement {
     firstName: text(record['First Name']),
     studentNumber: canonicalStudentNumber(record),
     hrm: text(record.HRM),
-    subject: text(record.subject),
+    subject: allocatedSubject(record, profile),
     supervisorId: normalizeEmail(record.supervisorId),
     anchor: dateOnlyValue(record.Anchor_Date),
     folder: text(record.EEFolder),
@@ -82,24 +87,39 @@ export function placementFromMember(cohortId: string, record: Doc): Placement {
   };
 }
 
+async function profilesByLogin(app: App): Promise<Map<string, Doc>> {
+  const map = new Map<string, Doc>();
+  const rows = await app.store.list(COLLECTIONS.studentUsers);
+  rows.forEach((row) => {
+    const id = studentLoginId(row);
+    if (id) map.set(id, row);
+  });
+  return map;
+}
+
 export async function findPlacement(app: App, studentEmail: string): Promise<Placement | null> {
   const email = normalizeEmail(studentEmail);
   if (!email) return null;
   const cohorts = await listCohorts(app, false);
+  const profile = await app.store.get(COLLECTIONS.studentUsers, email);
   for (const cohort of cohorts) {
     const record = await app.store.getMember(cohort.id, email);
     if (!record || !normalizeEmail(record.StudentId)) continue;
-    return placementFromMember(cohort.id, record);
+    return placementFromMember(cohort.id, record, profile);
   }
   return null;
 }
 
 export async function readRoster(app: App, cohortId: string): Promise<Placement[]> {
   await requireCohort(app, cohortId);
-  const records = await app.store.listMembers(text(cohortId));
+  const id = text(cohortId);
+  const [records, profiles] = await Promise.all([
+    app.store.listMembers(id),
+    profilesByLogin(app),
+  ]);
   return records
     .filter((record) => normalizeEmail(record.StudentId))
-    .map((record) => placementFromMember(text(cohortId), record));
+    .map((record) => placementFromMember(id, record, profiles.get(normalizeEmail(record.StudentId))));
 }
 
 export interface StaffTables {
@@ -113,11 +133,12 @@ export async function readStaffTables(app: App): Promise<StaffTables> {
   const activeCohorts = all.filter((cohort) => cohort.status.toLowerCase() !== 'inactive');
   const byEmail: Record<string, Placement> = {};
   const byCohort: Record<string, Placement[]> = {};
+  const profiles = await profilesByLogin(app);
   for (const cohort of all) {
     const records = await app.store.listMembers(cohort.id);
     const roster: Placement[] = [];
     records.forEach((record) => {
-      const student = placementFromMember(cohort.id, record);
+      const student = placementFromMember(cohort.id, record, profiles.get(studentLoginId(record)));
       if (!student.email) return;
       roster.push(student);
       if (!byEmail[student.email]) byEmail[student.email] = student;

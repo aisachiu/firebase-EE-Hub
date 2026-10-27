@@ -82,6 +82,14 @@ export async function syncStudentUserFromMember(store: Store, member: Doc): Prom
   };
   delete next[LEGACY_STUDENT_NUMBER_FIELD];
   delete next[LEGACY_STUDENT_EMAIL_FIELD];
+  if (hasOwn(member, 'subject')) next.subject = text(member.subject);
   await store.set(COLLECTIONS.studentUsers, studentId, next);
   return true;
+}
+
+/** Keep a published EE subject when a sheet row does not include that column. */
+export function keepPublishedSubject(incoming: Doc, previous: Doc | null | undefined): Doc {
+  if (hasOwn(incoming, 'subject')) return incoming;
+  if (!previous || !hasOwn(previous, 'subject')) return incoming;
+  return { ...incoming, subject: text(previous.subject) };
 }
