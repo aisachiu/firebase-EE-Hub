@@ -7,12 +7,15 @@ import { advanceScene } from '../shared/scene.js';
 import { state } from '../shared/state.js';
 import {
   bindTicketList,
+  openFocusedTicket,
   openTicketDialog,
   refreshMessageDesk,
   renderTicket,
+  routeNote,
   syncStudentUnread,
 } from '../shared/tickets.js';
-import { openFocusedTicket } from '../staff/messages.js';
+
+export { routeNote };
 
 export function renderStudentHelp() {
   advanceScene();
@@ -53,8 +56,4 @@ export function paintStudentHelp(hub) {
 
 export function renderFaq(faq) {
   return `<article class="faq" data-faq="${escapeHtml((faq.question + ' ' + faq.answer).toLowerCase())}"><strong>${escapeHtml(faq.question)}</strong><p>${escapeHtml(faq.answer)}</p></article>`;
-}
-
-export function routeNote(route) {
-  return route === 'coordinator' ? 'This message goes to the EE Coordinator.' : 'This message goes to your supervisor.';
 }

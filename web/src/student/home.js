@@ -5,7 +5,7 @@ import { loadingLine } from '../shared/loading.js';
 import { advanceScene, isStale, sameScene } from '../shared/scene.js';
 import { state } from '../shared/state.js';
 import { requestPush } from '../router.js';
-import { paintTabDot, renderShell } from '../shell.js';
+import { paintTabDot, renderShell } from '../navigation.js';
 import { formatActivityWhen, paintStudentActivity } from './activity.js';
 import {
   applyJourneyHero,

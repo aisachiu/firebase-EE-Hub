@@ -20,7 +20,7 @@ import {
   staffNameMatch,
 } from '../shared/tables.js';
 import { requestPush, syncHistory } from '../router.js';
-import { renderShell } from '../shell.js';
+import { renderShell } from '../navigation.js';
 
 export function staffSectionNav() {
   const pane = state.staffPane === 'quotas' ? 'quotas' : 'records';

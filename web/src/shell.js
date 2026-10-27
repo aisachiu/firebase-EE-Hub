@@ -1,21 +1,15 @@
-import { closeMemberEditor } from './admin/records.js';
-import { renderAdmin } from './admin/sections.js';
-import { renderAllocation } from './allocation/desk.js';
+import { paintTabDot, setShellRenderer } from './navigation.js';
 import { callServer, paintRequestIndicator } from './shared/api.js';
 import { rememberOpeningMessages } from './shared/desk.js';
 import { showFatal } from './shared/feedback.js';
+import { ensureHeaderCohorts, headerCohortOptions } from './shared/headerCohorts.js';
 import { escapeHtml } from './shared/html.js';
-import { rememberQuotes } from './shared/loading.js';
-import { renderResources } from './shared/resources.js';
+import { loadingLine, rememberQuotes } from './shared/loading.js';
 import { advanceScene } from './shared/scene.js';
+import { closeOpenMemberEditor, hideListJourneyTip } from './shared/sessionChrome.js';
 import { actingAsOptions } from './shared/staffContext.js';
 import { state } from './shared/state.js';
-import { renderStaffTickets } from './staff/messages.js';
-import { mountNotesPanel, renderStaffNotes, setNotesOpen } from './staff/notes.js';
-import { hideListJourneyTip, renderStaffHome } from './staff/students.js';
 import { applyLocation, installHistory, requestPush, sectionTabs, syncHistory } from './router.js';
-import { renderStudentHelp } from './student/help.js';
-import { mountJourneyPanel, renderStudentSection, setJourneyOpen } from './student/home.js';
 
 export let booted = false;
 
@@ -74,8 +68,99 @@ export function bootHub() {
   });
 }
 
+const chunkCache = Object.create(null);
+let shellRender = 0;
+
+const chunkLoaders = {
+  coordinator: function() { return import('./admin/coordinator.js'); },
+  resources: function() { return import('./shared/resources.js'); },
+  help: function() { return import('./student/help.js'); },
+  tickets: function() { return import('./staff/messages.js'); },
+  notes: function() { return import('./staff/notes.js'); },
+  home: function() { return import('./student/home.js'); },
+  staff: function() { return import('./staff/students.js'); },
+};
+
+function cachedChunk(name) {
+  const current = chunkCache[name];
+  if (!current) {
+    chunkCache[name] = chunkLoaders[name]().then(function(mod) {
+      chunkCache[name] = mod;
+      return mod;
+    }, function(error) {
+      delete chunkCache[name];
+      throw error;
+    });
+  }
+  return Promise.resolve(chunkCache[name]);
+}
+
+function readyChunk(name) {
+  const current = chunkCache[name];
+  if (!current || typeof current.then === 'function') return null;
+  return current;
+}
+
+function sectionChunk(section, student) {
+  if (section === 'admin' || section === 'allocation') return 'coordinator';
+  if (section === 'resources') return 'resources';
+  if (section === 'help') return 'help';
+  if (section === 'tickets') return 'tickets';
+  if (section === 'notes') return 'notes';
+  return student ? 'home' : 'staff';
+}
+
+function paintSection(mod) {
+  const student = state.user.role === 'student';
+  if (state.section === 'admin') mod.renderAdmin();
+  else if (state.section === 'allocation') mod.renderAllocation();
+  else if (state.section === 'resources') mod.renderResources();
+  else if (state.section === 'help') mod.renderStudentHelp();
+  else if (state.section === 'tickets') mod.renderStaffTickets();
+  else if (state.section === 'notes') mod.renderStaffNotes();
+  else if (student) mod.renderStudentSection();
+  else mod.renderStaffHome();
+}
+
+function bindJourneyChrome(homeMod) {
+  const journeyToggle = document.getElementById('journey-toggle');
+  const journeyPeek = document.getElementById('journey-peek');
+  const journeyClose = document.getElementById('journey-close');
+  if (journeyToggle) journeyToggle.addEventListener('click', function() { homeMod.setJourneyOpen(!state.journeyOpen); });
+  if (journeyPeek) journeyPeek.addEventListener('click', function() {
+    homeMod.setJourneyOpen(true);
+    const closeButton = document.getElementById('journey-close');
+    if (closeButton) closeButton.focus();
+  });
+  if (journeyClose) journeyClose.addEventListener('click', function() {
+    homeMod.setJourneyOpen(false);
+    const peek = document.getElementById('journey-peek');
+    if (peek) peek.focus();
+  });
+  homeMod.mountJourneyPanel();
+}
+
+function bindNotesChrome(notesMod) {
+  const notesToggle = document.getElementById('notes-toggle');
+  const notesPeek = document.getElementById('notes-peek');
+  const notesClose = document.getElementById('notes-close');
+  if (notesToggle) notesToggle.addEventListener('click', function() { notesMod.setNotesOpen(!state.notesOpen); });
+  if (notesPeek) notesPeek.addEventListener('click', function() {
+    notesMod.setNotesOpen(true);
+    const closeButton = document.getElementById('notes-close');
+    if (closeButton) closeButton.focus();
+  });
+  if (notesClose) notesClose.addEventListener('click', function() {
+    notesMod.setNotesOpen(false);
+    const peek = document.getElementById('notes-peek');
+    if (peek) peek.focus();
+  });
+  notesMod.mountNotesPanel();
+}
+
 export function renderShell() {
-  closeMemberEditor();
+  const renderId = ++shellRender;
+  closeOpenMemberEditor();
   hideListJourneyTip();
   advanceScene();
   const student = state.user.role === 'student';
@@ -140,47 +225,28 @@ export function renderShell() {
       renderShell();
     });
   });
-  if (state.section === 'admin') renderAdmin();
-  else if (state.section === 'allocation') renderAllocation();
-  else if (state.section === 'resources') renderResources();
-  else if (state.section === 'help') renderStudentHelp();
-  else if (state.section === 'tickets') renderStaffTickets();
-  else if (state.section === 'notes') renderStaffNotes();
-  else if (student) renderStudentSection();
-  else renderStaffHome();
-  if (showJourney) {
-    const journeyToggle = document.getElementById('journey-toggle');
-    const journeyPeek = document.getElementById('journey-peek');
-    const journeyClose = document.getElementById('journey-close');
-    if (journeyToggle) journeyToggle.addEventListener('click', function() { setJourneyOpen(!state.journeyOpen); });
-    if (journeyPeek) journeyPeek.addEventListener('click', function() {
-      setJourneyOpen(true);
-      const closeButton = document.getElementById('journey-close');
-      if (closeButton) closeButton.focus();
+  const chunkName = sectionChunk(state.section, student);
+  const sectionMod = readyChunk(chunkName);
+  const homeMod = showJourney ? readyChunk('home') : null;
+  const notesMod = showNotes ? readyChunk('notes') : null;
+  const waiting = [];
+  if (!sectionMod) waiting.push(cachedChunk(chunkName));
+  if (showJourney && !homeMod) waiting.push(cachedChunk('home'));
+  if (showNotes && !notesMod) waiting.push(cachedChunk('notes'));
+  if (sectionMod) paintSection(sectionMod);
+  else document.getElementById('main').innerHTML = loadingLine('Loading...');
+  if (homeMod) bindJourneyChrome(homeMod);
+  if (notesMod) bindNotesChrome(notesMod);
+  if (waiting.length) {
+    Promise.all(waiting).then(function() {
+      if (renderId !== shellRender) return;
+      if (!sectionMod) paintSection(readyChunk(chunkName));
+      if (showJourney && !homeMod) bindJourneyChrome(readyChunk('home'));
+      if (showNotes && !notesMod) bindNotesChrome(readyChunk('notes'));
+    }).catch(function(error) {
+      if (renderId !== shellRender) return;
+      showFatal('Unable to open this section', error && error.message ? error.message : 'This section could not be loaded.');
     });
-    if (journeyClose) journeyClose.addEventListener('click', function() {
-      setJourneyOpen(false);
-      const peek = document.getElementById('journey-peek');
-      if (peek) peek.focus();
-    });
-    mountJourneyPanel();
-  }
-  if (showNotes) {
-    const notesToggle = document.getElementById('notes-toggle');
-    const notesPeek = document.getElementById('notes-peek');
-    const notesClose = document.getElementById('notes-close');
-    if (notesToggle) notesToggle.addEventListener('click', function() { setNotesOpen(!state.notesOpen); });
-    if (notesPeek) notesPeek.addEventListener('click', function() {
-      setNotesOpen(true);
-      const closeButton = document.getElementById('notes-close');
-      if (closeButton) closeButton.focus();
-    });
-    if (notesClose) notesClose.addEventListener('click', function() {
-      setNotesOpen(false);
-      const peek = document.getElementById('notes-peek');
-      if (peek) peek.focus();
-    });
-    mountNotesPanel();
   }
   if (!student && tabs.some(function(tab) { return tab[0] === 'tickets'; }) && state.ticketBadgeFor !== state.actingAs && !state.messageDesks[state.actingAs]) {
     const requested = state.actingAs;
@@ -194,23 +260,6 @@ export function renderShell() {
   syncHistory();
   ensureHeaderCohorts();
   paintRequestIndicator();
-}
-
-let headerCohortsRequest = null;
-
-function normalizeCohorts(cohorts) {
-  return (cohorts || []).map(function(cohort) {
-    return { id: cohort.id, name: cohort.name || cohort.id };
-  }).filter(function(cohort) { return cohort.id; });
-}
-
-function headerCohortOptions() {
-  const cohorts = state.headerCohorts;
-  if (!cohorts) return '<option value="">Loading cohorts...</option>';
-  if (!cohorts.length) return '<option value="">No cohorts</option>';
-  return cohorts.map(function(cohort) {
-    return `<option value="${escapeHtml(cohort.id)}" ${cohort.id === state.cohortId ? 'selected' : ''}>${escapeHtml(cohort.name || cohort.id)}</option>`;
-  }).join('');
 }
 
 function headerContextMarkup() {
@@ -246,36 +295,6 @@ function bindHeaderContext() {
   });
 }
 
-export function rememberHeaderCohorts(cohorts) {
-  if (!Array.isArray(cohorts)) return;
-  state.headerCohorts = normalizeCohorts(cohorts);
-  paintHeaderCohortSelect();
-}
-
-export function paintHeaderCohortSelect() {
-  const select = document.getElementById('header-cohort');
-  if (!select || !state.user || state.user.role === 'student') return;
-  const signature = (state.headerCohorts || []).map(function(cohort) { return cohort.id + '\0' + cohort.name; }).join('\n');
-  if (select.dataset.cohorts !== signature) {
-    select.dataset.cohorts = signature;
-    select.innerHTML = headerCohortOptions();
-  }
-  select.disabled = !(state.headerCohorts && state.headerCohorts.length);
-  if (state.cohortId) select.value = state.cohortId;
-}
-
-export function ensureHeaderCohorts() {
-  if (!state.user || state.user.role === 'student') return;
-  if (state.headerCohorts || headerCohortsRequest) return;
-  headerCohortsRequest = callServer('getCohorts').then(function(cohorts) {
-    if (!state.headerCohorts) state.headerCohorts = normalizeCohorts(cohorts);
-    paintHeaderCohortSelect();
-  }, function(error) {
-    headerCohortsRequest = null;
-    if (error && error.stale) ensureHeaderCohorts();
-  });
-}
-
 export function tabLabel(tab) {
   const helpUnread = state.studentHome ? state.studentHome.unreadTicketCount : (state.messageDesks.student ? state.messageDesks.student.unreadCount : 0);
   if (tab[0] === 'help' && helpUnread) return 'Help<span class="dot" aria-label="Unread reply"></span>';
@@ -283,8 +302,4 @@ export function tabLabel(tab) {
   return tab[1];
 }
 
-export function paintTabDot(view, count, label) {
-  const button = document.querySelector('[data-view="' + view + '"]');
-  if (!button) return;
-  button.innerHTML = label + (count ? '<span class="dot" aria-label="Unread"></span>' : '');
-}
+setShellRenderer(renderShell);

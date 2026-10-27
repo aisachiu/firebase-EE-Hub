@@ -1,7 +1,7 @@
 import { adminDialogKind, closeAdminDialog, listingDialogKind, openAdminDialog } from './records.js';
 import { callServer } from '../shared/api.js';
 import { showError, showSuccess } from '../shared/feedback.js';
-import { cssEscape, escapeHtml } from '../shared/html.js';
+import { cssEscape, escapeHtml, formatActivityWhen } from '../shared/html.js';
 import { loadingLine } from '../shared/loading.js';
 import { isStale } from '../shared/scene.js';
 import { state } from '../shared/state.js';
@@ -12,8 +12,7 @@ import {
   sortableHeader,
   sortedRows,
 } from '../shared/tables.js';
-import { renderStaffHome } from '../staff/students.js';
-import { formatActivityWhen } from '../student/activity.js';
+import { renderShell } from '../navigation.js';
 
 export let noticeToken = 0;
 
@@ -264,7 +263,7 @@ export function bindEmailDesk(target, back) {
     if (adminDialogKind() === 'notice-rule') closeAdminDialog();
     state.emailDesk = false;
     state.noticeEdit = null;
-    renderStaffHome();
+    renderShell();
   });
   target.querySelectorAll('[data-notice-new]').forEach(function(button) {
     button.addEventListener('click', function() {

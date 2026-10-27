@@ -14,7 +14,7 @@ import { advanceScene } from '../shared/scene.js';
 import { syncHeaderCohortSelect } from '../shared/staffContext.js';
 import { state } from '../shared/state.js';
 import { requestPush, syncHistory } from '../router.js';
-import { renderShell } from '../shell.js';
+import { renderShell } from '../navigation.js';
 
 export const adminSections = [
   ['cohorts', 'Cohorts'], ['driveAccount', 'Google account'], ['sheetSync', 'Sheets'], ['cohortMembers', 'Students in cohorts'], ['pathway', 'Phases & milestones'],

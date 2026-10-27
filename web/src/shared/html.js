@@ -27,12 +27,22 @@ export function formatLastEdit(value) {
   return shortDate(value) || '—';
 }
 
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
 export function shortDate(value) {
   const text = String(value || '').slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return '';
-  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   const parts = text.split('-');
-  return Number(parts[2]) + ' ' + months[Number(parts[1]) - 1] + ' ' + parts[0];
+  return Number(parts[2]) + ' ' + MONTHS[Number(parts[1]) - 1] + ' ' + parts[0];
+}
+
+export function formatActivityWhen(value) {
+  const text = String(value || '');
+  const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);
+  if (dateOnly) return Number(dateOnly[3]) + ' ' + MONTHS[Number(dateOnly[2]) - 1] + ' ' + dateOnly[1];
+  const stamp = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/.exec(text);
+  if (!stamp) return text || '—';
+  return Number(stamp[3]) + ' ' + MONTHS[Number(stamp[2]) - 1] + ' ' + stamp[1] + ', ' + stamp[4] + ':' + stamp[5];
 }
 
 export function textCompare(left, right) {
