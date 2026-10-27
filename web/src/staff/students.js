@@ -103,16 +103,29 @@ export function visibleStaffStudents(home) {
   return students;
 }
 
-export function rememberStaffLayout(layout) {
-  state.staffLayout = layout === 'list' ? 'list' : 'tile';
-  try { window.localStorage.setItem('ee-hub-staff-layout', state.staffLayout); }
+export function staffViewMode() {
+  const mode = state.staffViewMode;
+  if (mode === 'list-collapsed' || mode === 'list-expanded' || mode === 'tiles') return mode;
+  return 'tiles';
+}
+
+export function rememberStaffViewMode(mode) {
+  const next = mode === 'list-collapsed' || mode === 'list-expanded' ? mode : 'tiles';
+  state.staffViewMode = next;
+  try { window.localStorage.setItem('ee-hub-staff-view-mode', next); }
   catch (error) { /* the choice still applies for this visit */ }
 }
 
-export function rememberStaffJourneyExpanded(expanded) {
-  state.staffJourneyExpanded = !!expanded;
-  try { window.localStorage.setItem('ee-hub-staff-journey', state.staffJourneyExpanded ? 'expanded' : 'collapsed'); }
-  catch (error) { /* the choice still applies for this visit */ }
+export function staffViewModeControl(mode) {
+  const current = mode || staffViewMode();
+  const options = [
+    ['tiles', 'Tiles'],
+    ['list-collapsed', 'List collapsed'],
+    ['list-expanded', 'List expanded'],
+  ];
+  return `<div class="view-toggle staff-view-mode" role="group" aria-label="Student layout">${options.map(function(option) {
+    return `<button type="button" data-staff-view="${option[0]}" aria-pressed="${current === option[0] ? 'true' : 'false'}">${option[1]}</button>`;
+  }).join('')}</div>`;
 }
 
 export function staffIdentityMarkup(student) {
@@ -203,7 +216,7 @@ export function renderListJourney(home, student) {
     }).join('; ');
     return phase.title + (phase.here ? ' (current phase)' : '') + ': ' + bits;
   }).join('. ');
-  if (state.staffJourneyExpanded !== true) {
+  if (staffViewMode() !== 'list-expanded') {
     const compact = `<ol class="compact-path">${phases.map(function(phase) {
       const dots = phase.milestones.map(function(milestone) {
         const stateClass = milestone.done ? 'done' : (milestone.here ? 'here' : '');
@@ -254,9 +267,8 @@ export function renderStaffStudentList(home, students) {
   const rows = students.map(function(student) {
     return `<tr>${canEdit ? `<td class="pick-col">${staffPickMarkup(student)}</td>` : ''}<td>${staffIdentityMarkup(student)}</td><td>${staffStatusMarkup(student)}</td><td>${renderListJourney(home, student)}</td></tr>`;
   }).join('');
-  const expanded = state.staffJourneyExpanded === true;
   const pickHead = canEdit ? '<th class="pick-col" scope="col"><span class="muted">Select</span></th>' : '';
-  return `<div class="table-wrap student-list"><table><thead><tr>${pickHead}<th class="student-col" scope="col">Student</th><th class="status-col" scope="col">Status</th><th class="journey-col" scope="col"><span class="journey-col-head"><span>Journey progress</span><button type="button" class="journey-hero-toggle list-journey-toggle" data-list-journey-toggle aria-expanded="${expanded ? 'true' : 'false'}">${expanded ? 'Collapse' : 'Expand'}</button></span></th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  return `<div class="table-wrap student-list"><table><thead><tr>${pickHead}<th class="student-col" scope="col">Student</th><th class="status-col" scope="col">Status</th><th class="journey-col" scope="col">Journey progress</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
 export let listJourneyTipBound = false;
@@ -320,8 +332,8 @@ export function bindListJourneyTips(root) {
 
 export function paintStaffCards(home) {
   const main = document.getElementById('main');
-  const layout = state.staffLayout === 'list' ? 'list' : 'tile';
-  main.classList.toggle('staff-list', layout === 'list');
+  const mode = staffViewMode();
+  main.classList.toggle('staff-list', mode !== 'tiles');
   const knownStudents = {};
   (home.students || []).forEach(function(student) { knownStudents[student.email] = true; });
   state.staffSelected = (state.staffSelected || []).filter(function(email) { return knownStudents[email]; });
@@ -356,14 +368,11 @@ export function paintStaffCards(home) {
       <button type="button" class="button secondary" id="open-email-desk">Email reminders</button>
       ${mayManageSupervisorTodos(state.user) ? '<button type="button" class="button secondary" id="open-supervisor-todos">Supervisor to-dos</button>' : ''}
       ${canEditMilestones ? `<label><input type="checkbox" class="student-pick" id="staff-select-visible" ${allVisibleSelected ? 'checked' : ''} ${students.length ? '' : 'disabled'} aria-label="Select all students in this list"> Select all</label><span class="muted" id="staff-selected-count">${state.staffSelected.length} selected</span><button type="button" class="button secondary" id="edit-milestones" ${state.staffSelected.length ? '' : 'disabled'}>Edit Milestones</button>` : ''}
-      <div class="view-toggle" role="group" aria-label="Student layout">
-        <button type="button" data-staff-layout="tile" aria-pressed="${layout === 'tile' ? 'true' : 'false'}">Tiles</button>
-        <button type="button" data-staff-layout="list" aria-pressed="${layout === 'list' ? 'true' : 'false'}">List</button>
-      </div>
+      ${staffViewModeControl(mode)}
     </div>
     <div class="staff-board${home.viewAs === 'supervisor' ? '' : ' solo'}">
     ${supervisorTodoList(home)}
-    ${students.length ? (layout === 'list' ? renderStaffStudentList(home, students) : renderStaffStudentTiles(students, phaseName, canEditMilestones)) : '<div class="empty">No students match this view.</div>'}
+    ${students.length ? (mode === 'tiles' ? renderStaffStudentTiles(students, phaseName, canEditMilestones) : renderStaffStudentList(home, students)) : '<div class="empty">No students match this view.</div>'}
     </div>`;
   bindUnreadNotices(main, true);
   document.getElementById('open-email-desk').addEventListener('click', function() {
@@ -451,21 +460,15 @@ export function paintStaffCards(home) {
       search.setSelectionRange(end, end);
     }
   });
-  main.querySelectorAll('[data-staff-layout]').forEach(function(button) {
+  main.querySelectorAll('[data-staff-view]').forEach(function(button) {
     button.addEventListener('click', function() {
-      if (state.staffLayout === button.dataset.staffLayout) return;
-      rememberStaffLayout(button.dataset.staffLayout);
+      const next = button.dataset.staffView;
+      if (staffViewMode() === next) return;
+      rememberStaffViewMode(next);
       repaintFilters();
-      const again = document.querySelector('[data-staff-layout="' + button.dataset.staffLayout + '"]');
+      const again = document.querySelector('[data-staff-view="' + next + '"]');
       if (again) again.focus();
     });
-  });
-  const journeyToggle = main.querySelector('[data-list-journey-toggle]');
-  if (journeyToggle) journeyToggle.addEventListener('click', function() {
-    rememberStaffJourneyExpanded(state.staffJourneyExpanded !== true);
-    repaintFilters();
-    const again = document.querySelector('[data-list-journey-toggle]');
-    if (again) again.focus();
   });
   bindListJourneyTips(main);
   main.querySelectorAll('[data-open-student]').forEach(function(button) {

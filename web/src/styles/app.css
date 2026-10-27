@@ -236,6 +236,7 @@ body.has-journey.journey-open { padding-right: clamp(300px, 34vw, 420px); }
 .staff-board { display: grid; grid-template-columns: minmax(240px, 320px) minmax(0, 1fr); gap: 14px; align-items: start; }
 .staff-board.solo { grid-template-columns: minmax(0, 1fr); }
 .next-steps { position: sticky; top: 52px; padding: 12px; background: white; border: 1px solid var(--line); border-top: 3px solid var(--ink); }
+.supervisor-todos { background: #e7f1f8; border: 1px solid #b7c9d8; border-top: 3px solid var(--ink); border-radius: 10px; box-shadow: 0 10px 24px rgba(0, 76, 128, .14); }
 .next-steps h2 { margin: 0; font-size: 16px; }
 .next-steps .todo-view { display: grid; gap: 8px; }
 .next-steps .todo-view .view-toggle { margin-left: 0; display: flex; width: 100%; }
@@ -294,6 +295,34 @@ body.has-journey.journey-open { padding-right: clamp(300px, 34vw, 420px); }
 .notes-scroll { flex: 1; overflow: auto; padding: 10px; display: grid; align-content: start; gap: 8px; }
 body.has-notes { padding-left: 36px; transition: padding-left .2s ease; }
 body.has-notes.notes-open { padding-left: clamp(300px, 32vw, 400px); }
+.side-drawers { position: fixed; top: 0; right: 0; z-index: 25; display: flex; flex-direction: row; align-items: stretch; height: 100vh; }
+.side-drawers .journey-panel,
+.side-drawers .notes-panel { position: relative; top: auto; right: auto; left: auto; z-index: auto; flex: none; height: 100%; min-width: 0; min-height: 0; }
+.side-drawers .journey-panel.open,
+.side-drawers .notes-panel.open { z-index: auto; }
+.side-drawers .journey-panel.open .journey-drawer,
+.side-drawers .notes-panel.open .notes-drawer { width: 100%; }
+.side-drawers .journey-peek,
+.side-drawers .notes-peek { top: 0; right: 0; bottom: 0; left: 0; display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; padding: 12px 0; letter-spacing: .08em; }
+.side-drawers .journey-peek:focus-visible,
+.side-drawers .notes-peek:focus-visible { outline: 2px solid var(--gold); outline-offset: -4px; }
+body.student-drawers:not(.journey-open):not(.notes-open) .side-drawers { flex-direction: column; width: 36px; background: var(--ink); box-shadow: -8px 0 24px rgba(0, 30, 50, .12); }
+body.student-drawers:not(.journey-open):not(.notes-open) .side-drawers .journey-panel,
+body.student-drawers:not(.journey-open):not(.notes-open) .side-drawers .notes-panel { width: 36px; height: 50%; flex: 1 1 0; background: transparent; border: 0; box-shadow: none; }
+body.student-drawers:not(.journey-open):not(.notes-open) .side-drawers .notes-panel { box-shadow: inset 0 1px 0 rgba(255, 255, 255, .35); }
+body.student-drawers.journey-open:not(.notes-open) .side-drawers { width: calc(36px + clamp(300px, 34vw, 420px)); }
+body.student-drawers.notes-open:not(.journey-open) .side-drawers { width: calc(36px + clamp(300px, 32vw, 400px)); }
+body.student-drawers.journey-open.notes-open .side-drawers { width: calc(clamp(300px, 34vw, 420px) + clamp(300px, 32vw, 400px)); }
+body.student-drawers.notes-open .notes-panel.open { border-right: 0; border-left: 1px solid var(--line); box-shadow: -8px 0 24px rgba(0, 30, 50, .12); }
+body.student-drawers.journey-open.notes-open .notes-panel.open,
+body.student-drawers.notes-open:not(.journey-open) .notes-panel.open { box-shadow: none; }
+body.student-drawers.notes-open:not(.journey-open) .journey-panel { box-shadow: -8px 0 24px rgba(0, 30, 50, .12); }
+body.student-drawers.has-notes,
+body.student-drawers.has-notes.notes-open { padding-left: 0; }
+body.student-drawers.has-journey { padding-right: 36px; }
+body.student-drawers.journey-open:not(.notes-open) { padding-right: calc(36px + clamp(300px, 34vw, 420px)); }
+body.student-drawers.notes-open:not(.journey-open) { padding-right: calc(36px + clamp(300px, 32vw, 400px)); }
+body.student-drawers.journey-open.notes-open { padding-right: calc(clamp(300px, 34vw, 420px) + clamp(300px, 32vw, 400px)); }
 .add-todo-form.stack { flex-direction: column; align-items: stretch; }
 .template-row { display: flex; justify-content: space-between; gap: 8px; align-items: start; }
 .todo-edit { display: grid; gap: 6px; margin-top: 8px; }
@@ -454,6 +483,17 @@ main.plan-wide { max-width: none; padding-inline: clamp(12px, 2vw, 28px); }
   .notes-panel.open { z-index: 41; width: min(100vw - 12px, 420px); }
   .notes-panel.open .notes-drawer { width: min(100vw - 12px, 420px); }
   body.has-notes.notes-open { padding-left: 0; }
+  body.student-drawers.journey-open,
+  body.student-drawers.notes-open,
+  body.student-drawers.journey-open.notes-open { padding-right: 0; padding-left: 0; }
+  body.student-drawers .side-drawers .journey-panel.open,
+  body.student-drawers .side-drawers .notes-panel.open { width: min(44vw, 420px); }
+  body.student-drawers.journey-open:not(.notes-open) .side-drawers,
+  body.student-drawers.notes-open:not(.journey-open) .side-drawers { width: calc(36px + min(100vw - 48px, 420px)); }
+  body.student-drawers.journey-open:not(.notes-open) .side-drawers .journey-panel.open,
+  body.student-drawers.notes-open:not(.journey-open) .side-drawers .notes-panel.open { width: min(100vw - 48px, 420px); }
+  body.student-drawers.journey-open.notes-open .side-drawers { width: min(100vw, calc(min(44vw, 420px) + min(44vw, 420px))); }
+  .side-drawers:has(.open) { z-index: 40; }
   .staff-board { grid-template-columns: 1fr; }
   .next-steps { position: static; }
 }
@@ -622,6 +662,8 @@ main.plan-wide { max-width: none; padding-inline: clamp(12px, 2vw, 28px); }
 .view-toggle button + button { border-left: 1px solid var(--ink); }
 .view-toggle button[aria-pressed="true"] { background: var(--ink); color: white; }
 .view-toggle button:focus-visible { outline: 2px solid var(--gold); outline-offset: -2px; }
+.staff-view-mode { flex: none; }
+.staff-view-mode button { white-space: nowrap; }
 main.staff-list { max-width: 1480px; }
 .student-list th, .student-list td { max-width: none; overflow-wrap: normal; vertical-align: middle; }
 .student-list th { background: #f8fafb; }
@@ -632,8 +674,6 @@ main.staff-list { max-width: 1480px; }
 .student-list button.name { border: 0; padding: 0; background: none; color: var(--ink); font-weight: 700; font-size: 15px; text-align: left; }
 .student-list button.name:hover, .student-list button.name:focus-visible { text-decoration: underline; }
 .list-student-meta, .list-latest { margin-top: 3px; font-size: 12px; }
-.journey-col-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.list-journey-toggle { margin: -2px 0; letter-spacing: 0; text-transform: none; white-space: nowrap; }
 .list-journey.is-expanded { min-width: 440px; }
 .list-journey .compact-path { overflow: visible; }
 .list-journey .compact-phase-body { display: grid; justify-items: center; gap: 6px; width: 100%; padding: 0 6px; }
