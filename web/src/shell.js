@@ -10,7 +10,7 @@ import { closeOpenMemberEditor, hideListJourneyTip } from './shared/sessionChrom
 import { actingAsOptions } from './shared/staffContext.js';
 import { state } from './shared/state.js';
 import { staffStudentDrawersHtml } from './shared/studentDrawers.js';
-import { applyLocation, installHistory, requestPush, sectionTabs, syncHistory } from './router.js';
+import { applyLocation, confirmProvisioningLeave, installHistory, requestPush, sectionTabs, syncHistory } from './router.js';
 
 export let booted = false;
 
@@ -202,12 +202,13 @@ export function renderShell() {
   bindHeaderContext();
   const signOutButton = document.getElementById('sign-out');
   if (signOutButton) signOutButton.addEventListener('click', function() {
+    if (!confirmProvisioningLeave()) return;
     const done = window.eeSignOut ? window.eeSignOut() : Promise.resolve();
     done.then(function() { window.location.reload(); });
   });
   document.querySelectorAll('[data-view]').forEach(function(button) {
     button.addEventListener('click', function() {
-      requestPush();
+      if (!requestPush()) return;
       state.section = button.dataset.view;
       state.view = state.section;
       state.emailDesk = false;
@@ -270,7 +271,12 @@ function bindHeaderContext() {
   if (cohort) cohort.addEventListener('change', function(event) {
     const next = event.target.value;
     if (!next || next === state.cohortId) return;
+    if (!confirmProvisioningLeave()) {
+      event.target.value = state.cohortId;
+      return;
+    }
     state.cohortId = next;
+    state.memberProvisionFilter = 'all';
     state.staffSupervisor = '';
     state.staffSelected = [];
     state.staffHome = null;
@@ -281,6 +287,10 @@ function bindHeaderContext() {
   if (acting) acting.addEventListener('change', function(event) {
     const next = event.target.value;
     if (!next || next === state.actingAs) return;
+    if (!confirmProvisioningLeave()) {
+      event.target.value = state.actingAs;
+      return;
+    }
     state.actingAs = next;
     state.staffSelected = [];
     state.staffHome = null;

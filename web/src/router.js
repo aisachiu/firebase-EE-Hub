@@ -158,8 +158,53 @@ export function applyLocation() {
   applyRoute(matchPath(window.location.pathname), state);
 }
 
+export const PROVISIONING_LEAVE_WARNING = 'Google Workspace provisioning is currently in progress. Leaving this page will stop the process. Are you sure you want to leave?';
+
+let beforeUnloadInstalled = false;
+
+export function provisioningBeforeUnload(event) {
+  if (!state.isProvisioning) return;
+  if (event) {
+    event.preventDefault();
+    event.returnValue = PROVISIONING_LEAVE_WARNING;
+  }
+  return PROVISIONING_LEAVE_WARNING;
+}
+
+export function installProvisioningLeaveGuard() {
+  if (beforeUnloadInstalled) return;
+  const host = globalThis.window;
+  if (!host || typeof host.addEventListener !== 'function') return;
+  beforeUnloadInstalled = true;
+  host.addEventListener('beforeunload', provisioningBeforeUnload);
+}
+
+function dismissProvisioningModal() {
+  const doc = globalThis.document;
+  if (!doc || typeof doc.getElementById !== 'function') return;
+  const modal = doc.getElementById('provision-modal');
+  if (!modal) return;
+  modal.hidden = true;
+  modal.innerHTML = '';
+  modal.onclick = null;
+}
+
+export function confirmProvisioningLeave() {
+  if (!state.isProvisioning) return true;
+  const ask = globalThis.confirm;
+  if (typeof ask !== 'function') return true;
+  if (!ask(PROVISIONING_LEAVE_WARNING)) return false;
+  state.provisionRun += 1;
+  state.isProvisioning = false;
+  state.driveBusy = false;
+  dismissProvisioningModal();
+  return true;
+}
+
 export function requestPush() {
+  if (!confirmProvisioningLeave()) return false;
   historyMode = 'push';
+  return true;
 }
 
 export function syncHistory() {
@@ -180,8 +225,14 @@ export function syncHistory() {
 export function installHistory(onNavigate) {
   if (historyInstalled) return;
   historyInstalled = true;
+  installProvisioningLeaveGuard();
   window.addEventListener('popstate', function() {
     if (!state.user) return;
+    if (!confirmProvisioningLeave()) {
+      const path = pathFromState(state);
+      window.history.pushState({ eeHub: path }, '', path + window.location.search + window.location.hash);
+      return;
+    }
     historyMode = 'pop';
     applyLocation();
     onNavigate();

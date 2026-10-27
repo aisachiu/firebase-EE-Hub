@@ -282,7 +282,7 @@ export function renderUnreadNotices(tickets) {
 export function bindUnreadNotices(main, staff) {
   main.querySelectorAll('[data-open-unread]').forEach(function(button) {
     button.addEventListener('click', function() {
-      requestPush();
+      if (!requestPush()) return;
       state.focusTicket = button.dataset.openUnread;
       state.staffStudent = null;
       state.staffStudentHome = null;

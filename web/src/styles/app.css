@@ -86,6 +86,13 @@ tr:last-child td { border-bottom: 0; }
 .drive-results { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 6px; }
 .drive-results li { padding: 8px 10px; background: white; border: 1px solid var(--line); }
 .drive-results a { color: var(--green); font-weight: 700; }
+.workspace-links { display: inline-flex; align-items: center; gap: 6px; }
+a.icon-button { text-decoration: none; color: var(--green); }
+a.icon-button svg { display: block; }
+.provision-bar { height: 8px; margin: 8px 0 12px; background: var(--line); }
+.provision-bar span { display: block; height: 100%; background: var(--green); }
+.provision-log { max-height: 280px; overflow: auto; }
+.provision-failed { border-color: var(--coral); }
 .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .field { min-width: 0; display: grid; gap: 5px; }
 .field label { color: var(--muted); font-size: 12px; font-weight: 700; }

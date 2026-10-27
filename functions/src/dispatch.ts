@@ -14,6 +14,7 @@ import {
   setActionItemStatus,
 } from './actions';
 import {
+  clearCohortWorkspaceLinks,
   createStudentUsersFromCohort,
   deleteAdminRecord,
   deleteCohortMember,
@@ -122,6 +123,7 @@ export async function dispatch(app: App, method: string, args: unknown[]): Promi
     case 'deleteCohortMember': return deleteCohortMember(app, args[0], args[1]);
     case 'importCohortMembers': return importCohortMembers(app, args[0], args[1]);
     case 'createStudentUsersFromCohort': return createStudentUsersFromCohort(app, args[0], args[1]);
+    case 'clearCohortWorkspaceLinks': return clearCohortWorkspaceLinks(app, args[0], args[1]);
     case 'assignMilestonesToStudents': return assignMilestonesToStudents(app, args[0], args[1], args[2]);
     case 'saveStudentAnchorAndSync': return saveStudentAnchorAndSync(app, args[0], args[1], args[2]);
     case 'setActionItemStatus': return setActionItemStatus(app, args[0], args[1], args[2], args[3], args[4]);
