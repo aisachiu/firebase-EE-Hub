@@ -4,7 +4,7 @@ import { openFormShell } from '../shared/forms.js';
 import { escapeHtml } from '../shared/html.js';
 import { state } from '../shared/state.js';
 import { openStudentForm } from './studentForm.js';
-import { milestonePhaseId, milestoneTitleText, openStudentSection } from './home.js';
+import { milestonePhaseId, milestoneTitleText, setJourneyOpen } from './home.js';
 import { paintStudentJourney, repaintStudentPage } from './journey.js';
 import { commonMilestoneChoices } from './milestoneChoices.js';
 
@@ -15,9 +15,8 @@ export function bindFormButtons(main) {
   main.querySelectorAll('[data-view-response]').forEach(function(button) {
     button.addEventListener('click', function() { viewStudentForm(button.dataset.viewResponse); });
   });
-  main.querySelectorAll('[data-go-journey]').forEach(function(journey) {
-    journey.addEventListener('click', function() { openStudentSection('journey'); });
-  });
+  const journey = main.querySelector('[data-go-journey]');
+  if (journey) journey.addEventListener('click', function() { setJourneyOpen(true); });
 }
 
 export function viewStudentForm(milestoneId) {

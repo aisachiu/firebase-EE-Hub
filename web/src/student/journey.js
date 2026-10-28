@@ -8,7 +8,6 @@ import {
   milestonePhaseId,
   milestoneTitleText,
   nextIncomplete,
-  openStudentSection,
   paintStudentPage,
   setJourneyOpen,
   systemItemFor,
@@ -96,7 +95,7 @@ export function renderJourneyHero(phases) {
     const marks = phase.milestones.length ? phase.milestones.map(function(milestone) {
       const status = milestone.done ? 'Done' : (milestone.here ? 'Current step' : 'Not done yet');
       const when = milestone.due ? shortDate(milestone.due) : '';
-      const label = milestone.title + (when ? ', ' + when : '') + ', ' + status + '. Show this phase on the journey.';
+      const label = milestone.title + (when ? ', ' + when : '') + ', ' + status + '. Open this phase in the journey panel.';
       return `<li><button type="button" class="ms-hit" data-open-phase="${escapeHtml(phase.id)}" aria-label="${escapeHtml(label)}"><span class="ms-date">${escapeHtml(journeyDayLabel(milestone.due))}</span><span class="ms-mark-wrap">${milestoneMark(milestone)}</span><span class="ms-label">${escapeHtml(milestone.title)}</span></button></li>`;
     }).join('') : '<li class="muted">No milestones</li>';
     const card = phaseCardAttrs(phase);
@@ -108,7 +107,7 @@ export function renderJourneyHero(phases) {
       const stateClass = milestone.done ? 'done' : (milestone.here ? 'here' : '');
       return `<i class="cmark ${stateClass}" title="${escapeHtml(milestone.title + (milestone.done ? ' · Done' : (milestone.here ? ' · Current' : '')))}"></i>`;
     }).join('');
-    const summary = phase.title + ', ' + phase.doneCount + ' of ' + phase.milestones.length + ' done. Show this phase on the journey.';
+    const summary = phase.title + ', ' + phase.doneCount + ' of ' + phase.milestones.length + ' done. Open this phase in the journey panel.';
     return `<li class="compact-phase${phase.complete ? ' done' : ''}${phase.here ? ' here' : ''}"><button type="button" data-open-phase="${escapeHtml(phase.id)}" aria-label="${escapeHtml(summary)}"><span class="compact-marks">${dots}</span><span class="compact-label">${escapeHtml(phase.title)}</span></button></li>`;
   }).join('')}</ol>` : '';
   return `<section class="journey-hero" aria-label="Journey overview"><div class="journey-hero-bar"><h2>Journey</h2><button type="button" class="journey-hero-toggle" data-journey-hero-toggle aria-expanded="true">Collapse</button></div><div class="journey-hero-full" data-journey-full>${full}</div><div class="journey-hero-compact" data-journey-compact hidden>${compact}</div></section>`;
@@ -137,26 +136,16 @@ export function bindJourneyHero(main) {
     button.addEventListener('click', function() {
       const phaseId = button.dataset.openPhase;
       state.journeyFilters.phaseId = state.journeyFilters.phaseId === phaseId ? 'all' : phaseId;
-      const home = activeJourneyRecord();
-      const moduleHost = document.getElementById('journey-module');
-      if (moduleHost && home) {
-        paintStudentJourney(home, moduleHost);
-        return;
-      }
-      if (state.user && state.user.role === 'student') {
-        openStudentSection('journey');
-        return;
-      }
       setJourneyOpen(true);
+      const home = activeJourneyRecord();
       if (home && document.getElementById('journey-body')) paintStudentJourney(home);
     });
   });
 }
 
-export function paintStudentJourney(home, host) {
-  const main = host || document.getElementById('journey-body') || document.getElementById('journey-module');
+export function paintStudentJourney(home) {
+  const main = document.getElementById('journey-body');
   if (!main) return;
-  const embedded = main.id === 'journey-module';
   const phases = home.phases || [];
   const items = home.actionItems || [];
   const templates = home.templates || [];
@@ -170,11 +159,8 @@ export function paintStudentJourney(home, host) {
   const zoom = state.journeyFilters.phaseId;
   const visiblePhases = zoom === 'all' ? phases : phases.filter(function(phase) { return phase.phaseId === zoom; });
   const percent = total ? Math.round((doneCount / total) * 100) : 0;
-  const heading = embedded
-    ? '<h2>Milestones</h2>'
-    : `<h1>${home.staffView ? escapeHtml(home.displayName) : 'Your journey'}</h1>`;
   main.innerHTML = `<section class="journey">
-    <div class="journey-head"><div><p class="eyebrow">Extended Essay</p>${heading}</div><p class="journey-score"><strong>${doneCount}</strong> of ${total} done</p></div>
+    <div class="journey-head"><div><p class="eyebrow">Extended Essay</p><h1>${home.staffView ? escapeHtml(home.displayName) : 'Your journey'}</h1></div><p class="journey-score"><strong>${doneCount}</strong> of ${total} done</p></div>
     <div class="journey-bar" role="img" aria-label="${doneCount} of ${total} milestones done"><span style="width:${percent}%"></span></div>
     <ol class="journey-path">${phases.map(function(phase) {
       const phaseTemplates = templates.filter(function(template) { return milestonePhaseId(template, systemItemFor(home, template.milestoneId)) === phase.phaseId; });
@@ -344,21 +330,18 @@ export function milestoneProgressLabel(item, template) {
 }
 
 export function bindJourney(main, home, currentPhaseId) {
-  function paintHere(record) {
-    paintStudentJourney(record, main);
-  }
   main.querySelectorAll('[data-zoom]').forEach(function(button) {
     button.addEventListener('click', function() {
       const next = button.dataset.zoom;
       state.journeyFilters.phaseId = state.journeyFilters.phaseId === next && next !== 'all' ? 'all' : next;
-      paintHere(home);
+      paintStudentJourney(home);
     });
   });
   main.querySelectorAll('[data-layer]').forEach(function(button) {
     button.addEventListener('click', function() {
       if (button.dataset.layer === 'milestones') state.journeyFilters.showSystem = !state.journeyFilters.showSystem;
       else state.journeyFilters.showStudent = !state.journeyFilters.showStudent;
-      paintHere(home);
+      paintStudentJourney(home);
     });
   });
   main.querySelectorAll('[data-milestone-check]').forEach(function(box) {
@@ -379,7 +362,7 @@ export function bindJourney(main, home, currentPhaseId) {
         const previous = item.Status;
         item.Status = nextStatus;
         state.journeySync[syncKey] = 'pending';
-        paintHere(record);
+        paintStudentJourney(record);
         const studentEmail = home.staffView ? home.email : '';
         const viewAs = home.staffView ? state.actingAs : '';
         runMutation('setActionItemStatus', [taskId, nextStatus, studentEmail, home.cohort || '', viewAs], { key: 'action-item:' + taskId }).then(function() {
@@ -390,7 +373,7 @@ export function bindJourney(main, home, currentPhaseId) {
         }).catch(function(error) {
           delete state.journeySync[syncKey];
           item.Status = previous;
-          paintHere(activeJourneyRecord() || home);
+          paintStudentJourney(activeJourneyRecord() || home);
           showError(error);
         });
         return;
@@ -408,7 +391,7 @@ export function bindJourney(main, home, currentPhaseId) {
       }).then(function(fresh) {
         delete state.journeySync[syncKey];
         state.staffStudentHome = fresh;
-        paintHere(fresh);
+        paintStudentJourney(fresh);
         if (state.section === 'students') repaintStudentPage(fresh);
         showSuccess(nextStatus === 'Completed' ? 'Marked done.' : 'Marked not done.');
       }).catch(function(error) {
@@ -439,7 +422,7 @@ export function bindJourney(main, home, currentPhaseId) {
       }).then(function(fresh) {
         delete state.journeySync[syncKey];
         state.staffStudentHome = fresh;
-        paintHere(fresh);
+        paintStudentJourney(fresh);
         flashJourneyRows(taskId, 'confirmed');
         if (state.section === 'students') repaintStudentPage(fresh);
         showSuccess(action === 'return' ? 'Returned to the student.' : 'Milestone updated.');
@@ -473,20 +456,20 @@ export function bindJourney(main, home, currentPhaseId) {
       state.journeyFilters.showStudent = true;
       state.journeySync[tempId] = 'pending';
       input.value = '';
-      paintHere(record);
+      paintStudentJourney(record);
       const call = addingAsStaff
         ? runMutation('addStaffStudentTodo', [title, phaseId, home.email, home.cohort || '', state.actingAs], { key: 'student-todo:new' })
         : runMutation('addStudentTodo', [title, phaseId], { key: 'student-todo:new' });
       call.then(function(result) {
         created.TaskId = result.TaskId;
         delete state.journeySync[tempId];
-        paintHere(activeJourneyRecord() || home);
+        paintStudentJourney(activeJourneyRecord() || home);
         flashJourneyRows(result.TaskId, 'confirmed');
         showSuccess('To-do added.');
       }).catch(function(error) {
         delete state.journeySync[tempId];
         record.actionItems = (record.actionItems || []).filter(function(item) { return item !== created; });
-        paintHere(activeJourneyRecord() || home);
+        paintStudentJourney(activeJourneyRecord() || home);
         showError(error);
       });
     });
@@ -494,11 +477,11 @@ export function bindJourney(main, home, currentPhaseId) {
   main.querySelectorAll('[data-edit-todo]').forEach(function(button) {
     button.addEventListener('click', function() {
       state.editingTodo = button.dataset.editTodo;
-      paintHere(home);
+      paintStudentJourney(home);
     });
   });
   const closeTodo = main.querySelector('[data-close-todo]');
-  if (closeTodo) closeTodo.addEventListener('click', function() { state.editingTodo = ''; paintHere(home); });
+  if (closeTodo) closeTodo.addEventListener('click', function() { state.editingTodo = ''; paintStudentJourney(home); });
   main.querySelectorAll('[data-save-todo]').forEach(function(button) {
     button.addEventListener('click', function() {
       const card = button.closest('[data-task-id]');
@@ -516,7 +499,7 @@ export function bindJourney(main, home, currentPhaseId) {
       }
       state.editingTodo = '';
       state.journeySync[taskId] = 'pending';
-      paintHere(record);
+      paintStudentJourney(record);
       runMutation('saveStudentTodo', [taskId, title, description, date], { key: 'action-item:' + taskId }).then(function() {
         delete state.journeySync[taskId];
         flashJourneyRows(taskId, 'confirmed');
@@ -529,7 +512,7 @@ export function bindJourney(main, home, currentPhaseId) {
           item.DueDate = previous.DueDate;
         }
         state.editingTodo = taskId;
-        paintHere(activeJourneyRecord() || home);
+        paintStudentJourney(activeJourneyRecord() || home);
         showError(error);
       });
     });
@@ -553,7 +536,7 @@ export function repaintStudentPage(home) {
 }
 
 export function flashJourneyRows(taskId, status) {
-  Array.prototype.forEach.call(document.querySelectorAll('#journey-body [data-task-id], #journey-module [data-task-id]'), function(node) {
+  Array.prototype.forEach.call(document.querySelectorAll('#journey-body [data-task-id]'), function(node) {
     if (node.dataset.taskId === taskId) markSync(node, status);
   });
 }
