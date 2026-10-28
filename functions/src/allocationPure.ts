@@ -109,6 +109,8 @@ export interface DeskStudent {
   dynamicData: Record<string, string | number | boolean>;
   pendingClear: boolean;
   token: DeskToken | null;
+  /** Subject names to show as tags, in choice order. Colour comes from the subjects collection. */
+  requestedSubjects: { name: string; colour: string }[];
   choices: { primary: string; secondary: string; interdisciplinary: boolean };
   flags: {
     drafted: boolean;
@@ -483,6 +485,40 @@ export function uniqueSubjects(value: unknown): string[] {
   return subjects;
 }
 
+/**
+ * Subjects for the token-load table and for tokens already stored on a cohort.
+ * A real list (an array, or a JSON array string) keeps each entry, including a name that contains a comma.
+ * A plain string is one stored value, so "Mathematics, Analysis and approaches" stays one entry.
+ * Sheet cells that are comma-separated lists are still split at ingest, before they are stored as arrays.
+ */
+export function subjectLoadNames(value: unknown): string[] {
+  const seen = new Set<string>();
+  const names: string[] = [];
+  subjectLoadItems(value).forEach((item) => {
+    const key = item.toLowerCase();
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    names.push(item);
+  });
+  return names;
+}
+
+function subjectLoadItems(value: unknown): string[] {
+  if (Array.isArray(value)) return value.flatMap((item) => subjectLoadItems(item));
+  if (value === null || value === undefined || value === '' || typeof value === 'boolean' || typeof value === 'number') return [];
+  const raw = text(value);
+  if (!raw) return [];
+  if (raw.startsWith('[')) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed.flatMap((item) => subjectLoadItems(item));
+    } catch {
+      // One stored label that happens to start with a bracket.
+    }
+  }
+  return [raw];
+}
+
 /** Active subject names, one each, in alphabetical order. Blank Active counts as active. */
 export function activeSubjectNamesFrom(subjects: Doc[]): string[] {
   const names: string[] = [];
@@ -553,7 +589,7 @@ export function subjectTokenLoad(tokens: { status: string; eligibleSubjects?: un
   let overlaps = false;
   const groups = new Map<string, { subject: string; remaining: number }>();
   tokens.forEach((token) => {
-    const subjects = uniqueSubjects(token.eligibleSubjects);
+    const subjects = subjectLoadNames(token.eligibleSubjects);
     const open = token.status === 'available';
     if (!subjects.length) {
       if (open) untied += 1;
@@ -643,7 +679,7 @@ export function tokenFromDoc(doc: Doc): TokenRecord | null {
     id,
     cohortId: text(doc.cohortId),
     staffId,
-    eligibleSubjects: splitList(doc.eligibleSubjects),
+    eligibleSubjects: subjectLoadNames(doc.eligibleSubjects),
     allocatedTo: status === 'available' ? '' : allocatedTo,
     assignedSubject: status === 'available' ? '' : text(doc.assignedSubject),
     status,
@@ -875,6 +911,217 @@ export function studentLabel(member: Doc): string {
   return text(member['Display Name']) || normalizeEmail(member.StudentId);
 }
 
+/** Same palette phases use when a record has no hex colour of its own. */
+export const SUBJECT_COLOURS = ['#004c80', '#0e8a6a', '#ff5a36', '#6b4c9a', '#b8860b', '#0e7c86', '#c43d6e', '#3e6b4f'];
+
+const SUBJECT_COLOUR_FIELDS = ['Colour', 'Color', 'colour', 'color', 'subjectColour', 'subjectColor', 'Subject Colour', 'Subject Color'];
+
+export interface SubjectSwatch {
+  name: string;
+  id: string;
+  colour: string;
+}
+
+/** Same hex rule as phase colours: a #rrggbb value, lowercased, or nothing. */
+export function subjectHex(value: unknown): string {
+  const match = /^#([0-9a-fA-F]{6})$/.exec(text(value).trim());
+  return match ? `#${match[1].toLowerCase()}` : '';
+}
+
+export function subjectSwatches(subjects: Doc[]): SubjectSwatch[] {
+  const rows = subjects.map((subject) => {
+    const stored = SUBJECT_COLOUR_FIELDS.map((key) => subjectHex(subject[key])).find(Boolean) || '';
+    return {
+      name: text(subject.Name),
+      id: text(subject['Subject ID']),
+      colour: stored,
+      active: subject.Active === '' || subject.Active === undefined || toBoolean(subject.Active),
+    };
+  }).filter((row) => row.name);
+  rows.sort((left, right) => {
+    if (left.active !== right.active) return left.active ? -1 : 1;
+    return left.name.localeCompare(right.name, 'en', { sensitivity: 'base' });
+  });
+  return rows.map((row, index) => ({
+    name: row.name,
+    id: row.id,
+    colour: row.colour || SUBJECT_COLOURS[index % SUBJECT_COLOURS.length],
+  }));
+}
+
+export function fallbackSubjectColour(name: string): string {
+  let hash = 0;
+  const source = name.toLowerCase();
+  for (let index = 0; index < source.length; index += 1) {
+    hash = ((hash << 5) - hash + source.charCodeAt(index)) | 0;
+  }
+  return SUBJECT_COLOURS[Math.abs(hash) % SUBJECT_COLOURS.length];
+}
+
+export function interdisciplinarySignal(value: unknown): boolean {
+  if (value === true || value === 1) return true;
+  if (value === false || value === 0 || value === null || value === undefined || value === '') return false;
+  const raw = text(value).toLowerCase().replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!raw || ['0', 'false', 'no', 'n', 'not', 'none', 'na', 'n a'].includes(raw)) return false;
+  if (['1', 'true', 'yes', 'y', 'id', 'interdisciplinary', 'is interdisciplinary', 'world studies'].includes(raw)) return true;
+  if (['deciding', 'maybe', 'considering', 'possible', 'undecided', 'pending', 'unsure', 'tbc', 'to be confirmed', 'not sure'].includes(raw)) return true;
+  if (/\bdeciding\b/.test(raw)) return true;
+  if (/interdisciplin/.test(raw) && !/^(not|no)\b/.test(raw)) return true;
+  return false;
+}
+
+/** True when the workspace or roster says the essay is interdisciplinary, or the student is still deciding. */
+export function interdisciplinaryMarked(choices: unknown, settings?: { interdisciplinaryKey?: string }, extra?: Doc): boolean {
+  const values: unknown[] = [];
+  collectInterdisciplinary(asChoiceRecord(choices), text(settings?.interdisciplinaryKey), values);
+  collectInterdisciplinary(extra, text(settings?.interdisciplinaryKey), values);
+  return values.some((value) => interdisciplinarySignal(value));
+}
+
+export function requestedSubjectNames(choices: unknown, settings?: { primaryChoiceKey?: string; secondaryChoiceKey?: string; interdisciplinaryKey?: string }): string[] {
+  const ordered: string[] = [];
+  const pushAll = (labels: string[]) => {
+    labels.forEach((label) => {
+      const name = text(label);
+      if (!name || name === '[object Object]') return;
+      if (ordered.some((item) => item.toLowerCase() === name.toLowerCase())) return;
+      ordered.push(name);
+    });
+  };
+  const record = asChoiceRecord(choices);
+  if (!record) {
+    pushAll(labelsFromChoiceValue(choices, 0));
+    return ordered;
+  }
+  const primary = text(settings?.primaryChoiceKey);
+  const secondary = text(settings?.secondaryChoiceKey);
+  const skip = interdisciplinarySkip(settings?.interdisciplinaryKey);
+  const used = new Set<string>();
+  const take = (key: string) => {
+    if (!key || used.has(key) || !Object.prototype.hasOwnProperty.call(record, key)) return;
+    used.add(key);
+    pushAll(labelsFromChoiceValue(record[key], 0));
+  };
+  take(primary);
+  take(secondary);
+  Object.keys(record).sort((left, right) => left.localeCompare(right, 'en', { sensitivity: 'base' })).forEach((key) => {
+    if (used.has(key) || skip.has(key.toLowerCase())) return;
+    used.add(key);
+    pushAll(labelsFromChoiceValue(record[key], 0));
+  });
+  return ordered;
+}
+
+export function resolveRequestedSubjects(
+  choices: unknown,
+  settings: { primaryChoiceKey?: string; secondaryChoiceKey?: string; interdisciplinaryKey?: string } | undefined,
+  subjects: Doc[] | undefined,
+): { name: string; colour: string }[] {
+  const swatches = subjectSwatches(subjects || []);
+  const byName = new Map(swatches.map((item) => [item.name.toLowerCase(), item]));
+  const byId = new Map(swatches.filter((item) => item.id).map((item) => [item.id.toLowerCase(), item]));
+  const seen = new Set<string>();
+  const out: { name: string; colour: string }[] = [];
+  requestedSubjectNames(choices, settings).forEach((label) => {
+    const known = byName.get(label.toLowerCase()) || byId.get(label.toLowerCase());
+    const name = known ? known.name : label;
+    const key = name.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push({ name, colour: known ? known.colour : fallbackSubjectColour(name) });
+  });
+  return out;
+}
+
+function interdisciplinarySkip(configured: unknown): Set<string> {
+  const skip = new Set(['interdisciplinary', 'isinterdisciplinary', 'is interdisciplinary', 'world studies', 'worldstudies', 'rationale', 'notes', 'note', 'comment', 'comments', 'explanation']);
+  const key = text(configured).toLowerCase();
+  if (key) skip.add(key);
+  return skip;
+}
+
+function collectInterdisciplinary(record: Doc | null | undefined, configured: string, values: unknown[]): void {
+  if (!record) return;
+  Object.keys(record).forEach((key) => {
+    if (!isInterdisciplinaryKey(key, configured)) return;
+    values.push(record[key]);
+  });
+}
+
+function isInterdisciplinaryKey(key: string, configured: string): boolean {
+  if (configured && key === configured) return true;
+  const norm = key.toLowerCase().replace(/[^a-z]+/g, '');
+  return norm === 'interdisciplinary' || norm === 'isinterdisciplinary' || norm === 'worldstudies';
+}
+
+function asChoiceRecord(value: unknown): Record<string, unknown> | null {
+  let current = value;
+  for (let depth = 0; depth < 3; depth += 1) {
+    if (typeof current !== 'string') break;
+    const raw = current.trim();
+    if (!raw || !/^[[{]/.test(raw)) return null;
+    try {
+      current = JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  }
+  if (!current || typeof current !== 'object' || Array.isArray(current)) return null;
+  return current as Record<string, unknown>;
+}
+
+function labelsFromChoiceValue(value: unknown, depth: number): string[] {
+  if (depth > 5 || value === null || value === undefined || value === '') return [];
+  if (typeof value === 'boolean' || typeof value === 'number') return [];
+  if (Array.isArray(value)) return value.flatMap((item) => labelsFromChoiceValue(item, depth + 1));
+  if (typeof value === 'object') return labelsFromChoiceRecord(value as Record<string, unknown>, depth);
+  const raw = text(value);
+  if (!raw || raw === '[object Object]') return [];
+  if (/^[[{]/.test(raw)) {
+    try {
+      const labels = labelsFromChoiceValue(JSON.parse(raw), depth + 1);
+      if (labels.length) return labels;
+    } catch {
+      // Not JSON. Keep a short plain name below.
+    }
+  }
+  if (/^(true|false|yes|no|y|n)$/i.test(raw) || raw.length > 80) return [];
+  if (/[,;]/.test(raw) && !/[[\]{}]/.test(raw)) {
+    const parts = raw.split(/[,;]/).map((part) => part.trim()).filter(Boolean);
+    if (parts.length > 1 && parts.length <= 6 && parts.every((part) => part.length <= 40)) return parts;
+  }
+  return [raw];
+}
+
+function labelsFromChoiceRecord(record: Record<string, unknown>, depth: number): string[] {
+  const keys = Object.keys(record);
+  const choiceLike = keys.some((key) => /^choice([_:\s-]|$)/i.test(key) || /^(primary|secondary)$/i.test(key));
+  if (!choiceLike) {
+    const named = ['name', 'Name', 'subject', 'Subject', 'label', 'Label', 'title', 'Title'];
+    for (const key of named) {
+      if (record[key] === undefined || record[key] === null || record[key] === '') continue;
+      const labels = labelsFromChoiceValue(record[key], depth + 1);
+      if (labels.length) return labels;
+    }
+  }
+  const entries = Object.entries(record).filter(([key]) => text(key));
+  const flagLike = entries.length > 0 && entries.every(([, item]) => typeof item === 'boolean' || typeof item === 'number' || /^(true|false|yes|no|1|0)$/i.test(text(item)));
+  if (flagLike) {
+    return entries.filter(([, item]) => {
+      if (item === true || item === 1) return true;
+      if (typeof item === 'number') return item !== 0;
+      return /^(true|yes|1)$/i.test(text(item));
+    }).map(([key]) => text(key)).filter(Boolean);
+  }
+  const skip = new Set(['rationale', 'notes', 'note', 'comment', 'comments', 'explanation', 'id', 'subject id', 'subjectid', 'level', 'rank']);
+  const labels: string[] = [];
+  entries.forEach(([key, item]) => {
+    if (skip.has(key.toLowerCase())) return;
+    labels.push(...labelsFromChoiceValue(item, depth + 1));
+  });
+  return labels;
+}
+
 export function buildDesk(input: {
   cohortId: string;
   members: Doc[];
@@ -882,6 +1129,10 @@ export function buildDesk(input: {
   tokens: TokenRecord[];
   staff: { email: string; displayName: string }[];
   settings: AllocationSettings;
+  /** Subject records. Tag colours come from a stored hex, otherwise the shared subject palette. */
+  subjects?: Doc[];
+  /** Raw workspace choice values, before nested objects are flattened to text. */
+  choiceSources?: Map<string, unknown>;
 }): AllocationDesk {
   const names = new Map(input.staff.map((person) => [normalizeEmail(person.email), person.displayName || person.email]));
   const workspaceByStudent = new Map(input.workspaces.map((workspace) => [workspace.studentId, workspace]));
@@ -903,10 +1154,14 @@ export function buildDesk(input: {
       const held = tokensByStudent.get(studentId) || [];
       if (held.length > 1) warnings.push(`${studentId} has more than one token.`);
       const token = held.find((item) => item.status === 'draft') || held[0] || null;
+      const choiceSource = input.choiceSources && input.choiceSources.has(studentId)
+        ? input.choiceSources.get(studentId)
+        : workspace?.subjectChoices;
+      const requestedSubjects = resolveRequestedSubjects(choiceSource, input.settings, input.subjects);
       const choices = {
         primary: choiceText(workspace?.subjectChoices, input.settings.primaryChoiceKey),
         secondary: choiceText(workspace?.subjectChoices, input.settings.secondaryChoiceKey),
-        interdisciplinary: !!input.settings.interdisciplinaryKey && toBoolean(workspace?.subjectChoices[input.settings.interdisciplinaryKey]),
+        interdisciplinary: interdisciplinaryMarked(choiceSource, input.settings, { ...(workspace?.dynamicData || {}), ...member }),
       };
       const assignedSubject = token?.assignedSubject || '';
       const eligible = token?.eligibleSubjects || [];
@@ -922,6 +1177,7 @@ export function buildDesk(input: {
         subjectChoices: workspace?.subjectChoices || {},
         dynamicData: workspace?.dynamicData || {},
         pendingClear: !!workspace?.pendingClear,
+        requestedSubjects,
         token: token ? {
           id: token.id,
           staffId: token.staffId,

@@ -5,7 +5,7 @@
     "dev": "vite",
     "build": "vite build",
     "build:functions": "npm --prefix functions run build",
-    "test": "npm --prefix functions test && node --test web/src/student/milestoneChoices.test.mjs web/src/student/stage.test.mjs web/src/router.test.mjs web/src/staff/supervisorTodos.test.mjs web/src/staff/studentsLayout.test.mjs web/src/admin/sheetsRegistry.test.mjs web/src/admin/provisioningStatus.test.mjs web/src/importBoundary.test.mjs",
+    "test": "npm --prefix functions test && node --test web/src/student/milestoneChoices.test.mjs web/src/student/stage.test.mjs web/src/router.test.mjs web/src/staff/supervisorTodos.test.mjs web/src/staff/studentsLayout.test.mjs web/src/admin/sheetsRegistry.test.mjs web/src/admin/provisioningStatus.test.mjs web/src/importBoundary.test.mjs web/src/allocation/desk.test.mjs",
     "schema": "npm --prefix functions run schema",
     "seed": "npm --prefix functions run seed",
     "import-sheet": "npm --prefix functions run import-sheet --",
