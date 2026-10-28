@@ -1,18 +1,23 @@
 import { state } from './shared/state.js';
 
 const SECTION_SLUGS = {
-  'my-ee': 'home',
+  document: 'document',
+  journey: 'journey',
+  supervisor: 'supervisor',
+  doc: 'document',
+  'my-ee': 'document',
   resources: 'resources',
-  help: 'help',
+  help: 'supervisor',
   'my-students': 'students',
   messages: 'tickets',
   notes: 'notes',
 };
 
 const SECTION_TITLES = {
-  home: 'My EE',
+  document: 'Document',
+  journey: 'Journey',
+  supervisor: 'Supervisor',
   resources: 'Resources',
-  help: 'Help',
   students: 'My Students',
   tickets: 'Messages',
   notes: 'Notes',
@@ -49,7 +54,7 @@ export function sectionTabs(user, actingAs) {
   const student = !!(user && user.role === 'student');
   const permissions = (user && user.permissions) || {};
   const tabs = student
-    ? [['home', 'My EE'], ['resources', 'Resources'], ['help', 'Help']]
+    ? [['document', 'Document'], ['journey', 'Journey'], ['supervisor', 'Supervisor']]
     : [['students', 'My Students'], ['resources', 'Resources']];
   if (!student && (actingAs === 'supervisor' || actingAs === 'coordinator') && (permissions.isSupervisor || permissions.canAdmin)) {
     tabs.splice(1, 0, ['tickets', 'Messages']);
@@ -105,11 +110,18 @@ export function pathFromState(appState) {
     if (appState.allocationView === 'settings') return '/allocation/settings';
     return '/allocation';
   }
+  if (section === 'journey' && appState.studentFocus === 'research' && appState.user && appState.user.role === 'student') return '/resources';
   const slugs = Object.keys(SECTION_SLUGS);
   for (let index = 0; index < slugs.length; index += 1) {
     if (SECTION_SLUGS[slugs[index]] === section) return '/' + slugs[index];
   }
-  return appState.user && appState.user.role === 'student' ? '/my-ee' : '/my-students';
+  return appState.user && appState.user.role === 'student' ? '/journey' : '/my-students';
+}
+
+export function fallbackSection(appState) {
+  if (appState.user && appState.user.role === 'student') return 'journey';
+  const tabs = sectionTabs(appState.user, appState.actingAs);
+  return tabs.length ? tabs[0][0] : 'students';
 }
 
 export function titleForState(appState) {
@@ -136,16 +148,24 @@ function sectionAllowed(appState, section) {
 }
 
 export function applyRoute(route, appState) {
+  const student = !!(appState.user && appState.user.role === 'student');
+  if (route && route.section === 'resources' && student) {
+    appState.section = 'journey';
+    appState.view = 'journey';
+    appState.studentFocus = 'research';
+    return;
+  }
   const allowed = route && sectionAllowed(appState, route.section);
   if (!allowed) {
-    const tabs = sectionTabs(appState.user, appState.actingAs);
-    const section = tabs.length ? tabs[0][0] : (appState.user && appState.user.role === 'student' ? 'home' : 'students');
+    const section = fallbackSection(appState);
     appState.section = section;
     appState.view = section;
+    appState.studentFocus = '';
     return;
   }
   appState.section = route.section;
   appState.view = route.section;
+  appState.studentFocus = '';
   if (route.section === 'admin') {
     appState.adminEntity = route.adminEntity;
     if (route.panel === 'quotas') appState.staffPane = 'quotas';
