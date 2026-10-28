@@ -70,14 +70,19 @@ interface ExportDeps {
 export async function getAllocationDesk(app: App, cohortId: unknown): Promise<AllocationDesk & { driveReady: boolean; driveActor: string; driveError: string }> {
   await requireAdmin(app, 'GET_ALLOCATION_DESK');
   const cohort = await requireCohort(app, text(cohortId));
-  const [members, workspaceDocs, tokenDocs, configDoc, staff, drive] = await Promise.all([
+  const [members, workspaceDocs, tokenDocs, configDoc, staff, drive, subjectDocs] = await Promise.all([
     app.store.listMembers(cohort.id),
     app.store.listWorkspace(cohort.id),
     app.store.listTokens(cohort.id),
     app.store.getAllocationConfig(cohort.id),
     app.store.list(COLLECTIONS.staffUsers),
     presentDriveAccount(app),
+    app.store.list(COLLECTIONS.subjects),
   ]);
+  const choiceSources = new Map<string, unknown>();
+  workspaceDocs.forEach((doc) => {
+    choiceSources.set(normalizeEmail(doc.studentId || doc.id), doc.subjectChoices);
+  });
   const desk = buildDesk({
     cohortId: cohort.id,
     members,
@@ -85,6 +90,8 @@ export async function getAllocationDesk(app: App, cohortId: unknown): Promise<Al
     tokens: tokensFrom(tokenDocs, cohort.id),
     staff: staff.map((person) => ({ email: normalizeEmail(person.EMAIL), displayName: text(person.DisplayName) })),
     settings: settingsFromDoc(configDoc),
+    subjects: subjectDocs,
+    choiceSources,
   });
   return { ...desk, driveReady: drive.ready, driveActor: drive.actorEmail, driveError: drive.ready ? '' : drive.error };
 }

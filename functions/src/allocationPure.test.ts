@@ -29,9 +29,14 @@ import {
   parseSubjectCell,
   quotaCapacity,
   subjectTokenLoad,
+  subjectLoadNames,
   staffQuotaTokenRows,
   subjectsOverlap,
   tokenSheetRows,
+  tokenFromDoc,
+  interdisciplinarySignal,
+  requestedSubjectNames,
+  resolveRequestedSubjects,
   TokenRecord,
   WorkspaceRecord,
 } from './allocationPure';
@@ -427,6 +432,71 @@ test('the settings help example is the workspace sheet the parser accepts', () =
   assert.match(WORKSPACE_SHEET_HELP.tokenNote, /does not remove/);
   assert.ok(WORKSPACE_SHEET_HELP.choiceHeaders.includes('SubjectChoice'));
   assert.ok(WORKSPACE_SHEET_HELP.choiceColumnPrefixes.includes('Choice_'));
+});
+
+test('requested subjects unwrap JSON cells and Choice columns into catalogue names', () => {
+  const subjects = [
+    { 'Subject ID': 'psy', Name: 'Psychology', Colour: '#6B4C9A', Active: true },
+    { 'Subject ID': 'thr', Name: 'Theater', Active: true },
+  ];
+  assert.deepEqual(requestedSubjectNames({
+    choice1: '["Psychology","Theater"]',
+    interdisciplinary: true,
+  }, { primaryChoiceKey: 'choice1', interdisciplinaryKey: 'interdisciplinary' }), ['Psychology', 'Theater']);
+  assert.deepEqual(requestedSubjectNames({
+    choice2: '{"subject":"Theater"}',
+  }, { secondaryChoiceKey: 'choice2' }), ['Theater']);
+  const resolved = resolveRequestedSubjects({
+    choice1: '{"name":"psychology"}',
+    Choice_subjects: '["Psychology","Theater"]',
+  }, { primaryChoiceKey: 'choice1' }, subjects);
+  assert.equal(resolved[0].name, 'Psychology');
+  assert.equal(resolved[0].colour, '#6b4c9a');
+  assert.equal(resolved[1].name, 'Theater');
+  assert.equal(resolved[1].colour, '#0e8a6a');
+  const desk = buildDesk({
+    cohortId: '2026',
+    members: [{ StudentId: JANE, Surname: 'Doe', 'First Name': 'Jane', eeActive: true }],
+    workspaces: [{
+      studentId: JANE,
+      subjectChoices: { choice1: '[object Object]', interdisciplinary: 'deciding' },
+      dynamicData: {},
+      pendingClear: false,
+      updatedAt: '',
+    }],
+    tokens: [],
+    staff: [],
+    settings: mergeDetected(emptySettings(), ['choice1', 'interdisciplinary'], []),
+    subjects,
+    choiceSources: new Map([[JANE, { choice1: { subject: 'Psychology' }, choice2: 'Theater', interdisciplinary: 'deciding' }]]),
+  });
+  assert.deepEqual(desk.students[0].requestedSubjects.map((item) => item.name), ['Psychology', 'Theater']);
+  assert.equal(desk.students[0].choices.interdisciplinary, true);
+  assert.equal(interdisciplinarySignal('no'), false);
+  assert.equal(interdisciplinarySignal(true), true);
+});
+
+test('token load keeps a comma-joined subject string as one entry and still lists real arrays', () => {
+  assert.deepEqual(subjectLoadNames('Mathematics, Analysis and approaches'), ['Mathematics, Analysis and approaches']);
+  assert.deepEqual(subjectLoadNames(['Mathematics, Analysis and approaches', 'Biology']), ['Mathematics, Analysis and approaches', 'Biology']);
+  assert.deepEqual(subjectLoadNames('["Theatre / Film","Biology"]'), ['Theatre / Film', 'Biology']);
+  const joined = subjectTokenLoad([{ status: 'available', eligibleSubjects: 'Mathematics, Analysis and approaches' }]);
+  assert.equal(joined.overlaps, false);
+  assert.deepEqual(joined.subjects, [{ subject: 'Mathematics, Analysis and approaches', remaining: 1 }]);
+  const stored = tokenFromDoc({
+    id: 't1',
+    staffId: SMITH,
+    status: 'available',
+    eligibleSubjects: 'Mathematics, Analysis and approaches',
+  });
+  assert.deepEqual(stored?.eligibleSubjects, ['Mathematics, Analysis and approaches']);
+  const listed = tokenFromDoc({
+    id: 't2',
+    staffId: SMITH,
+    status: 'available',
+    eligibleSubjects: ['History', 'Geography'],
+  });
+  assert.deepEqual(listed?.eligibleSubjects, ['History', 'Geography']);
 });
 
 function rgb(hex: string): [number, number, number] {

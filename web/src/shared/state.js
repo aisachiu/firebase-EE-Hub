@@ -10,6 +10,7 @@ export const state = {
   allocationStatus: 'all',
   allocationLoadView: 'subject',
   allocationSupport: 'all',
+  allocationSubjectFilter: [],
   allocationSort: 'name',
   allocationSortDir: 1,
   allocationIngestKind: 'workspace',
