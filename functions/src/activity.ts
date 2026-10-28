@@ -1,4 +1,17 @@
-import { normalizeEmail, text } from './util';
+import { HubError, normalizeEmail, text } from './util';
+
+/** Ledger names used to compare Document, Journey, and Supervisor opens. */
+export const STUDENT_VIEW_EVENTS: Record<string, string> = {
+  document: 'student.view.document',
+  journey: 'student.view.journey',
+  supervisor: 'student.view.supervisor',
+};
+
+export function studentViewEventName(view: unknown): string {
+  const name = STUDENT_VIEW_EVENTS[text(view)];
+  if (!name) throw new HubError('Unknown student view.');
+  return name;
+}
 
 const ACTIVITY_FEED_LIMIT = 200;
 const ACTIVITY_TITLES: Record<string, string> = {
@@ -27,6 +40,9 @@ const ACTIVITY_TITLES: Record<string, string> = {
   CHECK_COHORT_DRIVE_FOLDERS: 'Checked student Drive folders',
   SYNC_COHORT_DRIVE_FOLDERS: 'Updated student Drive folders',
   NOTIFICATION_EMAIL: 'Email reminder',
+  'student.view.document': 'Opened Document',
+  'student.view.journey': 'Opened Journey',
+  'student.view.supervisor': 'Opened Supervisor',
 };
 
 export function activityFeed(email: string, records: Record<string, any>[], templates: Record<string, string>, tasks: Record<string, string>) {
@@ -108,13 +124,14 @@ function parseActivityPayload(value: unknown): Record<string, any> {
 function activityOutcome(phase: string, action: string) {
   if (phase === 'FAILED' || action === 'ACCESS_DENIED') return 'failed';
   if (phase === 'REQUESTED') return 'started';
-  if (action === 'LOGIN_SUCCESS' || action === 'TICKET_READ') return 'info';
+  if (action === 'LOGIN_SUCCESS' || action === 'TICKET_READ' || action.indexOf('student.view.') === 0) return 'info';
   return 'done';
 }
 
 function activityKind(action: string) {
   if (action === 'NOTIFICATION_EMAIL') return 'email';
   if (action === 'LOGIN_SUCCESS' || action === 'ACCESS_DENIED') return 'sign-in';
+  if (action.indexOf('student.view.') === 0) return 'view';
   if (action.indexOf('FORM_') === 0) return 'form';
   if (action.indexOf('TICKET_') === 0 || action === 'NOTE_CREATE') return 'question';
   if (action.indexOf('TODO') >= 0 || action === 'SET_ACTION_ITEM_DUE_DATE' || action === 'UPDATE_ACTION_ITEM_STATUS' || action === 'REPOSITION_STUDENT_TODO') return 'task';
@@ -133,6 +150,9 @@ function activitySummary(action: string, unpacked: { payload: any; reason: strin
   const payload = unpacked.payload;
   if (action === 'NOTIFICATION_EMAIL') return milestoneTitle ? `${milestoneTitle} was emailed to you` : 'An email reminder was sent to you';
   if (action === 'LOGIN_SUCCESS') return 'Opened the EE Hub';
+  if (action === 'student.view.document') return 'Opened the Document view';
+  if (action === 'student.view.journey') return 'Opened the Journey view';
+  if (action === 'student.view.supervisor') return 'Opened the Supervisor view';
   if (action === 'ACCESS_DENIED') return unpacked.reason || 'The EE Hub blocked this action';
   if (action === 'ADD_STUDENT_TODO') return 'Personal to-do';
   if (action === 'UPDATE_STUDENT_TODO' || action === 'SET_ACTION_ITEM_DUE_DATE' || action === 'REPOSITION_STUDENT_TODO') return taskTitle || 'Personal to-do';
@@ -176,6 +196,7 @@ function activityDetails(unpacked: { payload: any; reason: string }, taskTitle: 
   add('Category', payload.category);
   add('Sent to', activityRouteLabel(payload.route));
   add('Phase', payload.phaseId || payload.phase);
+  add('View', payload.event || payload.view);
   add('Cohort', payload.cohort);
   add('Fields', payload.fields);
   if (payload.version !== undefined && payload.version !== '') add('Form version', payload.version);
@@ -192,7 +213,7 @@ function activityRouteLabel(route: unknown) {
 }
 
 function activityCounts(entries: { kind: string }[]) {
-  const counts: Record<string, number> = { all: entries.length, 'sign-in': 0, form: 0, question: 0, task: 0, email: 0, other: 0 };
+  const counts: Record<string, number> = { all: entries.length, 'sign-in': 0, view: 0, form: 0, question: 0, task: 0, email: 0, other: 0 };
   entries.forEach((entry) => {
     if (!Object.prototype.hasOwnProperty.call(counts, entry.kind)) counts[entry.kind] = 0;
     counts[entry.kind] += 1;
