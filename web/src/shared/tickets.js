@@ -27,7 +27,7 @@ export function syncStudentUnread(hub) {
       return { ticketId: ticket.ticketId, title: ticket.title, category: ticket.category, lastUpdated: ticket.lastUpdated };
     });
   }
-  paintTabDot('help', hub.unreadCount, 'Help');
+  paintTabDot('supervisor', hub.unreadCount, 'Supervisor');
 }
 
 export function syncStaffUnread(hub) {

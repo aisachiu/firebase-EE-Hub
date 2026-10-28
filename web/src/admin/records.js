@@ -1,4 +1,12 @@
 import { updateDriveNamePreview } from './google.js';
+import {
+  cohortProvisionFilterControl,
+  cohortProvisionSelectionActions,
+  matchesProvisionFilter,
+  memberIdsForProvision,
+  provisioningSortValue,
+  workspaceCellHtml,
+} from './provisioning.js';
 import { refreshAdminSectionSilently, sectionLabel, singularSection } from './sections.js';
 import { bindStaffPane, renderStaffRecords, staffSectionNav } from './staff.js';
 import { callServer, runMutation } from '../shared/api.js';
@@ -12,6 +20,7 @@ import {
   bindCollapsibleHeaders,
   bindSortableHeaders,
   collapsibleHeader,
+  mergeSelection,
   sortableHeader,
   sortedRows,
   updateSelectedCount,
@@ -116,21 +125,29 @@ export function renderAdminData(data, options) {
   const staffNav = entity === 'staffUsers' ? staffSectionNav() : '';
   const tableId = 'admin:' + entity;
   const indexed = records.map(function(record, index) { return { record: record, index: index }; });
-  const sorted = sortedRows(tableId, indexed, function(item, key) {
+  const filtered = isCohortMembers
+    ? indexed.filter(function(item) { return matchesProvisionFilter(item.record, state.memberProvisionFilter); })
+    : indexed;
+  const sorted = sortedRows(tableId, filtered, function(item, key) {
+    if (key === 'workspace') return provisioningSortValue(item.record);
     const field = columns.filter(function(column) { return column.name === key; })[0];
     return field ? adminFieldSortValue(field, item.record) : '';
   });
-  const selectionHeader = isCohortMembers ? collapsibleHeader('cohort-member-selection', 'Selection and import', '<div class="toolbar"><button type="button" class="button secondary" id="open-roster-import">Import CSV / paste</button><button type="button" class="button secondary" id="create-selected-users" disabled>Add selected as users</button><label><input type="checkbox" id="select-all-members"> Select all</label><span id="selected-count" class="muted">0 selected</span></div>') : '';
+  const shownCount = isCohortMembers && state.memberProvisionFilter !== 'all'
+    ? `${filtered.length} shown · ${records.length} record${records.length === 1 ? '' : 's'}`
+    : `${records.length} record${records.length === 1 ? '' : 's'}`;
+  const selectionHeader = isCohortMembers ? collapsibleHeader('cohort-member-selection', 'Selection and import', `<div class="toolbar"><button type="button" class="button secondary" id="open-roster-import">Import CSV / paste</button><button type="button" class="button secondary" id="create-selected-users" disabled>Add selected as users</button>${cohortProvisionSelectionActions()}<label><input type="checkbox" id="select-all-members"> Select all</label><span id="selected-count" class="muted">0 selected</span></div>`) : '';
   const categoryNote = entity === 'ticketCategories' ? '<p class="lede">These names are the choices a student sees when they send a message. Who they message sends it to that student\'s supervisor or to the EE Coordinator.</p>' : '';
-  target.innerHTML = `${staffNav}${categoryNote}<div class="toolbar"><button type="button" class="button" id="new-record">Add ${escapeHtml(addLabel)}</button><span class="muted">${records.length} record${records.length === 1 ? '' : 's'}</span></div>
+  const filterControl = isCohortMembers ? cohortProvisionFilterControl(state.memberProvisionFilter) : '';
+  target.innerHTML = `${staffNav}${categoryNote}<div class="toolbar"><button type="button" class="button" id="new-record">Add ${escapeHtml(addLabel)}</button>${filterControl}<span class="muted">${shownCount}</span></div>
     ${selectionHeader}
     ${state.status ? `<p class="status">${escapeHtml(state.status)}</p>` : ''}
-    ${records.length ? `<div class="table-wrap"><table><thead><tr>${isCohortMembers ? '<th scope="col"><span class="sr-only">Select</span></th>' : ''}${columns.map(function(field) { return sortableHeader(tableId, field.name, field.label || field.name); }).join('')}<th scope="col">Actions</th></tr></thead><tbody>${sorted.map(function(item) {
+    ${sorted.length ? `<div class="table-wrap"><table><thead><tr>${isCohortMembers ? '<th scope="col"><span class="sr-only">Select</span></th>' : ''}${columns.map(function(field) { return sortableHeader(tableId, field.name, field.label || field.name); }).join('')}${isCohortMembers ? sortableHeader(tableId, 'workspace', 'Workspace') : ''}<th scope="col">Actions</th></tr></thead><tbody>${sorted.map(function(item) {
       const record = item.record;
       const index = item.index;
       const selected = isCohortMembers && state.selectedMemberIds.indexOf(record.StudentId) >= 0;
-      return `<tr>${isCohortMembers ? `<td><input type="checkbox" data-select-member value="${escapeHtml(record.StudentId)}" ${selected ? 'checked' : ''} ${record.hasStudentIdConflict ? 'disabled title="Resolve Student Number conflicts first"' : ''}></td>` : ''}${columns.map(function(field) { return `<td>${escapeHtml(displayField(field, record))}</td>`; }).join('')}<td><div class="actions"><button type="button" class="link-button" data-edit="${index}" ${record.hasStudentIdConflict ? 'disabled title="Reconcile duplicate Student Number values first"' : ''}>Edit</button><button type="button" class="link-button" data-delete="${index}">Delete</button></div>${record.hasStudentIdConflict ? '<div class="notice">Duplicate Student Number values disagree.</div>' : ''}</td></tr>`;
-    }).join('')}</tbody></table></div>` : '<div class="empty">No records yet.</div>'}
+      return `<tr>${isCohortMembers ? `<td><input type="checkbox" data-select-member value="${escapeHtml(record.StudentId)}" ${selected ? 'checked' : ''} ${record.hasStudentIdConflict ? 'disabled title="Resolve Student Number conflicts first"' : ''}></td>` : ''}${columns.map(function(field) { return `<td>${escapeHtml(displayField(field, record))}</td>`; }).join('')}${isCohortMembers ? `<td>${workspaceCellHtml(record)}</td>` : ''}<td><div class="actions"><button type="button" class="link-button" data-edit="${index}" ${record.hasStudentIdConflict ? 'disabled title="Reconcile duplicate Student Number values first"' : ''}>Edit</button><button type="button" class="link-button" data-delete="${index}">Delete</button></div>${record.hasStudentIdConflict ? '<div class="notice">Duplicate Student Number values disagree.</div>' : ''}</td></tr>`;
+    }).join('')}</tbody></table></div>` : `<div class="empty">${records.length ? 'No students match this workspace filter.' : 'No records yet.'}</div>`}
     <div id="roster-import-panel"></div>`;
   document.getElementById('new-record').addEventListener('click', function() { openEditor(null); });
   bindSortableHeaders(target, function() { renderAdminData(state.adminData, { preserveSelection: true }); });
@@ -139,14 +156,30 @@ export function renderAdminData(data, options) {
   if (isCohortMembers) {
     document.getElementById('open-roster-import').addEventListener('click', openRosterImport);
     document.getElementById('create-selected-users').addEventListener('click', createSelectedUsers);
+    document.getElementById('clear-workspace-data').addEventListener('click', clearSelectedWorkspaceData);
+    document.getElementById('select-missing-folder').addEventListener('click', function() { selectMembersByProvision('missing-folder'); });
+    document.getElementById('select-missing-doc').addEventListener('click', function() { selectMembersByProvision('missing-doc'); });
+    document.getElementById('select-provisioned').addEventListener('click', function() { selectMembersByProvision('ready'); });
+    const provisionFilter = document.getElementById('member-provision-filter');
+    if (provisionFilter) provisionFilter.addEventListener('change', function(event) {
+      state.memberProvisionFilter = event.target.value || 'all';
+      renderAdminData(state.adminData, { preserveSelection: true });
+    });
     document.getElementById('select-all-members').addEventListener('change', function(event) {
-      state.selectedMemberIds = event.target.checked ? records.filter(function(record) { return !record.hasStudentIdConflict; }).map(function(record) { return record.StudentId; }) : [];
+      const visible = Array.from(target.querySelectorAll('[data-select-member]:not(:disabled)')).map(function(input) { return input.value; });
+      state.selectedMemberIds = mergeSelection(state.selectedMemberIds, visible, event.target.checked);
       target.querySelectorAll('[data-select-member]').forEach(function(input) { input.checked = state.selectedMemberIds.indexOf(input.value) >= 0; });
       updateSelectedCount();
     });
     target.querySelectorAll('[data-select-member]').forEach(function(input) {
       input.addEventListener('change', function() {
-        state.selectedMemberIds = Array.from(target.querySelectorAll('[data-select-member]:checked')).map(function(item) { return item.value; });
+        const visible = Array.from(target.querySelectorAll('[data-select-member]')).map(function(item) { return item.value; });
+        const checked = Array.from(target.querySelectorAll('[data-select-member]:checked')).map(function(item) { return item.value; });
+        const kept = mergeSelection(state.selectedMemberIds, visible, false);
+        checked.forEach(function(id) {
+          if (kept.indexOf(id) < 0) kept.push(id);
+        });
+        state.selectedMemberIds = kept;
         updateSelectedCount();
       });
     });
@@ -263,6 +296,29 @@ export function confirmRosterImport(event) {
     refreshAdminSectionSilently();
   }).catch(function(error) {
     button.disabled = false;
+    showError(error);
+  });
+}
+
+export function selectMembersByProvision(mode) {
+  const records = (state.adminData && state.adminData.records) || [];
+  state.memberProvisionFilter = mode === 'ready' ? 'ready' : mode;
+  state.selectedMemberIds = memberIdsForProvision(records, mode);
+  renderAdminData(state.adminData, { preserveSelection: true });
+}
+
+export function clearSelectedWorkspaceData() {
+  const button = document.getElementById('clear-workspace-data');
+  if (!state.selectedMemberIds.length || state.driveBusy || state.isProvisioning) return;
+  if (!window.confirm('Clear the saved EE folder and EE document links for the selected students? Files already in Google Drive stay where they are.')) return;
+  if (button) button.disabled = true;
+  runMutation('clearCohortWorkspaceLinks', [state.cohortId, state.selectedMemberIds.slice()], { key: 'clear-workspace:' + state.cohortId }).then(function(result) {
+    const cleared = result && typeof result.cleared === 'number' ? result.cleared : 0;
+    state.status = 'Cleared Google Workspace links for ' + cleared + ' student' + (cleared === 1 ? '' : 's') + '.';
+    state.selectedMemberIds = [];
+    refreshAdminSectionSilently();
+  }).catch(function(error) {
+    if (button) button.disabled = false;
     showError(error);
   });
 }

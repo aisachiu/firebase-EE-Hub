@@ -1,9 +1,11 @@
+import { driveStudentNeedsAttention, provisioningModalHtml } from './provisioning.js';
 import { refreshAdminSectionSilently } from './sections.js';
 import { callServer, runMutation } from '../shared/api.js';
 import { showError, showSuccess } from '../shared/feedback.js';
 import { escapeHtml, safeUrl } from '../shared/html.js';
 import { loadingLine } from '../shared/loading.js';
 import { state } from '../shared/state.js';
+import { installProvisioningLeaveGuard } from '../router.js';
 import { bindCollapsibleHeaders, collapsibleHeader, updateSelectedCount } from '../shared/tables.js';
 
 export function renderDriveAccount(target) {
@@ -197,8 +199,49 @@ export function saveDriveRootFromForm() {
   });
 }
 
+function ensureProvisioningModal() {
+  let modal = document.getElementById('provision-modal');
+  if (modal) return modal;
+  modal = document.createElement('div');
+  modal.id = 'provision-modal';
+  modal.className = 'form-dialog';
+  modal.hidden = true;
+  document.body.appendChild(modal);
+  return modal;
+}
+
+export function closeProvisioningModal() {
+  const modal = document.getElementById('provision-modal');
+  if (!modal) return;
+  modal.hidden = true;
+  modal.innerHTML = '';
+  modal.onclick = null;
+}
+
+export function paintProvisioningModal(view) {
+  const modal = ensureProvisioningModal();
+  const focusNow = modal.hidden;
+  modal.hidden = false;
+  modal.innerHTML = provisioningModalHtml(view);
+  const close = document.getElementById('provision-close');
+  if (close) close.addEventListener('click', function() {
+    if (state.isProvisioning) return;
+    closeProvisioningModal();
+  });
+  modal.onclick = function(event) {
+    if (event.target === modal && !state.isProvisioning) closeProvisioningModal();
+  };
+  if (focusNow) {
+    const title = document.getElementById('provision-title');
+    if (title) title.focus();
+  } else if (!view.running) {
+    const close = document.getElementById('provision-close');
+    if (close && !close.disabled) close.focus();
+  }
+}
+
 export function runDriveFolderJob(dryRun) {
-  if (!state.selectedMemberIds.length || state.driveBusy) return;
+  if (!state.selectedMemberIds.length || state.driveBusy || state.isProvisioning) return;
   const cohortId = state.cohortId;
   const ids = state.selectedMemberIds.slice();
   const results = [];
@@ -207,31 +250,58 @@ export function runDriveFolderJob(dryRun) {
     showError(new Error('Choose a cohort folder or paste its link.'));
     return;
   }
+  const runId = ++state.provisionRun;
   state.driveBusy = true;
+  if (!dryRun) {
+    state.isProvisioning = true;
+    installProvisioningLeaveGuard();
+  }
   updateSelectedCount();
   step(0, form);
-  function finish(error) {
+  function stillRunning() {
+    return runId === state.provisionRun && state.cohortId === cohortId && !!document.getElementById('drive-folder-panel');
+  }
+  function stopJob() {
+    if (runId !== state.provisionRun) return;
     state.driveBusy = false;
+    state.isProvisioning = false;
+    if (!dryRun) closeProvisioningModal();
+    updateSelectedCount();
+  }
+  function finish(error) {
+    if (!stillRunning()) {
+      stopJob();
+      return;
+    }
+    state.driveBusy = false;
+    state.isProvisioning = false;
     updateSelectedCount();
     const resultsNode = document.getElementById('drive-folder-results');
     if (resultsNode && state.cohortId === cohortId) resultsNode.innerHTML = renderDriveFolderResults(results);
-    const problemCount = results.filter(function(student) {
-      return student.status === 'error' || student.status === 'ambiguous' || (student.doc && student.doc.status === 'error') || (student.shares || []).some(function(share) { return share.status === 'failed'; });
-    }).length;
+    if (!dryRun) {
+      paintProvisioningModal({
+        completed: results.length,
+        total: ids.length,
+        running: false,
+        students: results,
+        error: error && error.message ? error.message : '',
+      });
+    }
+    const problemCount = results.filter(driveStudentNeedsAttention).length;
     const countLabel = results.length + ' student' + (results.length === 1 ? '' : 's');
     if (error) showError(error);
     else if (problemCount) showSuccess((dryRun ? 'Checked ' : 'Updated ') + countLabel + '. ' + problemCount + ' need attention.');
     else if (!dryRun) showSuccess('Drive folders updated for ' + countLabel + '.');
     else showSuccess('Checked ' + countLabel + '.');
+    if (!dryRun && !error) refreshAdminSectionSilently();
   }
   function step(offset, form) {
-    if (state.cohortId !== cohortId || !document.getElementById('drive-folder-panel')) {
-      state.driveBusy = false;
+    if (!stillRunning()) {
+      stopJob();
       return;
     }
     if (offset >= ids.length) {
       finish();
-      if (!dryRun) refreshAdminSectionSilently();
       return;
     }
     form = form || readDriveFolderForm();
@@ -240,8 +310,13 @@ export function runDriveFolderJob(dryRun) {
     if (resultsNode) {
       resultsNode.innerHTML = '<p class="muted">Working on ' + (offset + 1) + '–' + Math.min(offset + batch.length, ids.length) + ' of ' + ids.length + '...</p>' + renderDriveFolderResults(results);
     }
+    if (!dryRun) paintProvisioningModal({ completed: offset, total: ids.length, running: true, students: results });
     const method = dryRun ? 'checkCohortDriveFolders' : 'syncCohortDriveFolders';
     runMutation(method, [cohortId, batch, form], { key: 'drive-folders:' + cohortId }).then(function(result) {
+      if (!result || result.stale || !stillRunning()) {
+        stopJob();
+        return;
+      }
       (result.students || []).forEach(function(student) { results.push(student); });
       if (result.settings) {
         state.driveSettings = result.settings;
