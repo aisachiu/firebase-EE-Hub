@@ -738,7 +738,7 @@ export function pathwayRunAction(node) {
 }
 
 export function openEmailNotifications(milestoneId) {
-  requestPush();
+  if (!requestPush()) return;
   state.adminEntity = 'emailNotifications';
   state.noticeMilestoneId = milestoneId || '';
   if (state.pathwayPlan && state.pathwayPlan.mode !== 'template' && state.pathwayPlan.cohortId) {

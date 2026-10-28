@@ -7,16 +7,16 @@ import { getGoogleAuth } from './googleAuth';
 import { assertSafeResourceHtml } from './formsPure';
 import { validatePhasePrerequisites } from './phaseRules';
 import { assertSingleMilestoneAnchor } from './pathwayPlan';
-import { COLLECTIONS, normalizePhaseColor, staffHasAdminAccess, tableFields, validateRecordFields } from './schema';
+import { APP_TABLES, COLLECTIONS, normalizePhaseColor, staffHasAdminAccess, tableFields, validateRecordFields } from './schema';
 import { App, audited, requireAdmin } from './session';
 import { formatSubjectCell, preserveEeActive } from './allocationPure';
-import { planSheetImport, SheetGrid, SheetImportPlan, spreadsheetIdFrom } from './sheetImport';
+import { CollectionRegistryEntry, registeredSheetCollection, sheetChoiceModels } from './collectionsRegistry';
+import { guardSheetCollection, planSheetImport, SheetGrid, SheetImportPlan, spreadsheetIdFrom } from './sheetImport';
 import { keepPublishedSubject, presentStoredIdentifiers, syncStudentUserFromMember } from './studentIdentity';
 import { dateOnlyValue, Doc, driveNamePart, HubError, normalizeEmail, text, toBoolean } from './util';
 
 const ROW_LIMIT = 5000;
 const CONFIRM_REPLACE = 'Confirm that rows missing from the selected tabs will be removed from the hub.';
-const AUDIT_IMPORT = 'Audit logs can be exported, but they are not replaced from a sheet.';
 
 export interface SheetCollectionChoice {
   id: string;
@@ -55,37 +55,10 @@ export interface IngestPreview {
   warningCount: number;
 }
 
-interface CatalogItem {
-  id: string;
+interface SheetCatalogItem extends CollectionRegistryEntry {
   label: string;
-  sheet: string;
-  group: 'records' | 'operational';
-  recommended?: boolean;
-  exportOnly?: boolean;
+  exportOnly: boolean;
 }
-
-const CATALOG: CatalogItem[] = [
-  { id: 'phases', label: 'Phases', sheet: 'PHASES', group: 'records', recommended: true },
-  { id: 'milestoneTemplates', label: 'Milestones', sheet: 'MILESTONE_TEMPLATES', group: 'records', recommended: true },
-  { id: 'cohorts', label: 'Cohorts', sheet: 'COHORTS', group: 'records', recommended: true },
-  { id: 'cohortMembers', label: 'Student lists', sheet: 'COHORT 2026', group: 'records', recommended: true },
-  { id: 'studentUsers', label: 'Student users', sheet: 'USERS-STUDENTS', group: 'records', recommended: true },
-  { id: 'staffUsers', label: 'Staff users', sheet: 'USERS-STAFF', group: 'records' },
-  { id: 'subjects', label: 'Subjects', sheet: 'SUBJECTS', group: 'records' },
-  { id: 'resources', label: 'Resources', sheet: 'RESOURCES', group: 'records' },
-  { id: 'faqs', label: 'FAQs', sheet: 'FAQS', group: 'records' },
-  { id: 'ticketCategories', label: 'Message categories', sheet: 'TICKET_CATEGORIES', group: 'records' },
-  { id: 'quotations', label: 'Quotations', sheet: 'Quotations', group: 'records' },
-  { id: 'studentActionItems', label: 'Student tasks', sheet: 'STUDENT_ACTION_ITEMS', group: 'operational' },
-  { id: 'formDefinitions', label: 'Milestone forms', sheet: 'FORM_DEFINITIONS', group: 'operational' },
-  { id: 'formResponses', label: 'Form answers', sheet: 'FORM milestoneId', group: 'operational' },
-  { id: 'milestoneEvents', label: 'Milestone notes', sheet: 'MILESTONE_EVENTS', group: 'operational' },
-  { id: 'tickets', label: 'Messages', sheet: 'TICKETS', group: 'operational' },
-  { id: 'ticketMessages', label: 'Message replies', sheet: 'TICKET_MESSAGES', group: 'operational' },
-  { id: 'todoTemplates', label: 'Template tasks', sheet: 'TODO_TEMPLATES', group: 'operational' },
-  { id: 'supervisorTodos', label: 'Supervisor to-dos', sheet: 'SUPERVISOR_TODOS', group: 'operational' },
-  { id: 'auditLogs', label: 'Audit log', sheet: 'AUDIT_LOGS', group: 'operational', exportOnly: true },
-];
 
 const FORM_HEADERS = ['StudentId', 'FormVersion', 'Status', 'SubmittedAt', 'LastUpdated'];
 
@@ -96,13 +69,8 @@ export function sheetTabTitle(title: string): string {
 export async function listSheetCollections(app: App): Promise<{ collections: SheetCollectionChoice[]; driveActor: string; driveReady: boolean }> {
   await requireAdmin(app, 'LIST_SHEET_COLLECTIONS');
   const account = await presentDriveAccount(app);
-  const collections = await Promise.all(CATALOG.map(async (item) => ({
-    id: item.id,
-    label: item.label,
-    sheet: item.sheet,
-    group: item.group,
-    recommended: !!item.recommended,
-    exportOnly: !!item.exportOnly,
+  const collections = await Promise.all(sheetChoiceModels().map(async (item) => ({
+    ...item,
     count: await collectionCount(app, item.id),
   })));
   return { collections, driveActor: account.actorEmail, driveReady: account.ready };
@@ -166,6 +134,7 @@ export async function applySheetIngest(
 export async function buildExportGrids(app: App, entities: string[]): Promise<SheetGrid[]> {
   const grids: SheetGrid[] = [];
   for (const id of entities) {
+    guardSheetCollection(id, 'export');
     if (id === 'cohortMembers') {
       const cohorts = (await app.store.list(COLLECTIONS.cohorts))
         .map((row) => text(row.Cohort))
@@ -204,9 +173,20 @@ export async function buildExportGrids(app: App, entities: string[]): Promise<Sh
       }
       continue;
     }
+    if (!APP_TABLES[id]) {
+      const item = catalogItem(id);
+      const columns = item.expectedColumns || [];
+      if (!columns.length) throw new HubError(`Collection "${id}" needs expectedColumns in the sheet registry.`);
+      const records = sortBy(await app.store.list(item.collectionId), columns[0]);
+      grids.push({
+        title: item.sheet,
+        rows: [columns, ...records.map((record) => columns.map((name) => plainCell(record[name])))],
+      });
+      continue;
+    }
     const item = catalogItem(id);
     const fields = tableFields(id).map((field) => field.name);
-    let records = sortRecords(id, id === 'ticketMessages' ? await allMessages(app) : await app.store.list(COLLECTIONS[id]));
+    let records = sortRecords(id, id === 'ticketMessages' ? await allMessages(app) : await app.store.list(item.collectionId));
     if (id === 'studentUsers') records = records.map((record) => presentStoredIdentifiers(record));
     grids.push(gridFor(id, item.sheet, fields, records));
   }
@@ -303,7 +283,7 @@ async function previewTable(app: App, plan: SheetImportPlan, id: string, cohortI
     const removing = existingRows.filter((row) => !keep.has(`${text(row.MilestoneId)}__${encodeURIComponent(normalizeEmail(row.StudentId))}`)).length;
     return { id, label: item.label, sheet: item.sheet, incoming: incoming.length, existing: existingRows.length, removing };
   }
-  const collection = COLLECTIONS[id];
+  const collection = item.collectionId;
   const existingRows = await app.store.list(collection);
   const incoming = plan.docs[collection] || [];
   const keep = new Set(incoming.map((doc) => doc.id));
@@ -334,7 +314,18 @@ async function validateIngest(app: App, plan: SheetImportPlan, entities: string[
     }
     if (id === 'formResponses') continue;
     const item = catalogItem(id);
-    const docs = plan.docs[COLLECTIONS[id]] || [];
+    if (!APP_TABLES[id]) {
+      const key = item.expectedColumns?.[0] || '';
+      const docs = plan.docs[item.collectionId] || [];
+      if (!key) throw new HubError(`Collection "${id}" needs expectedColumns in the sheet registry.`);
+      docs.forEach((doc) => {
+        const nextId = text(doc.data[key]);
+        if (!nextId) throw new HubError(`${item.label} row is missing ${key}.`);
+        doc.id = nextId;
+      });
+      continue;
+    }
+    const docs = plan.docs[item.collectionId] || [];
     docs.forEach((doc) => {
       doc.data = normalizeIncoming(id, doc.data);
       const nextId = rowId(id, doc.data);
@@ -423,7 +414,7 @@ async function keepCohortPlan(app: App, cohortId: string, data: Doc): Promise<Do
 }
 
 async function writeIngest(app: App, plan: SheetImportPlan, entities: string[], cohortIds: string[], formIds: string[]): Promise<void> {
-  const order = CATALOG.map((item) => item.id);
+  const order = sheetChoiceModels().map((item) => item.id);
   const sorted = entities.slice().sort((left, right) => order.indexOf(left) - order.indexOf(right));
   for (const id of sorted) {
     if (id === 'cohortMembers') {
@@ -479,7 +470,7 @@ async function writeIngest(app: App, plan: SheetImportPlan, entities: string[], 
       }
       continue;
     }
-    const collection = COLLECTIONS[id];
+    const collection = catalogItem(id).collectionId;
     const incoming = plan.docs[collection] || [];
     const keep = new Set(incoming.map((doc) => doc.id));
     for (const doc of incoming) {
@@ -543,15 +534,17 @@ function selectedEntities(value: unknown, ingest = false): string[] {
   const ids: string[] = [];
   value.forEach((item) => {
     const id = text(item);
-    const known = CATALOG.find((entry) => entry.id === id);
-    if (!known) throw new HubError('Unknown collection.');
-    if (ingest && known.exportOnly) throw new HubError(AUDIT_IMPORT);
+    guardSheetCollection(id, ingest ? 'import' : 'export');
     if (!ids.includes(id)) ids.push(id);
   });
   return ids;
 }
 
 function rowId(entity: string, data: Doc): string {
+  if (!APP_TABLES[entity]) {
+    const key = catalogItem(entity).expectedColumns?.[0] || '';
+    return text(data[key]);
+  }
   const key = tableFields(entity).find((field) => field.key);
   if (!key) return '';
   let value = text(data[key.name]);
@@ -561,10 +554,10 @@ function rowId(entity: string, data: Doc): string {
   return value;
 }
 
-function catalogItem(id: string): CatalogItem {
-  const item = CATALOG.find((entry) => entry.id === id);
-  if (!item) throw new HubError('Unknown collection.');
-  return item;
+function catalogItem(id: string): SheetCatalogItem {
+  const entry = registeredSheetCollection(id);
+  if (!entry) throw new HubError(`Collection "${id}" is not registered for sheet import or export.`);
+  return { ...entry, label: entry.displayName, exportOnly: entry.exportable && !entry.importable };
 }
 
 function readSpreadsheetId(source: unknown): string {
@@ -585,8 +578,7 @@ async function allMessages(app: App): Promise<Doc[]> {
 async function collectionCount(app: App, id: string): Promise<number> {
   if (id === 'cohortMembers') return (await app.store.allMembers()).length;
   if (id === 'ticketMessages') return (await allMessages(app)).length;
-  const collection = id === 'formResponses' ? COLLECTIONS.formResponses : COLLECTIONS[id];
-  return (await app.store.list(collection)).length;
+  return (await app.store.list(catalogItem(id).collectionId)).length;
 }
 
 function sortRecords(entity: string, records: Doc[]): Doc[] {

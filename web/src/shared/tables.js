@@ -122,11 +122,13 @@ export function updateSelectedCount() {
   if (count) count.textContent = state.selectedMemberIds.length + ' selected';
   if (action) action.disabled = state.selectedMemberIds.length === 0;
   if (selectAll) selectAll.checked = selectable.length > 0 && selectable.every(function(input) { return input.checked; });
-  const driveDisabled = !state.driveSettingsLoaded || state.driveBusy || state.selectedMemberIds.length === 0;
+  const driveDisabled = !state.driveSettingsLoaded || state.driveBusy || state.isProvisioning || state.selectedMemberIds.length === 0;
   const checkDrive = document.getElementById('check-drive-folders');
   const updateDrive = document.getElementById('update-drive-folders');
+  const clearWorkspace = document.getElementById('clear-workspace-data');
   if (checkDrive) checkDrive.disabled = driveDisabled;
   if (updateDrive) updateDrive.disabled = driveDisabled;
+  if (clearWorkspace) clearWorkspace.disabled = state.selectedMemberIds.length === 0 || state.driveBusy || state.isProvisioning;
   updateDriveNamePreview();
 }
 

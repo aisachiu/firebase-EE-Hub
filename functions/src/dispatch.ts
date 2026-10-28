@@ -14,6 +14,7 @@ import {
   setActionItemStatus,
 } from './actions';
 import {
+  clearCohortWorkspaceLinks,
   createStudentUsersFromCohort,
   deleteAdminRecord,
   deleteCohortMember,
@@ -39,7 +40,7 @@ import {
   saveCohortPlanAnchor,
   seedCohortPathway,
 } from './cohortPathway';
-import { getMyActivity, getStaffHome, getStaffStudentHome, getStudentActivity, getStudentHome } from './journey';
+import { getMyActivity, getStaffHome, getStaffStudentHome, getStudentActivity, getStudentHome, recordStudentView } from './journey';
 import {
   createStaffNote,
   createTicket,
@@ -101,6 +102,7 @@ export async function dispatch(app: App, method: string, args: unknown[]): Promi
     case 'getStaffHome': return getStaffHome(app, args[0], args[1]);
     case 'getStaffStudentHome': return getStaffStudentHome(app, args[0], args[1], args[2]);
     case 'getMyActivity': return getMyActivity(app);
+    case 'recordStudentView': return recordStudentView(app, args[0]);
     case 'getStudentActivity': return getStudentActivity(app, args[0], args[1]);
     case 'getMyEssayAnalytics': return getMyEssayAnalytics(app);
     case 'getStudentEssayAnalytics': return getStudentEssayAnalytics(app, args[0], args[1], args[2]);
@@ -122,6 +124,7 @@ export async function dispatch(app: App, method: string, args: unknown[]): Promi
     case 'deleteCohortMember': return deleteCohortMember(app, args[0], args[1]);
     case 'importCohortMembers': return importCohortMembers(app, args[0], args[1]);
     case 'createStudentUsersFromCohort': return createStudentUsersFromCohort(app, args[0], args[1]);
+    case 'clearCohortWorkspaceLinks': return clearCohortWorkspaceLinks(app, args[0], args[1]);
     case 'assignMilestonesToStudents': return assignMilestonesToStudents(app, args[0], args[1], args[2]);
     case 'saveStudentAnchorAndSync': return saveStudentAnchorAndSync(app, args[0], args[1], args[2]);
     case 'setActionItemStatus': return setActionItemStatus(app, args[0], args[1], args[2], args[3], args[4]);

@@ -30,7 +30,7 @@ export function staffSectionNav() {
 export function bindStaffPane(root) {
   root.querySelectorAll('[data-staff-pane]').forEach(function(button) {
     button.addEventListener('click', function() {
-      requestPush();
+      if (!requestPush()) return;
       state.staffPane = button.dataset.staffPane === 'quotas' ? 'quotas' : 'records';
       const main = document.getElementById('main');
       if (main) main.classList.toggle('plan-wide', state.staffPane === 'quotas');
@@ -741,7 +741,7 @@ export function applyQuotaTokens() {
 }
 
 export function openStaffQuotas() {
-  requestPush();
+  if (!requestPush()) return;
   state.section = 'admin';
   state.view = 'admin';
   state.adminEntity = 'staffUsers';

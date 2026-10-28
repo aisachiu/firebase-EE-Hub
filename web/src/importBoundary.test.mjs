@@ -9,6 +9,7 @@ const webSrc = path.join(root, 'web/src');
 const roleDirs = new Set(['admin', 'allocation', 'staff', 'student']);
 const allowedFunctionEntries = new Set([
   'functions/src/allocationPure.ts',
+  'functions/src/collectionsRegistry.ts',
   'functions/src/workspaceSheetHelp.ts',
 ]);
 

@@ -361,6 +361,33 @@ export async function createStudentUsersFromCohort(app: App, cohortId: unknown, 
   });
 }
 
+export async function clearCohortWorkspaceLinks(app: App, cohortId: unknown, selectedStudentIds: unknown) {
+  const user = await requireAdmin(app, 'CLEAR_COHORT_WORKSPACE_LINKS');
+  if (!Array.isArray(selectedStudentIds) || !selectedStudentIds.length) throw new HubError('Select at least one student.');
+  if (selectedStudentIds.length > 1000) throw new HubError('Select no more than 1,000 students at a time.');
+  const cohort = text(cohortId);
+  return audited(app, user, 'CLEAR_COHORT_WORKSPACE_LINKS', { cohort, selectedCount: selectedStudentIds.length }, async () => {
+    await requireCohort(app, cohort, true);
+    const members = await app.store.listMembers(cohort);
+    const byId: Record<string, Doc> = {};
+    members.forEach((record) => { byId[normalizeEmail(record.StudentId)] = record; });
+    const seen: Record<string, boolean> = {};
+    const selected: string[] = [];
+    selectedStudentIds.forEach((value) => {
+      const studentId = validateEmail(value, 'StudentId');
+      if (seen[studentId]) throw new HubError('A student was selected more than once.');
+      seen[studentId] = true;
+      selected.push(studentId);
+    });
+    for (const studentId of selected) {
+      const member = byId[studentId];
+      if (!member) throw new HubError(`Student is not in this cohort: ${studentId}`);
+      await app.store.setMember(cohort, studentId, { ...member, EEFolder: '', EEDoc: '' });
+    }
+    return { cleared: selected.length };
+  });
+}
+
 export async function getCohorts(app: App) {
   await requireAdminOrStaff(app);
   return (await listCohorts(app, false)).map((cohort) => ({ id: cohort.id, name: cohort.name, sheetName: cohort.sheetName }));

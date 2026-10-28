@@ -1,3 +1,4 @@
+import { sheetChoiceModels } from '../../../functions/src/collectionsRegistry.ts';
 import { callServer } from '../shared/api.js';
 import { showError, showSuccess } from '../shared/feedback.js';
 import { escapeHtml, safeUrl } from '../shared/html.js';
@@ -7,8 +8,11 @@ import { renderSheetIngestPreview } from '../shared/sheetPreview.js';
 export function renderSheetSync(target) {
   target.innerHTML = `<section class="editor"><h2>Sheets</h2>${loadingLine('Loading collections...')}</section>`;
   callServer('listSheetCollections').then(function(result) {
-    const records = result.collections.filter(function(item) { return item.group === 'records'; });
-    const operational = result.collections.filter(function(item) { return item.group === 'operational'; });
+    const counts = {};
+    (result.collections || []).forEach(function(item) { counts[item.id] = item.count; });
+    const visible = sheetChoiceModels(counts);
+    const records = visible.filter(function(item) { return item.group === 'records'; });
+    const operational = visible.filter(function(item) { return item.group === 'operational'; });
     const choice = function(item) {
       return `<label class="check-option"><input type="checkbox" data-sheet-entity="${escapeHtml(item.id)}" ${item.recommended ? 'checked' : ''}><span>${escapeHtml(item.label)} <span class="muted">${escapeHtml(item.sheet)} · ${escapeHtml(String(item.count))}${item.exportOnly ? ' · export only' : ''}</span></span></label>`;
     };
@@ -39,7 +43,7 @@ export function renderSheetSync(target) {
     };
     document.getElementById('sheet-recommended').addEventListener('click', function() {
       boxes().forEach(function(box) {
-        const item = result.collections.find(function(entry) { return entry.id === box.getAttribute('data-sheet-entity'); });
+        const item = visible.find(function(entry) { return entry.id === box.getAttribute('data-sheet-entity'); });
         box.checked = !!(item && item.recommended);
       });
       clearPreview();
@@ -68,7 +72,7 @@ export function renderSheetSync(target) {
     });
     document.getElementById('sheet-preview').addEventListener('click', function() {
       const entities = selected().filter(function(id) {
-        const item = result.collections.find(function(entry) { return entry.id === id; });
+        const item = visible.find(function(entry) { return entry.id === id; });
         return item && !item.exportOnly;
       });
       const source = document.getElementById('sheet-url').value;
@@ -86,7 +90,7 @@ export function renderSheetSync(target) {
     });
     document.getElementById('sheet-apply').addEventListener('click', function() {
       const entities = selected().filter(function(id) {
-        const item = result.collections.find(function(entry) { return entry.id === id; });
+        const item = visible.find(function(entry) { return entry.id === id; });
         return item && !item.exportOnly;
       });
       const source = document.getElementById('sheet-url').value;

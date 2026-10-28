@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { COLLECTIONS_REGISTRY } from './collectionsRegistry';
 import { COLLECTIONS } from './schema';
 import { SheetGrid } from './sheetImport';
 import {
@@ -280,6 +281,61 @@ test('roster ingest keeps eeActive when the sheet has no column for it', async (
   const saved = (await store.listMembers('2026'))[0];
   assert.equal(saved.eeActive, false);
   assert.equal(saved.Surname, 'Wong-Li');
+});
+
+test('sheet export and import reject collections that are not in the registry', async () => {
+  const app = appFor();
+  await seed(app);
+  let created = false;
+  let reads = 0;
+  const gate = {
+    async create() { created = true; return { spreadsheetId: 'abc123_XYZ-000000000000', url: SHEET }; },
+    async read() { reads += 1; return []; },
+    async share() { return; },
+  };
+  await assert.rejects(exportSheetCollections(app, ['functionSecrets'], { workbook: gate, actorEmail: COORDINATOR }), /functionSecrets.*not registered/);
+  await assert.rejects(previewSheetIngest(app, SHEET, ['docWordLogs'], { workbook: gate }), /docWordLogs.*not registered/);
+  await assert.rejects(applySheetIngest(app, SHEET, ['notificationSends'], true, { workbook: gate }), /notificationSends.*not registered/);
+  await assert.rejects(buildExportGrids(app, ['functionSecrets']), /functionSecrets.*not registered/);
+  assert.equal(created, false);
+  assert.equal(reads, 0);
+  assert.equal((await app.store.get(COLLECTIONS.subjects, 'english'))?.Name, 'English');
+});
+
+test('a collection added only to the registry can be exported and imported', async () => {
+  const entry = {
+    id: 'labNotes',
+    collectionId: 'labNotes',
+    displayName: 'Lab notes',
+    sheet: 'LAB_NOTES',
+    group: 'records' as const,
+    exportable: true,
+    importable: true,
+    expectedColumns: ['NoteId', 'Body'],
+  };
+  COLLECTIONS_REGISTRY.push(entry);
+  try {
+    const app = appFor();
+    await seed(app);
+    const store = app.store as unknown as ReturnType<typeof memory>;
+    await store.set('labNotes', 'n1', { NoteId: 'n1', Body: 'Hello' });
+    const listed = await listSheetCollections(app);
+    assert.equal(listed.collections.find((item) => item.id === 'labNotes')?.label, 'Lab notes');
+    assert.equal(listed.collections.find((item) => item.id === 'labNotes')?.count, 1);
+    assert.equal(listed.collections.some((item) => item.id === 'functionSecrets'), false);
+    const grids = await buildExportGrids(app, ['labNotes']);
+    assert.equal(grids.length, 1);
+    assert.equal(grids[0].title, 'LAB_NOTES');
+    assert.deepEqual(grids[0].rows[0], ['NoteId', 'Body']);
+    assert.deepEqual(grids[0].rows[1], ['n1', 'Hello']);
+    grids[0].rows = [grids[0].rows[0], ['n2', 'Second']];
+    await applySheetIngest(app, SHEET, ['labNotes'], true, { workbook: workbook(grids) });
+    assert.equal(await store.get('labNotes', 'n1'), null);
+    assert.equal((await store.get('labNotes', 'n2'))?.Body, 'Second');
+  } finally {
+    const index = COLLECTIONS_REGISTRY.findIndex((item) => item.id === 'labNotes');
+    if (index >= 0) COLLECTIONS_REGISTRY.splice(index, 1);
+  }
 });
 
 test('a supervisor cannot export collections', async () => {

@@ -22,7 +22,7 @@ import { renderShell } from '../navigation.js';
 import { workspaceHelpMarkup } from './workspaceHelp.js';
 
 export function openAllocationTokens() {
-  requestPush();
+  if (!requestPush()) return;
   state.section = 'allocation';
   state.view = 'allocation';
   state.allocationView = 'tokens';
@@ -46,7 +46,7 @@ export function renderAllocation() {
     <div id="alloc-body">${loadingLine('Loading allocation...')}</div>`;
   main.querySelectorAll('[data-alloc-view]').forEach(function(button) {
     button.addEventListener('click', function() {
-      requestPush();
+      if (!requestPush()) return;
       state.allocationView = button.dataset.allocView;
       renderAllocation();
     });
