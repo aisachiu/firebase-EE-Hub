@@ -2,7 +2,7 @@
 
 Firebase version of the [VSA Extended Essay hub](https://github.com/aisachiu/GAS-EE-Hub). The screens are the same. Records live in Firestore, sign-in is Firebase Auth, and the Apps Script calls are one Cloud Function named `eeHub`.
 
-Students see Document, Journey, and Supervisor. Published resources sit on Journey as research support, and `/resources` opens that module. Staff see My Students, resources, messages, and notes. Coordinators and admins also see Admin. Milestone ownership, phase prerequisites, tickets, and milestone forms are enforced in the function. The browser cannot write Firestore directly.
+Students see My EE, resources, and help. Staff see My Students, messages, and notes. Coordinators and admins also see Admin. Milestone ownership, phase prerequisites, tickets, and milestone forms are enforced in the function. The browser cannot write Firestore directly.
 
 ## Web app
 
@@ -14,7 +14,7 @@ The browser UI is a Vite app in `web/`. `web/index.html` is the shell. Screens l
 | `web/src/router.js` | Path matching, history, role guards |
 | `web/src/styles/` | CSS |
 | `web/src/shared/` | API helper, HTML escaping, tables, checks, forms, resources, messages |
-| `web/src/student/` | Document, Journey, and Supervisor views, modules, activity, milestone editing |
+| `web/src/student/` | My EE, journey, activity, milestone editing, help |
 | `web/src/staff/` | My Students, messages, notes |
 | `web/src/admin/` | Cohorts, sheets, students, pathway, email, assignments, users, subjects, forms, resources, FAQs |
 | `web/src/allocation/` | Allocation desk, cohort tokens, settings |
@@ -25,12 +25,10 @@ Navigation uses the History API. Refresh, share, and back/forward reopen the sam
 
 | Path | Who | Screen |
 | --- | --- | --- |
-| `/` | any signed-in role | That role’s home. Students land on Journey |
-| `/document` | student | Document. `/doc` and `/my-ee` open this too |
-| `/journey` | student | Journey |
-| `/supervisor` | student | Supervisor. `/help` opens this too |
-| `/resources` | student | Journey, scrolled to research support |
-| `/resources` | staff | Resources |
+| `/` | any signed-in role | That role’s home |
+| `/my-ee` | student | My EE |
+| `/resources` | student or staff | Resources |
+| `/help` | student | Help |
 | `/my-students` | staff | My Students |
 | `/messages` | supervisor or coordinator | Messages |
 | `/notes` | supervisor or coordinator | Notes |

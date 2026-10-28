@@ -10,8 +10,7 @@ import { closeOpenMemberEditor, hideListJourneyTip } from './shared/sessionChrom
 import { actingAsOptions } from './shared/staffContext.js';
 import { state } from './shared/state.js';
 import { staffStudentDrawersHtml } from './shared/studentDrawers.js';
-import { docChipMarkup } from './shared/docChip.js';
-import { applyLocation, confirmProvisioningLeave, fallbackSection, installHistory, requestPush, sectionTabs, syncHistory } from './router.js';
+import { applyLocation, confirmProvisioningLeave, installHistory, requestPush, sectionTabs, syncHistory } from './router.js';
 
 export let booted = false;
 
@@ -57,7 +56,7 @@ export function bootHub() {
     }
     state.user = result.user;
     rememberOpeningMessages(result.messages);
-    state.view = state.user.role === 'student' ? 'journey' : 'students';
+    state.view = state.user.role === 'student' ? 'home' : 'students';
     state.section = state.view;
     if (state.user.permissions && state.user.permissions.canAdmin) state.actingAs = 'coordinator';
     else if (state.user.permissions && state.user.permissions.isSupervisor) state.actingAs = 'supervisor';
@@ -76,10 +75,10 @@ let shellRender = 0;
 const chunkLoaders = {
   coordinator: function() { return import('./admin/coordinator.js'); },
   resources: function() { return import('./shared/resources.js'); },
+  help: function() { return import('./student/help.js'); },
   tickets: function() { return import('./staff/messages.js'); },
   notes: function() { return import('./staff/notes.js'); },
   home: function() { return import('./student/home.js'); },
-  studentViews: function() { return import('./student/views.js'); },
   staff: function() { return import('./staff/students.js'); },
 };
 
@@ -106,10 +105,10 @@ function readyChunk(name) {
 function sectionChunk(section, student) {
   if (section === 'admin' || section === 'allocation') return 'coordinator';
   if (section === 'resources') return 'resources';
-  if (section === 'help' || section === 'document' || section === 'journey' || section === 'supervisor') return 'studentViews';
+  if (section === 'help') return 'help';
   if (section === 'tickets') return 'tickets';
   if (section === 'notes') return 'notes';
-  return student ? 'studentViews' : 'staff';
+  return student ? 'home' : 'staff';
 }
 
 function paintSection(mod) {
@@ -117,7 +116,7 @@ function paintSection(mod) {
   if (state.section === 'admin') mod.renderAdmin();
   else if (state.section === 'allocation') mod.renderAllocation();
   else if (state.section === 'resources') mod.renderResources();
-  else if (state.section === 'document' || state.section === 'journey' || state.section === 'supervisor' || state.section === 'help') mod.renderStudentSection();
+  else if (state.section === 'help') mod.renderStudentHelp();
   else if (state.section === 'tickets') mod.renderStaffTickets();
   else if (state.section === 'notes') mod.renderStaffNotes();
   else if (student) mod.renderStudentSection();
@@ -171,10 +170,10 @@ export function renderShell() {
     state.ticketBadgeFor = state.actingAs;
   }
   const staffJourney = !student && state.section === 'students' && !!state.staffStudentHome;
-  const showJourney = staffJourney;
+  const showJourney = student || staffJourney;
   const showNotes = staffJourney;
   const tabs = sectionTabs(state.user, state.actingAs);
-  if (!tabs.some(function(tab) { return tab[0] === state.section; })) state.section = fallbackSection(state);
+  if (!tabs.some(function(tab) { return tab[0] === state.section; })) state.section = tabs[0][0];
   state.view = state.section;
   document.body.classList.toggle('has-journey', showJourney);
   document.body.classList.toggle('journey-open', showJourney && state.journeyOpen);
@@ -187,7 +186,7 @@ export function renderShell() {
       <nav class="tabs" aria-label="Sections">${tabs.map(function(tab) {
         return `<button type="button" data-view="${tab[0]}" aria-current="${state.section === tab[0] ? 'page' : 'false'}">${tabLabel(tab)}</button>`;
       }).join('')}</nav>
-      <div class="account">${headerContextMarkup()}${student ? docChipMarkup(state.studentHome) : ''}${showNotes ? `<button type="button" class="journey-toggle" id="notes-toggle" aria-expanded="${state.notesOpen ? 'true' : 'false'}" aria-controls="notes-panel">Notes</button>` : ''}${showJourney ? `<button type="button" class="journey-toggle" id="journey-toggle" aria-expanded="${state.journeyOpen ? 'true' : 'false'}" aria-controls="journey-panel">${showNotes ? 'Student Journey' : 'Journey'}</button>` : ''}<span id="request-indicator" class="request-indicator" aria-live="polite" aria-busy="false"></span><div>${escapeHtml(state.user.displayName)} <button type="button" id="sign-out" style="margin-left:8px;border:0;background:transparent;color:#e8f0f5;font-weight:700;">Sign out</button></div></div>
+      <div class="account">${headerContextMarkup()}${showNotes ? `<button type="button" class="journey-toggle" id="notes-toggle" aria-expanded="${state.notesOpen ? 'true' : 'false'}" aria-controls="notes-panel">Notes</button>` : ''}${showJourney ? `<button type="button" class="journey-toggle" id="journey-toggle" aria-expanded="${state.journeyOpen ? 'true' : 'false'}" aria-controls="journey-panel">${showNotes ? 'Student Journey' : 'Journey'}</button>` : ''}<span id="request-indicator" class="request-indicator" aria-live="polite" aria-busy="false"></span><div>${escapeHtml(state.user.displayName)} <button type="button" id="sign-out" style="margin-left:8px;border:0;background:transparent;color:#e8f0f5;font-weight:700;">Sign out</button></div></div>
     </header>
     <div id="feedback-region" aria-live="polite"></div>
     ${showNotes ? staffStudentDrawersHtml({ journeyOpen: state.journeyOpen, notesOpen: state.notesOpen }) : ''}
@@ -212,7 +211,6 @@ export function renderShell() {
       if (!requestPush()) return;
       state.section = button.dataset.view;
       state.view = state.section;
-      state.studentFocus = '';
       state.emailDesk = false;
       state.noticeEdit = null;
       state.selectedStudent = null;
@@ -305,7 +303,7 @@ function bindHeaderContext() {
 
 export function tabLabel(tab) {
   const helpUnread = state.studentHome ? state.studentHome.unreadTicketCount : (state.messageDesks.student ? state.messageDesks.student.unreadCount : 0);
-  if (tab[0] === 'supervisor' && helpUnread) return 'Supervisor<span class="dot" aria-label="Unread reply"></span>';
+  if (tab[0] === 'help' && helpUnread) return 'Help<span class="dot" aria-label="Unread reply"></span>';
   if (tab[0] === 'tickets' && state.staffTicketUnread) return 'Messages<span class="dot" aria-label="Unread messages"></span>';
   return tab[1];
 }
