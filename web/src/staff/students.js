@@ -7,7 +7,8 @@ import { loadingLine } from '../shared/loading.js';
 import { advanceScene, sameScene } from '../shared/scene.js';
 import { hideListJourneyTip } from '../shared/sessionChrome.js';
 import { state } from '../shared/state.js';
-import { bindUnreadNotices, paintStudentPage, renderUnreadNotices } from '../student/home.js';
+import { bindUnreadNotices, renderUnreadNotices } from '../student/home.js';
+import { paintStaffPreview } from '../student/views.js';
 import { dueSortKey, journeyDayLabel, milestoneMark, phaseCardAttrs, phaseRangeLabel } from '../student/journey.js';
 import { openMassMilestoneEditor } from '../student/milestones.js';
 import { bindSupervisorTodoList, mayManageSupervisorTodos, renderSupervisorDesk, supervisorTodoList } from './supervisorTodos.js';
@@ -15,6 +16,7 @@ import { bindSupervisorTodoList, mayManageSupervisorTodos, renderSupervisorDesk,
 export function openStaffStudent(email) {
   callServer('getStaffStudentHome', email, state.cohortId, state.actingAs).then(function(detail) {
     state.staffStudentHome = detail;
+    state.staffPreviewView = 'document';
     state.staffPane = 'home';
     state.journeyOpen = true;
     state.notesOpen = false;
@@ -69,7 +71,7 @@ export function renderStaffHome() {
 }
 
 export function paintStaffAsStudent(home) {
-  paintStudentPage(home);
+  paintStaffPreview(home);
 }
 
 export function staffSortValue(student, sort) {
