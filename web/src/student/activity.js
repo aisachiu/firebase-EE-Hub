@@ -37,6 +37,7 @@ export var ACTIVITY_PAGE_SIZE = 16;
 export var ACTIVITY_KINDS = [
   ['all', 'All'],
   ['sign-in', 'Sign-ins'],
+  ['view', 'Views'],
   ['form', 'Forms'],
   ['task', 'Tasks'],
   ['question', 'Messages'],

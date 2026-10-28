@@ -1,13 +1,26 @@
-import { activityFeed } from './activity';
+import { activityFeed, studentViewEventName } from './activity';
 import { getStudentActionItems, latestReturned, readActionItemsForEmails, readEvents } from './actions';
 import { canCompleteMilestone, HubUser, normalizeStaffView } from './permissions';
 import { coordinatorOrAdmin, findPlacement, loginAliasMap, orderTemplates, readPhases, readRoster, readStaffTables, readTemplates, staffMayAddStudentTodo, staffMayUpdateAllMilestones, staffStudentContext } from './roster';
 import { COLLECTIONS } from './schema';
-import { App, deny, requireStaff, requireUser } from './session';
+import { App, audit, deny, requireStaff, requireUser } from './session';
 import { staffUnreadNotices, studentTicketNotice } from './messaging';
 import { publishedFormIds } from './forms';
 import { listAddedSupervisorTodos, supervisorOwnedMilestones } from './supervisorTodos';
 import { dateOnlyValue, text } from './util';
+
+function sessionNotesFrom(events: { type: string; taskId: string; milestoneId: string; comment: string; at: string; actor: string }[]) {
+  return events
+    .filter((event) => event.type === 'session_logged' && event.comment)
+    .map((event) => ({
+      taskId: event.taskId,
+      milestoneId: event.milestoneId,
+      comment: event.comment,
+      at: event.at,
+      actor: event.actor,
+    }))
+    .sort((left, right) => String(right.at).localeCompare(String(left.at)));
+}
 
 function todayUtc() {
   const now = new Date();
@@ -33,12 +46,15 @@ export async function getStudentHome(app: App) {
   const published: Record<string, boolean> = {};
   (await publishedFormIds(app)).forEach((id) => { published[id] = true; });
   const ticketNotice = await studentTicketNotice(app, user.email);
+  const names = await staffDirectory(app);
   return {
     displayName: placement.displayName || user.displayName,
     email: user.email,
     cohort: placement.cohortId || '',
     subject: placement.subject || '',
     supervisorId: placement.supervisorId || '',
+    supervisorName: names[placement.supervisorId || ''] || '',
+    sessionNotes: sessionNotesFrom(events),
     hrm: placement.hrm || '',
     anchor: placement.anchor || '',
     links: { folder: placement.folder || '', doc: placement.doc || '', rppf: placement.rppf || '', poster: placement.poster || '' },
@@ -219,6 +235,7 @@ export async function getStaffStudentHome(app: App, studentEmail: unknown, cohor
   const published: Record<string, boolean> = {};
   (await publishedFormIds(app)).forEach((id) => { published[id] = true; });
   const roster = context.roster;
+  const names = await staffDirectory(app);
   return {
     staffView: true,
     viewAs: context.view,
@@ -230,6 +247,8 @@ export async function getStaffStudentHome(app: App, studentEmail: unknown, cohor
     cohort: text(cohortId),
     subject: roster.subject || '',
     supervisorId: roster.supervisorId || '',
+    supervisorName: names[roster.supervisorId || ''] || '',
+    sessionNotes: sessionNotesFrom(events),
     hrm: roster.hrm || '',
     anchor: roster.anchor || '',
     surname: roster.surname || '',
@@ -242,6 +261,20 @@ export async function getStaffStudentHome(app: App, studentEmail: unknown, cohor
     unreadTicketCount: 0,
     unreadTickets: [],
   };
+}
+
+export async function recordStudentView(app: App, view: unknown) {
+  const user = await requireUser(app, 'RECORD_STUDENT_VIEW');
+  if (user.role !== 'student') return deny(app, user, 'RECORD_STUDENT_VIEW', 'Student access required.');
+  const event = studentViewEventName(view);
+  const placement = await findPlacement(app, user.email);
+  await audit(app, event, {
+    event,
+    view: text(view),
+    cohort: placement?.cohortId || '',
+    actor: 'student',
+  }, user.email);
+  return { ok: true, event };
 }
 
 export async function getMyActivity(app: App) {
