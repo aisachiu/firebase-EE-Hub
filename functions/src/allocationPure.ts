@@ -1638,6 +1638,29 @@ export function subjectShortLabel(subject: Doc): string {
   return '';
 }
 
+/**
+ * Subject rows in the order Auto Apply Colours should paint.
+ * A visual id list (the current table order) wins. With no list, names sort alphabetically.
+ * Named subjects missing from the list are appended alphabetically so none are skipped.
+ */
+export function orderSubjectsForColours(records: Doc[], visualIds: unknown): Doc[] {
+  const named = records.filter((record) => text(record.Name) && text(record['Subject ID']));
+  const requested = Array.isArray(visualIds) ? visualIds.map((item) => text(item)).filter(Boolean) : [];
+  const byName = (left: Doc, right: Doc) => text(left.Name).localeCompare(text(right.Name), 'en', { sensitivity: 'base' });
+  if (!requested.length) return named.slice().sort(byName);
+  const byId = new Map(named.map((record) => [text(record['Subject ID']), record]));
+  const ordered: Doc[] = [];
+  const seen = new Set<string>();
+  requested.forEach((id) => {
+    const record = byId.get(id);
+    if (!record || seen.has(id)) return;
+    seen.add(id);
+    ordered.push(record);
+  });
+  named.filter((record) => !seen.has(text(record['Subject ID']))).sort(byName).forEach((record) => ordered.push(record));
+  return ordered;
+}
+
 /** Distinct colours spaced evenly around the hue wheel. */
 export function spectrumColours(count: number): string[] {
   const total = Math.max(0, Math.floor(count));

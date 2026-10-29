@@ -810,7 +810,7 @@ main.staff-list { max-width: 1480px; }
 .supervisor-cue { margin: 0; padding: 2px 8px; border: 1px solid var(--subject, var(--line)); border-radius: 999px; background: var(--subject-bg, white); color: var(--subject-fg, #495057); font-size: 11px; font-weight: 700; cursor: pointer; }
 .supervisor-cue.is-chosen { font-weight: 800; outline: 3px solid var(--ink); outline-offset: 1px; box-shadow: 0 0 0 1px white; }
 .alloc-cue-empty { margin: 6px 0 0; }
-.id-tag { padding: 1px 5px; border-radius: 3px; background: #e7f1f8; color: var(--ink); font-size: 10px; font-weight: 800; letter-spacing: .04em; }
+.id-tag { display: inline-block; padding: 2px 8px; border-radius: 3px; background: #e7f1f8; color: var(--ink); font-size: 12px; font-weight: 800; letter-spacing: .04em; line-height: 1.3; }
 .alloc-legend { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; margin: 0 0 8px; }
 .alloc-legend-item { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); font-size: 12px; }
 .alloc-student-name { font-weight: 700; text-align: left; }
@@ -853,6 +853,11 @@ body.has-alloc-drawer.alloc-drawer-open { padding-right: clamp(300px, 34vw, 420p
 .alloc-subject-block { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 8px 12px; border-bottom: 1px solid var(--line); }
 .alloc-subject-name { margin: 0; text-align: left; }
 .alloc-subject-figures { margin: 0; align-self: flex-end; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.alloc-subject-block .alloc-meter { align-self: stretch; margin-top: 6px; }
+.alloc-capacity-warn { color: #c1121f; font-weight: 800; }
+.alloc-assigned .alloc-meter { margin: 0 12px 8px; }
+.alloc-token-open { color: var(--green); }
+.alloc-token-taken { color: #111; }
 .alloc-load-note { margin: 0; padding: 10px 12px 12px; font-size: 12px; }
 .alloc-load { padding: 12px; border-bottom: 1px solid var(--line); }
 .alloc-load p { margin: 0 0 6px; }
