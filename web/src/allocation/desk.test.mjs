@@ -271,6 +271,15 @@ test('allocation desk tags, filter, column order, supervisor cues, and token loa
     assert.match(busyHtml, /id="alloc-resync-live"[^>]*disabled/);
     assert.match(busyHtml, /Resyncing live choice data/);
     state.allocationLiveBusy = '';
+    linkedDesk.settings.lastSyncedAt = new Date(Date.now() - 15000).toISOString();
+    const cooling = deskMod.allocationDashboardMarkup(linkedDesk);
+    assert.match(cooling, /id="alloc-resync-live"[^>]*disabled/);
+    assert.match(cooling, /Last synced 1[45] seconds ago/);
+    linkedDesk.settings.lastSyncedAt = new Date(Date.now() - 120000).toISOString();
+    const cooled = deskMod.allocationDashboardMarkup(linkedDesk);
+    assert.doesNotMatch(cooled.slice(cooled.indexOf('id="alloc-resync-live"'), cooled.indexOf('id="alloc-resync-live"') + 160), /disabled/);
+    assert.match(cooled, /Last synced \d+ seconds ago/);
+    delete linkedDesk.settings.lastSyncedAt;
 
     const board = deskMod.cohortTokensMarkup({
       cohortId: '2026',
@@ -311,7 +320,95 @@ test('allocation desk tags, filter, column order, supervisor cues, and token loa
     state.allocationAllocatedFilter = [];
     state.allocationTeacherFilter = ['art@school.edu'];
     assert.deepEqual(deskMod.visibleAllocationStudents(flagSource).map((item) => item.studentId), ['mark@school.edu']);
+
+    const live = await server.ssrLoadModule('/src/allocation/realtime.js');
+    const pending = {
+      'jane@school.edu': { staffId: 'psy@school.edu', subject: 'Psychology', interdisciplinary: true, acked: false, ackRevision: 0 },
+    };
+    const remote = desk();
+    const shown = live.overlayPendingEdits(remote, pending);
+    assert.equal(shown.students[0].token.staffId, 'psy@school.edu');
+    assert.equal(shown.students[0].token.assignedSubject, 'Psychology');
+    assert.equal(shown.students[0].token.interdisciplinary, true);
+    assert.equal(shown.students[0].token.status, 'draft');
+    assert.equal(shown.students[1].studentId, 'mark@school.edu');
+    assert.equal(shown.students[1].token, null);
+    const echoed = desk();
+    echoed.students[0].token = { staffId: 'psy@school.edu', assignedSubject: 'Psychology', interdisciplinary: true, status: 'draft' };
+    assert.deepEqual(live.reconcilePendingEdits(pending, echoed, 2), {});
+    const other = desk();
+    other.students[0].token = { staffId: 'art@school.edu', assignedSubject: 'Theater', interdisciplinary: false, status: 'draft' };
+    assert.equal(live.reconcilePendingEdits(pending, other, 2)['jane@school.edu'].staffId, 'psy@school.edu');
+    const acked = { 'jane@school.edu': Object.assign({}, pending['jane@school.edu'], { acked: true, startedAt: '2026-10-29T00:00:00.000Z' }) };
+    assert.equal(live.reconcilePendingEdits(acked, other, { 'jane@school.edu': '2026-10-28T00:00:00.000Z' })['jane@school.edu'].staffId, 'psy@school.edu');
+    assert.deepEqual(live.reconcilePendingEdits(acked, other, { 'jane@school.edu': '2026-10-29T00:00:01.000Z' }), {});
+    const kept = live.overlayPendingEdits(other, pending);
+    assert.equal(kept.students[0].token.staffId, 'psy@school.edu');
+    assert.equal(kept.students[0].token.staffName, 'Dr Psy');
+
+    const built = live.deskFromAllocationSources('2026', {
+      members: [{ StudentId: 'jane@school.edu', Surname: 'Doe', 'First Name': 'Jane', eeActive: true }],
+      workspace: [{ id: 'jane@school.edu', studentId: 'jane@school.edu', subjectChoices: { choice1: 'Psychology' }, dynamicData: {}, pendingClear: false }],
+      tokens: [{ id: 't1', cohortId: '2026', staffId: 'psy@school.edu', allocatedTo: 'jane@school.edu', assignedSubject: 'Psychology', interdisciplinary: true, status: 'draft', eligibleSubjects: ['Psychology'] }],
+      settings: { primaryChoiceKey: 'choice1', lastSyncedAt: '2026-10-29T00:00:00.000Z', columns: [], columnMappings: {} },
+      staff: [{ id: 'psy@school.edu', EMAIL: 'psy@school.edu', DisplayName: 'Dr Psy' }],
+      subjects: [{ Name: 'Psychology', Active: true, Colour: '#6b4c9a' }],
+    });
+    assert.equal(built.students.length, 1);
+    assert.equal(built.students[0].token.staffName, 'Dr Psy');
+    assert.equal(built.students[0].token.interdisciplinary, true);
+    assert.equal(built.students[0].token.assignedSubject, 'Psychology');
+    assert.equal(built.settings.lastSyncedAt, '2026-10-29T00:00:00.000Z');
+    assert.equal(built.students[0].requestedSubjects[0].name, 'Psychology');
   } finally {
+    await server.close();
+  }
+});
+
+test('allocation listeners unsubscribe when the dashboard is left', async () => {
+  const server = await createServer({ server: { middlewareMode: true }, appType: 'custom', logLevel: 'error' });
+  const previousWindow = globalThis.window;
+  try {
+    globalThis.window = globalThis;
+    let stops = 0;
+    window.eeCall = function() {
+      return Promise.resolve({ driveReady: true, settings: { columns: [] }, students: [], supervisors: [] });
+    };
+    window.eeWatchAllocation = function() {
+      return function() { stops += 1; };
+    };
+    const live = await server.ssrLoadModule('/src/allocation/realtime.js');
+    const stateMod = await server.ssrLoadModule('/src/shared/state.js');
+    globalThis.document = {
+      getElementById() { return null; },
+      querySelector() { return null; },
+      addEventListener() {},
+      scrollingElement: null,
+    };
+    stateMod.state.cohortId = '2026';
+    stateMod.state.section = 'allocation';
+    stateMod.state.allocationView = 'dashboard';
+    live.beginAllocationWatch('2026');
+    live.beginAllocationWatch('2027');
+    stateMod.state.allocationPendingEdits = { 'jane@school.edu': { staffId: 'psy@school.edu', subject: 'Psychology', interdisciplinary: false } };
+    assert.equal(stops, 1);
+    assert.equal(stateMod.state.allocationWatchCohort, '2027');
+    live.releaseAllocationWatch();
+    assert.equal(stops, 2);
+    assert.equal(stateMod.state.allocationWatchCohort, '');
+    assert.deepEqual(stateMod.state.allocationPendingEdits, {});
+    assert.equal(typeof window.eeReleaseAllocationWatch, 'function');
+    window.eeWatchAllocation = function() {
+      return function() { stops += 1; };
+    };
+    live.beginAllocationWatch('2026');
+    window.eeReleaseAllocationWatch();
+    assert.equal(stops, 3);
+    assert.equal(stateMod.state.allocationWatchCohort, '');
+  } finally {
+    if (previousWindow === undefined) delete globalThis.window;
+    else globalThis.window = previousWindow;
+    delete globalThis.document;
     await server.close();
   }
 });

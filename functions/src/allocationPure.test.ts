@@ -17,6 +17,9 @@ import {
   indexLiveRoster,
   liveLinkProblems,
   liveSheetLinked,
+  liveSyncAge,
+  liveSyncCooldownError,
+  liveWorkspaceDirty,
   mergeDetected,
   mergeLiveChoiceRow,
   mergeStaticWorkspaceRow,
@@ -660,6 +663,20 @@ test('live sheet mappings merge choice data onto static auxiliary columns', () =
   assert.equal(merged.dynamicData['HL subjects'], 'Bio');
   assert.equal(merged.dynamicData['Mentor note'], 'Bring sources');
   assert.equal(merged.pendingClear, true);
+  assert.equal(liveWorkspaceDirty(undefined, merged), true);
+  assert.equal(liveWorkspaceDirty({ ...merged, updatedAt: 'earlier' }, { ...merged, updatedAt: 'later' }), false);
+  assert.equal(liveWorkspaceDirty(merged, { ...merged, subjectChoices: { ...merged.subjectChoices, choice1: 'Art' } }), true);
+  const fresh = liveSyncAge('', Date.parse('2026-10-29T00:01:00.000Z'));
+  assert.equal(fresh.blocked, false);
+  assert.equal(fresh.label, '');
+  const recent = liveSyncAge('2026-10-29T00:00:45.000Z', Date.parse('2026-10-29T00:01:00.000Z'));
+  assert.equal(recent.blocked, true);
+  assert.equal(recent.secondsAgo, 15);
+  assert.equal(recent.label, 'Last synced 15 seconds ago');
+  assert.match(liveSyncCooldownError('2026-10-29T00:00:45.000Z', Date.parse('2026-10-29T00:01:00.000Z')), /Last synced 15 seconds ago/);
+  const cooled = liveSyncAge('2026-10-29T00:00:00.000Z', Date.parse('2026-10-29T00:01:00.000Z'));
+  assert.equal(cooled.blocked, false);
+  assert.equal(cooled.secondsAgo, 60);
   const roundTrip = settingsFromDoc(settings);
   assert.equal(roundTrip.spreadsheetId, settings.spreadsheetId);
   assert.equal(roundTrip.columnMappings.subjectChoice.primary, 'First choice');

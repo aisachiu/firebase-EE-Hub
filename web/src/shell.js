@@ -176,6 +176,9 @@ export function renderShell() {
   const tabs = sectionTabs(state.user, state.actingAs);
   if (!tabs.some(function(tab) { return tab[0] === state.section; })) state.section = fallbackSection(state);
   state.view = state.section;
+  if (state.section !== 'allocation' && typeof window.eeReleaseAllocationWatch === 'function') {
+    window.eeReleaseAllocationWatch();
+  }
   document.body.classList.toggle('has-journey', showJourney);
   document.body.classList.toggle('journey-open', showJourney && state.journeyOpen);
   document.body.classList.toggle('has-notes', showNotes);
