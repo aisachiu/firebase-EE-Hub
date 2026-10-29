@@ -6,13 +6,24 @@ import {
   allocationTab,
   applySavedConfig,
   buildDesk,
+  columnMappingsFrom,
+  emptyColumnMappings,
   COLOR_SCALE_STOPS,
   colorScaleFill,
   columnScaleExtent,
   emptySettings,
   findAllocationTab,
   isEeActive,
+  indexLiveRoster,
+  liveLinkProblems,
+  liveSheetLinked,
   mergeDetected,
+  mergeLiveChoiceRow,
+  mergeStaticWorkspaceRow,
+  parseLiveSheet,
+  resolveLiveStudent,
+  settingsForLiveLink,
+  settingsFromDoc,
   parseTokenGrid,
   parseWorkspaceGrid,
   tokenPreviewRows,
@@ -562,6 +573,80 @@ test('a draft is refused when the EE subject does not match the supervisor token
     columns: [{ key: 'Notes', showOnCard: false, filterable: false, sortable: false, expanded: true }],
   });
   assert.equal(saved.columns.find((column) => column.key === 'Notes')?.expanded, true);
+  assert.equal(saved.liveSheetUrl, '');
+  assert.deepEqual(saved.columnMappings, emptyColumnMappings());
+});
+
+test('live sheet mappings merge choice data onto static auxiliary columns', () => {
+  const headers = ['Student Number', 'Student Email', 'First choice', 'HL subjects'];
+  const mappings = columnMappingsFrom({
+    core: { studentNumber: 'Student Number', studentEmail: 'Student Email' },
+    subjectChoice: { primary: 'First choice' },
+    dashboard: { hl: 'HL subjects' },
+  });
+  assert.match(liveLinkProblems(emptyColumnMappings(), headers)[0], /Student Number or Student Email/);
+  assert.match(liveLinkProblems(columnMappingsFrom({ core: { studentEmail: 'Student Email' } }), headers)[0], /Primary choice/);
+  assert.deepEqual(liveLinkProblems(mappings, headers), []);
+  assert.match(liveLinkProblems(mappings, ['Student Email'])[0], /not on this sheet/);
+
+  const parsed = parseLiveSheet({
+    title: 'Choices',
+    rows: [
+      headers,
+      ['20260001', JANE, 'Physics', 'Bio'],
+      ['', '', '', ''],
+      ['999', 'missing@vsa.edu', 'Art', ''],
+    ],
+  }, mappings);
+  assert.equal(parsed.rows.length, 2);
+  assert.equal(parsed.rows[0].line, 2);
+  assert.equal(parsed.rows[1].line, 4);
+  const settings = settingsForLiveLink(emptySettings(), 'https://docs.google.com/spreadsheets/d/abc123_XYZ-000000000000/edit', 'abc123_XYZ-000000000000', 'Choices', mappings);
+  assert.equal(liveSheetLinked(settings), true);
+  assert.equal(settings.primaryChoiceKey, 'choice1');
+  assert.equal(settings.hlColumn, 'HL subjects');
+  assert.equal(settings.sheetName, 'Choices');
+  assert.equal(settings.liveSheetTab, 'Choices');
+  const index = indexLiveRoster([
+    { studentId: JANE, studentNumber: '20260001', studentEmail: '' },
+    { studentId: MARK, studentNumber: '', studentEmail: '' },
+  ]);
+  assert.equal(resolveLiveStudent(parsed.rows[0], index, mappings).studentId, JANE);
+  assert.match(resolveLiveStudent(parsed.rows[1], index, mappings).warning, /not on the roster/);
+  const emailOnly = columnMappingsFrom({
+    core: { studentEmail: 'Student Email' },
+    subjectChoice: { primary: 'First choice' },
+  });
+  const emailRow = parseLiveSheet({ title: 'Choices', rows: [headers, ['', MARK, 'Art', '']] }, emailOnly).rows[0];
+  assert.equal(resolveLiveStudent(emailRow, index, emailOnly).studentId, MARK);
+  const merged = mergeLiveChoiceRow({
+    studentId: JANE,
+    subjectChoices: { choice1: 'History', choice2: 'Eng Lit' },
+    dynamicData: { 'Y10 GPA': 'Weak' },
+    pendingClear: true,
+    updatedAt: '',
+  }, parsed.rows[0], settings, JANE, '2026-10-29T00:00:00.000Z');
+  assert.equal(merged.subjectChoices.choice1, 'Physics');
+  assert.equal(merged.subjectChoices.choice2, 'Eng Lit');
+  assert.equal(merged.dynamicData['Y10 GPA'], 'Weak');
+  assert.equal(merged.dynamicData['HL subjects'], 'Bio');
+  assert.equal(merged.pendingClear, true);
+  const roundTrip = settingsFromDoc(settings);
+  assert.equal(roundTrip.spreadsheetId, settings.spreadsheetId);
+  assert.equal(roundTrip.columnMappings.subjectChoice.primary, 'First choice');
+  const kept = applySavedConfig(roundTrip, { primaryChoiceKey: 'choice1', columns: [] });
+  assert.equal(kept.liveSheetUrl, settings.liveSheetUrl);
+  assert.equal(kept.columnMappings.dashboard.hl, 'HL subjects');
+  const staticAgain = mergeStaticWorkspaceRow({
+    studentId: JANE,
+    subjectChoices: { choice1: 'Art', choice2: 'Drama' },
+    dynamicData: { 'Y10 GPA': 'Strong' },
+    eeActive: null,
+  }, merged, kept, '2026-10-29T01:00:00.000Z');
+  assert.equal(staticAgain.subjectChoices.choice1, 'Physics');
+  assert.equal(staticAgain.subjectChoices.choice2, 'Drama');
+  assert.equal(staticAgain.dynamicData['Y10 GPA'], 'Strong');
+  assert.equal(staticAgain.dynamicData['HL subjects'], 'Bio');
 });
 
 function rgb(hex: string): [number, number, number] {

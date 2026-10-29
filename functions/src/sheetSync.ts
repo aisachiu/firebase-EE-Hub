@@ -37,6 +37,10 @@ export interface SheetWorkbook {
   create(title: string, grids: SheetGrid[]): Promise<SheetWorkbookFile>;
   read(spreadsheetId: string): Promise<SheetGrid[]>;
   share(spreadsheetId: string, email: string): Promise<void>;
+  /** Tab titles only. Callers fall back to read() when a workbook does not implement this. */
+  listTabs?(spreadsheetId: string): Promise<string[]>;
+  /** One tab, including its header row. Callers fall back to read() when this is omitted. */
+  readTab?(spreadsheetId: string, title: string): Promise<SheetGrid>;
 }
 
 export interface IngestTable {
@@ -603,6 +607,29 @@ export function openGoogleWorkbook(): Promise<SheetWorkbook> {
   return googleWorkbook();
 }
 
+export async function listWorkbookTabs(workbook: SheetWorkbook, spreadsheetId: string): Promise<string[]> {
+  if (workbook.listTabs) {
+    const titles = await workbook.listTabs(spreadsheetId);
+    return titles.map((title) => text(title)).filter(Boolean);
+  }
+  const grids = await workbook.read(spreadsheetId);
+  return grids.map((grid) => text(grid.title)).filter(Boolean);
+}
+
+export async function readWorkbookTab(workbook: SheetWorkbook, spreadsheetId: string, title: string): Promise<SheetGrid> {
+  const wanted = text(title);
+  if (!wanted) throw new HubError('Choose a sheet tab.');
+  if (workbook.readTab) {
+    const tabs = await listWorkbookTabs(workbook, spreadsheetId);
+    if (!tabs.includes(wanted)) throw new HubError(`The spreadsheet has no tab named "${wanted}".`);
+    return workbook.readTab(spreadsheetId, wanted);
+  }
+  const grids = await workbook.read(spreadsheetId);
+  const grid = grids.find((item) => item.title === wanted);
+  if (!grid) throw new HubError(`The spreadsheet has no tab named "${wanted}".`);
+  return grid;
+}
+
 async function googleWorkbook(): Promise<SheetWorkbook> {
   const auth = await getGoogleAuth();
   const { google } = await import('googleapis');
@@ -643,6 +670,19 @@ async function googleWorkbook(): Promise<SheetWorkbook> {
         });
       }
       return { spreadsheetId, url: `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit` };
+    },
+    async listTabs(spreadsheetId) {
+      const meta = await sheets.spreadsheets.get({ spreadsheetId, fields: 'sheets.properties.title' });
+      return (meta.data.sheets || []).map((sheet) => sheet.properties?.title || '').filter(Boolean);
+    },
+    async readTab(spreadsheetId, title) {
+      const response = await sheets.spreadsheets.values.get({
+        spreadsheetId,
+        range: `'${title.replace(/'/g, "''")}'`,
+        valueRenderOption: 'UNFORMATTED_VALUE',
+        dateTimeRenderOption: 'SERIAL_NUMBER',
+      });
+      return { title, rows: response.data.values || [] };
     },
     async read(spreadsheetId) {
       const meta = await sheets.spreadsheets.get({ spreadsheetId, fields: 'sheets.properties.title' });

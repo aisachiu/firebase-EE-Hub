@@ -1,4 +1,4 @@
-import { colorScaleFill, columnScaleExtent, scaleNumber, subjectTokenLoad, subjectsOverlap } from '../../../functions/src/allocationPure.ts';
+import { colorScaleFill, columnMappingsFrom, columnScaleExtent, LIVE_SHEET_FIELDS, LIVE_SHEET_GROUPS, liveLinkProblems, liveSheetLinked, scaleNumber, subjectTokenLoad, subjectsOverlap } from '../../../functions/src/allocationPure.ts';
 import { adminDialogKind, closeAdminDialog, openAdminDialog } from '../admin/records.js';
 import { openStaffQuotas } from '../admin/staff.js';
 import { callServer } from '../shared/api.js';
@@ -69,6 +69,7 @@ export function loadAllocation() {
     return callServer('getAllocationDesk', state.cohortId);
   }).then(function(desk) {
     if (!desk) return;
+    rememberLiveCohort(desk);
     state.allocationDesk = desk;
     paintAllocation();
   }).catch(showError);
@@ -92,6 +93,9 @@ export function allocationDeskColumns(settings) {
 
 export function allocationDashboardMarkup(desk) {
   const students = visibleAllocationStudents(desk);
+  const settings = desk.settings || {};
+  const liveLinked = liveSheetLinked(settings);
+  const liveSyncing = state.allocationLiveBusy === 'resync';
   const columns = allocationDeskColumns(desk.settings);
   const sort = adminSortState('alloc-desk');
   const supervisors = desk.supervisors || [];
@@ -115,7 +119,12 @@ export function allocationDashboardMarkup(desk) {
     return sortableHeader('alloc-desk', 'field:' + column.key, column.key);
   }).join('');
   return `<div class="alloc-layout"><div>
-      <p class="muted">${summary.activeStudents} active students · ${summary.tokenCount} tokens · ${summary.buffer >= 0 ? '+' + summary.buffer + ' buffer' : 'short by ' + (-summary.buffer)}</p>
+      <div class="toolbar">
+        <p class="muted">${summary.activeStudents} active students · ${summary.tokenCount} tokens · ${summary.buffer >= 0 ? '+' + summary.buffer + ' buffer' : 'short by ' + (-summary.buffer)}</p>
+        ${liveLinked ? `<button type="button" class="button secondary" id="alloc-resync-live" ${liveSyncing || desk.driveReady === false ? 'disabled' : ''} aria-busy="${liveSyncing ? 'true' : 'false'}">Resync Live Choice Data</button>` : ''}
+      </div>
+      ${liveSyncing ? '<p class="load-status" id="alloc-resync-status">Resyncing live choice data…</p>' : ''}
+      ${liveLinked && settings.lastLiveSync ? `<p class="muted">Last live sync ${escapeHtml(allocationWhen(settings.lastLiveSync))}</p>` : ''}
       ${desk.warnings && desk.warnings.length ? `<p class="notice">${escapeHtml(desk.warnings[0])}</p>` : ''}
       ${collapsibleHeader('alloc-filters', 'Filters', `<div class="alloc-filters">
         <div><span class="alloc-kicker">Status</span><div class="view-toggle" role="group" aria-label="Status">
@@ -639,7 +648,7 @@ export function allocationSettingsMarkup(desk) {
   return `<p class="muted">Showing student data for the cohort selected in the header.</p>
     ${collapsibleHeader('alloc-sync', 'Google Sheets sync', `<section class="alloc-panel">
         ${desk.driveReady ? '' : `<p class="notice">${escapeHtml(desk.driveError || 'Connect Google in Admin → Google account before ingesting sheets.')}</p>`}
-        <p class="doc-hint">Choose workspace or tokens, export a workbook if you need one, paste the link, then preview. Workspace ingest reads <code>COHORTDATA: ${escapeHtml(state.cohortId)}</code> and upserts by StudentId. Token ingest reads <code>SUPERVISORTOKENS: ${escapeHtml(state.cohortId)}</code> and tops up quotas. Neither deletes rows that are missing from the sheet.</p>
+        <p class="doc-hint">Choose workspace or tokens, export a workbook if you need one, paste the link, then preview. Workspace ingest reads <code>COHORTDATA: ${escapeHtml(state.cohortId)}</code> and upserts by StudentId. Token ingest reads <code>SUPERVISORTOKENS: ${escapeHtml(state.cohortId)}</code> and tops up quotas. Neither deletes rows that are missing from the sheet. When a live choice sheet is linked, a workspace ingest keeps the live choice values and live dashboard columns, and still updates the other auxiliary columns.</p>
         <div class="sheet-choices" role="radiogroup" aria-label="Ingest kind">
           <label class="check-option"><input type="radio" name="alloc-ingest-kind" value="workspace" ${kind === 'workspace' ? 'checked' : ''}><span>Workspace data <span class="muted">COHORTDATA: ${escapeHtml(state.cohortId)}</span></span></label>
           <label class="check-option"><input type="radio" name="alloc-ingest-kind" value="tokens" ${kind === 'tokens' ? 'checked' : ''}><span>Supervisor tokens <span class="muted">SUPERVISORTOKENS: ${escapeHtml(state.cohortId)}</span></span></label>
@@ -655,6 +664,7 @@ export function allocationSettingsMarkup(desk) {
         <input id="alloc-sheet-url" value="${escapeHtml(state.allocationSheetUrl)}" placeholder="https://docs.google.com/spreadsheets/d/...">
         <label class="check-option"><input type="checkbox" id="alloc-ingest-confirm"><span id="alloc-confirm-label">${escapeHtml(allocationConfirmCopy(kind))}</span></label>
         <div class="toolbar"><button class="button secondary" id="alloc-preview" type="button">Preview ingest</button><button class="button" id="alloc-apply" type="button" disabled>Apply ingest</button></div>
+        ${allocationLiveSheetMarkup(desk)}
       </section>`, collapsed)}
     ${collapsibleHeader('alloc-cohortdata', 'COHORTDATA Columns', workspaceHelpMarkup(state.cohortId), collapsed)}
     <div id="alloc-preview-result"></div>
@@ -957,6 +967,7 @@ export function bindAllocation(target, desk) {
   if (exportButton) exportButton.addEventListener('click', exportAllocations);
   const exportTokens = document.getElementById('alloc-export-tokens');
   if (exportTokens) exportTokens.addEventListener('click', exportAllocationTokens);
+  bindLiveSheet(target);
   ['alloc-save-config', 'alloc-save-config-fields'].forEach(function(id) {
     const save = document.getElementById(id);
     if (save) save.addEventListener('click', saveAllocationSettings);
@@ -1240,6 +1251,281 @@ export function captureAllocationColumns() {
     columns[key][flag] = box.checked;
   });
   state.allocationDesk.settings.columns = Object.keys(columns).map(function(key) { return columns[key]; });
+}
+
+export function allocationLiveSheetMarkup(desk) {
+  const settings = (desk && desk.settings) || {};
+  const url = liveFormUrl(settings);
+  const tab = liveFormTab(settings);
+  const tabs = liveFormTabs();
+  const headers = liveFormHeaders();
+  const mappings = liveFormMappings(settings);
+  const busy = state.allocationLiveBusy || '';
+  const loading = busy === 'tabs' || busy === 'headers' || busy === 'save';
+  const problems = headers.length ? liveLinkProblems(mappings, headers) : [];
+  const driveBlocked = desk && desk.driveReady === false;
+  const saveBlocked = !headers.length || problems.length > 0 || loading || driveBlocked;
+  const linked = liveSheetLinked(settings);
+  const loadLabel = busy === 'tabs' ? 'Loading sheet tabs…' : 'Load sheet tabs';
+  const tabOptions = ['<option value="">Choose a tab</option>'].concat(tabs.map(function(name) {
+    return `<option value="${escapeHtml(name)}" ${name === tab ? 'selected' : ''}>${escapeHtml(name)}</option>`;
+  })).join('');
+  const mapping = headers.length ? `<div id="alloc-live-map">${LIVE_SHEET_GROUPS.map(function(group) {
+    const fields = LIVE_SHEET_FIELDS.filter(function(field) { return field.group === group.id; });
+    return `<h3>${escapeHtml(group.title)}</h3><p class="muted">${escapeHtml(group.note)}</p>${fields.map(function(field) {
+      const current = (mappings[field.group] && mappings[field.group][field.key]) || '';
+      return liveMapSelect(field, headers, current);
+    }).join('')}`;
+  }).join('')}<p class="notice" id="alloc-live-problems"${problems.length ? '' : ' hidden'}>${escapeHtml(problems.join(' '))}</p><div class="toolbar"><button type="button" class="button" id="alloc-live-save" ${saveBlocked ? 'disabled' : ''}>Save live link</button></div></div>` : `<p class="muted" id="alloc-live-problems">${tabs.length ? 'Choose a sheet tab to map its columns.' : (linked ? 'Load the workbook to change the linked tab or columns.' : 'Load the workbook to choose a tab.')}</p>`;
+  return `<div class="alloc-live">
+      <h3>Live choice sheet</h3>
+      <p class="muted">Link a Google Sheet that stays the source of truth for subject choices. Static ingest still fills auxiliary columns. Student Number or Student Email is the merge key, and Primary choice has to be mapped before the link can be saved.</p>
+      ${linked ? `<p class="muted">Linked spreadsheet <code>${escapeHtml(settings.spreadsheetId || '')}</code>${tab ? ` · tab <strong>${escapeHtml(settings.sheetName || settings.liveSheetTab || tab)}</strong>` : ''}${settings.lastLiveSync ? ` · last sync ${escapeHtml(allocationWhen(settings.lastLiveSync))}` : ''}.</p>` : ''}
+      <label class="field" for="alloc-live-url">Live Google Sheet URL</label>
+      <input id="alloc-live-url" value="${escapeHtml(url)}" placeholder="https://docs.google.com/spreadsheets/d/..." ${driveBlocked ? 'disabled' : ''}>
+      <div class="toolbar"><button type="button" class="button secondary" id="alloc-live-load" ${driveBlocked || loading ? 'disabled' : ''}>${loadLabel}</button></div>
+      ${loading ? loadingLine(busy === 'headers' ? 'Loading column headers…' : busy === 'save' ? 'Saving live sheet link…' : 'Loading sheet tabs…') : ''}
+      <div id="alloc-live-follow">
+        ${tabs.length ? `<label class="field" for="alloc-live-tab">Sheet tab</label><select id="alloc-live-tab">${tabOptions}</select>` : (linked && tab ? `<p class="muted">Linked tab: <strong>${escapeHtml(tab)}</strong>.</p>` : '')}
+        ${mapping}
+      </div>
+    </div>`;
+}
+
+function liveMapSelect(field, headers, current) {
+  const id = 'alloc-live-' + field.group + '-' + field.key;
+  const list = (headers || []).filter(Boolean);
+  if (current && list.indexOf(current) < 0) list.unshift(current);
+  const hint = field.hint ? ` <span class="muted">(${escapeHtml(field.hint)})</span>` : '';
+  return `<div class="alloc-map"><label for="${id}">${escapeHtml(field.label)}${hint}</label><select id="${id}" data-live-map="${escapeHtml(field.group + '.' + field.key)}"><option value="">Not mapped</option>${list.map(function(header) {
+    return `<option value="${escapeHtml(header)}" ${header === current ? 'selected' : ''}>${escapeHtml(header)}</option>`;
+  }).join('')}</select></div>`;
+}
+
+function liveFormUrl(settings) {
+  if (state.allocationLiveCohort === state.cohortId) return state.allocationLiveUrl || '';
+  return (settings && settings.liveSheetUrl) || '';
+}
+
+function liveFormTab(settings) {
+  if (state.allocationLiveCohort === state.cohortId) return state.allocationLiveTab || '';
+  return (settings && (settings.sheetName || settings.liveSheetTab)) || '';
+}
+
+function liveFormTabs() {
+  if (state.allocationLiveCohort !== state.cohortId) return [];
+  return state.allocationLiveTabs || [];
+}
+
+function liveFormHeaders() {
+  if (state.allocationLiveCohort !== state.cohortId) return [];
+  return state.allocationLiveHeaders || [];
+}
+
+function liveFormMappings(settings) {
+  if (state.allocationLiveCohort === state.cohortId && state.allocationLiveDraft) return state.allocationLiveDraft;
+  return columnMappingsFrom(settings && settings.columnMappings);
+}
+
+function rememberLiveCohort(desk) {
+  if (state.allocationLiveCohort === state.cohortId) return;
+  const settings = (desk && desk.settings) || {};
+  state.allocationLiveCohort = state.cohortId;
+  state.allocationLiveTabs = [];
+  state.allocationLiveHeaders = [];
+  state.allocationLiveDraft = null;
+  state.allocationLiveLoadedUrl = '';
+  state.allocationLiveBusy = '';
+  state.allocationLiveUrl = settings.liveSheetUrl || '';
+  state.allocationLiveTab = settings.sheetName || settings.liveSheetTab || '';
+}
+
+function looksLikeSheet(value) {
+  return /\/spreadsheets\/d\/[a-zA-Z0-9-_]+/.test(value) || /^[a-zA-Z0-9-_]{20,}$/.test(value);
+}
+
+function liveUrlFromDom() {
+  const input = document.getElementById('alloc-live-url');
+  const url = String((input && input.value) || state.allocationLiveUrl || '').trim();
+  state.allocationLiveUrl = url;
+  state.allocationLiveCohort = state.cohortId;
+  return url;
+}
+
+function tabFromDom() {
+  const select = document.getElementById('alloc-live-tab');
+  const tab = String((select && select.value) || state.allocationLiveTab || '').trim();
+  state.allocationLiveTab = tab;
+  state.allocationLiveCohort = state.cohortId;
+  return tab;
+}
+
+function readLiveMappingsFromDom() {
+  const mappings = columnMappingsFrom(state.allocationLiveDraft || (state.allocationDesk && state.allocationDesk.settings && state.allocationDesk.settings.columnMappings));
+  document.querySelectorAll('[data-live-map]').forEach(function(select) {
+    const path = String(select.getAttribute('data-live-map') || '').split('.');
+    if (path.length !== 2 || !mappings[path[0]]) return;
+    mappings[path[0]][path[1]] = select.value;
+  });
+  return mappings;
+}
+
+function syncLiveSaveState() {
+  const mappings = readLiveMappingsFromDom();
+  state.allocationLiveDraft = mappings;
+  const headers = liveFormHeaders();
+  const problems = headers.length ? liveLinkProblems(mappings, headers) : ['Choose a sheet tab to map its columns.'];
+  const save = document.getElementById('alloc-live-save');
+  const note = document.getElementById('alloc-live-problems');
+  const driveBlocked = state.allocationDesk && state.allocationDesk.driveReady === false;
+  if (save) save.disabled = problems.length > 0 || !!state.allocationLiveBusy || driveBlocked;
+  if (note) {
+    note.hidden = problems.length === 0;
+    note.textContent = problems.join(' ');
+  }
+}
+
+function bindLiveSheet(target) {
+  const liveUrl = document.getElementById('alloc-live-url');
+  if (liveUrl) {
+    liveUrl.addEventListener('input', function(event) {
+      state.allocationLiveUrl = event.target.value;
+      state.allocationLiveCohort = state.cohortId;
+      const trimmed = event.target.value.trim();
+      if (state.allocationLiveLoadedUrl && trimmed !== state.allocationLiveLoadedUrl) {
+        state.allocationLiveTabs = [];
+        state.allocationLiveHeaders = [];
+        state.allocationLiveLoadedUrl = '';
+        const follow = document.getElementById('alloc-live-follow');
+        if (follow) follow.hidden = true;
+      }
+    });
+    liveUrl.addEventListener('blur', function() {
+      const url = liveUrlFromDom();
+      if (!looksLikeSheet(url)) return;
+      if (state.allocationDesk && state.allocationDesk.driveReady === false) return;
+      if (url === state.allocationLiveLoadedUrl && (state.allocationLiveTabs || []).length) return;
+      loadLiveSheetTabs();
+    });
+  }
+  const loadTabs = document.getElementById('alloc-live-load');
+  if (loadTabs) loadTabs.addEventListener('click', loadLiveSheetTabs);
+  const tabSelect = document.getElementById('alloc-live-tab');
+  if (tabSelect) tabSelect.addEventListener('change', function() {
+    const name = tabFromDom();
+    state.allocationLiveHeaders = [];
+    state.allocationLiveDraft = null;
+    if (!name) {
+      paintAllocation();
+      return;
+    }
+    loadLiveSheetHeaders(name);
+  });
+  target.querySelectorAll('[data-live-map]').forEach(function(select) {
+    select.addEventListener('change', syncLiveSaveState);
+  });
+  const save = document.getElementById('alloc-live-save');
+  if (save) save.addEventListener('click', saveLiveSheetLink);
+  const resync = document.getElementById('alloc-resync-live');
+  if (resync) resync.addEventListener('click', resyncLiveChoiceData);
+}
+
+export function loadLiveSheetTabs() {
+  if (state.allocationLiveBusy === 'tabs' || state.allocationLiveBusy === 'headers') return;
+  const url = liveUrlFromDom();
+  if (!url) { showError(new Error('Enter a Google Sheet URL.')); return; }
+  if (!looksLikeSheet(url)) { showError(new Error('Enter a valid Google Sheet URL.')); return; }
+  const cohortId = state.cohortId;
+  state.allocationLiveBusy = 'tabs';
+  state.allocationLiveCohort = cohortId;
+  paintAllocation();
+  callServer('listLiveSheetTabs', cohortId, { url: url }).then(function(result) {
+    if (state.cohortId !== cohortId) return;
+    state.allocationLiveBusy = '';
+    state.allocationLiveTabs = (result && result.tabs) || [];
+    state.allocationLiveLoadedUrl = url;
+    state.allocationLiveHeaders = [];
+    if (state.allocationLiveTab && state.allocationLiveTabs.indexOf(state.allocationLiveTab) < 0) state.allocationLiveTab = '';
+    const selected = state.allocationLiveTab || (state.allocationLiveTabs.length === 1 ? state.allocationLiveTabs[0] : '');
+    state.allocationLiveTab = selected;
+    paintAllocation();
+    if (selected) loadLiveSheetHeaders(selected);
+  }).catch(function(error) {
+    if (state.cohortId === cohortId) state.allocationLiveBusy = '';
+    paintAllocation();
+    showError(error);
+  });
+}
+
+export function loadLiveSheetHeaders(sheetName) {
+  const url = liveUrlFromDom();
+  const name = String(sheetName || '').trim();
+  if (!url || !name) return;
+  const cohortId = state.cohortId;
+  state.allocationLiveTab = name;
+  state.allocationLiveBusy = 'headers';
+  state.allocationLiveCohort = cohortId;
+  paintAllocation();
+  callServer('getLiveSheetHeaders', cohortId, { url: url }, name).then(function(result) {
+    if (state.cohortId !== cohortId) return;
+    state.allocationLiveBusy = '';
+    state.allocationLiveHeaders = (result && result.headers) || [];
+    state.allocationLiveTab = (result && result.sheetName) || name;
+    paintAllocation();
+  }).catch(function(error) {
+    if (state.cohortId === cohortId) state.allocationLiveBusy = '';
+    paintAllocation();
+    showError(error);
+  });
+}
+
+export function saveLiveSheetLink() {
+  const mappings = readLiveMappingsFromDom();
+  const headers = liveFormHeaders();
+  const problems = liveLinkProblems(mappings, headers);
+  if (!headers.length || problems.length) { showError(new Error(problems[0] || 'Choose a sheet tab to map its columns.')); return; }
+  const url = liveUrlFromDom();
+  const sheetName = tabFromDom();
+  if (!sheetName) { showError(new Error('Choose a sheet tab.')); return; }
+  const cohortId = state.cohortId;
+  state.allocationLiveDraft = mappings;
+  state.allocationLiveBusy = 'save';
+  paintAllocation();
+  callServer('saveLiveSheetLink', cohortId, { url: url, sheetName: sheetName, columnMappings: mappings }).then(function(saved) {
+    state.allocationLiveBusy = '';
+    state.allocationLiveDraft = null;
+    if (saved) {
+      state.allocationLiveUrl = saved.liveSheetUrl || url;
+      state.allocationLiveTab = saved.sheetName || saved.liveSheetTab || sheetName;
+    }
+    showSuccess('Live sheet link saved.');
+    loadAllocation();
+  }).catch(function(error) {
+    if (state.cohortId === cohortId) state.allocationLiveBusy = '';
+    paintAllocation();
+    showError(error);
+  });
+}
+
+export function resyncLiveChoiceData() {
+  if (state.allocationLiveBusy === 'resync') return;
+  const cohortId = state.cohortId;
+  state.allocationLiveBusy = 'resync';
+  paintAllocation();
+  callServer('resyncLiveChoiceData', cohortId).then(function(result) {
+    if (state.cohortId === cohortId) state.allocationLiveBusy = '';
+    if (state.cohortId !== cohortId) return;
+    const updated = result && result.updated ? result.updated : 0;
+    const warnings = (result && result.warnings) || [];
+    showSuccess(warnings.length
+      ? 'Live choice data updated for ' + updated + ' students. ' + warnings[0]
+      : 'Live choice data updated for ' + updated + ' students.');
+    loadAllocation();
+  }).catch(function(error) {
+    if (state.cohortId === cohortId) state.allocationLiveBusy = '';
+    if (state.cohortId === cohortId) paintAllocation();
+    showError(error);
+  });
 }
 
 export function saveAllocationSettings() {
