@@ -1,4 +1,6 @@
-import { activeSubjectNamesFrom } from './allocationPure';
+import { activeSubjectNamesFrom, ALLOCATION_LIVE_SHEET_KEYS } from './allocationPure';
+
+export { ALLOCATION_LIVE_SHEET_KEYS };
 import { HubError, text, toBoolean } from './util';
 
 export interface FieldDef {

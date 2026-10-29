@@ -134,6 +134,7 @@ test('allocation desk tags, filter, column order, supervisor cues, and token loa
     assert.match(html, /data-alloc-load="assigned"/);
     assert.match(html, /aria-label="Star key"/);
     assert.doesNotMatch(html, /id="alloc-cohort"/);
+    assert.doesNotMatch(html, /Resync Live Choice Data/);
     assert.match(html, /class="alloc-side-scroll"/);
     assert.match(html, /overflow-y: auto|alloc-side-scroll/);
 
@@ -186,6 +187,72 @@ test('allocation desk tags, filter, column order, supervisor cues, and token loa
     ['alloc-sync', 'alloc-cohortdata', 'alloc-choice-map', 'alloc-fields', 'alloc-data'].forEach(function(id) {
       assert.match(settings, new RegExp('data-toggle-header="' + id + '" aria-expanded="false"'));
     });
+    assert.match(settings, /id="alloc-live-url"/);
+    assert.match(settings, /Live Google Sheet URL/);
+    assert.match(settings, /Load sheet tabs/);
+    assert.doesNotMatch(settings, /Core Data Fields/);
+
+    state.allocationLiveCohort = '2026';
+    state.allocationLiveUrl = 'https://docs.google.com/spreadsheets/d/abc123_XYZ-000000000000/edit';
+    state.allocationLiveTab = 'Choices';
+    state.allocationLiveTabs = ['Choices', 'Notes'];
+    state.allocationLiveHeaders = ['Student Email', 'First choice', 'HL subjects'];
+    state.allocationLiveDraft = null;
+    state.allocationLiveBusy = '';
+    const liveDesk = {
+      driveReady: true,
+      settings: {
+        detectedChoiceKeys: ['choice1'],
+        detectedDynamicKeys: ['Research notes'],
+        columns: [{ key: 'Research notes', showOnCard: true, expanded: false }],
+        interdisciplinaryKey: 'interdisciplinary',
+        primaryChoiceKey: 'choice1',
+        spreadsheetId: 'abc123_XYZ-000000000000',
+        sheetName: 'Choices',
+        liveSheetTab: 'Choices',
+        liveSheetUrl: state.allocationLiveUrl,
+        columnMappings: {
+          core: { studentNumber: '', studentEmail: 'Student Email' },
+          subjectChoice: { primary: '', secondary: '', interdisciplinary: '' },
+          dashboard: { hl: '', support: '' },
+        },
+      },
+      summary: { staffCount: 1, tokenCount: 1, activeStudents: 1, buffer: 0 },
+      choiceRows: [],
+      students: [],
+    };
+    const blocked = deskMod.allocationSettingsMarkup(liveDesk);
+    assert.match(blocked, /Core Data Fields/);
+    assert.match(blocked, /Subject Choice Mapping/);
+    assert.match(blocked, /Dashboard Fields/);
+    assert.match(blocked, /id="alloc-live-tab"/);
+    assert.match(blocked, /id="alloc-live-save"[^>]*disabled/);
+    assert.match(blocked, /Map Primary choice before saving/);
+    state.allocationLiveDraft = {
+      core: { studentNumber: '', studentEmail: 'Student Email' },
+      subjectChoice: { primary: 'First choice', secondary: '', interdisciplinary: '' },
+      dashboard: { hl: '', support: '' },
+    };
+    const ready = deskMod.allocationSettingsMarkup(liveDesk);
+    const saveButton = ready.slice(ready.indexOf('id="alloc-live-save"'), ready.indexOf('id="alloc-live-save"') + 80);
+    assert.match(saveButton, /id="alloc-live-save"/);
+    assert.doesNotMatch(saveButton, /disabled/);
+    state.allocationLiveDraft = null;
+    state.allocationLiveTabs = [];
+    state.allocationLiveHeaders = [];
+    state.allocationLiveCohort = '';
+
+    const linkedDesk = desk();
+    linkedDesk.settings = { columns: [], spreadsheetId: 'abc123_XYZ-000000000000', sheetName: 'Choices', liveSheetTab: 'Choices', driveReady: true };
+    const linkedHtml = deskMod.allocationDashboardMarkup(linkedDesk);
+    assert.match(linkedHtml, /id="alloc-resync-live"/);
+    assert.match(linkedHtml, /Resync Live Choice Data/);
+    assert.doesNotMatch(linkedHtml.slice(linkedHtml.indexOf('id="alloc-resync-live"'), linkedHtml.indexOf('id="alloc-resync-live"') + 120), /disabled/);
+    state.allocationLiveBusy = 'resync';
+    const busyHtml = deskMod.allocationDashboardMarkup(linkedDesk);
+    assert.match(busyHtml, /id="alloc-resync-live"[^>]*disabled/);
+    assert.match(busyHtml, /Resyncing live choice data/);
+    state.allocationLiveBusy = '';
 
     const board = deskMod.cohortTokensMarkup({
       cohortId: '2026',

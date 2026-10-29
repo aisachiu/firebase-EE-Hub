@@ -24,6 +24,7 @@ import {
 import { getAdminRecords, saveAdminRecord } from './admin';
 import { getStaffHome, getStudentHome } from './journey';
 import { COLLECTIONS } from './schema';
+import { getLiveSheetHeaders, listLiveSheetTabs, resyncLiveChoiceData, saveLiveSheetLink } from './liveSheet';
 import { SheetGrid } from './sheetImport';
 import { SheetWorkbook } from './sheetSync';
 import { AllocationOp } from './store';
@@ -425,4 +426,109 @@ test('choice edits enforce Yes or No and an interdisciplinary token publishes on
   assert.equal(board.summary.teachersAllocated, 1);
   assert.equal(board.summary.tokenCount, 2);
   assert.ok(board.summary.studentCount >= 1);
+});
+
+test('a live sheet link merges choice rows onto static auxiliary data', async () => {
+  const app = appFor();
+  await seed(app);
+  await app.store.setMember('2026', JANE, {
+    StudentId: JANE,
+    'Display Name': 'Jane Doe',
+    Surname: 'Doe',
+    'First Name': 'Jane',
+    'Student Number': '20260001',
+    'Student Email': JANE,
+    supervisorId: '',
+    subject: '',
+  });
+  const sheets = workbook([
+    workspaceGrid,
+    {
+      title: 'Choices',
+      rows: [
+        ['Student Number', 'Student Email', 'First choice', 'HL subjects'],
+        ['20260001', JANE, 'Physics', 'Bio'],
+        ['999', 'missing@vsa.edu', 'Art', ''],
+      ],
+    },
+  ]);
+  await applyAllocationIngest(app, '2026', SHEET, 'workspace', { workbook: sheets });
+  const before = await app.store.getWorkspace('2026', JANE);
+  assert.equal(before?.subjectChoices.choice1, 'History');
+  assert.equal(before?.dynamicData['Y10 GPA'], 'Weak');
+
+  const supervisor = appFor(SMITH);
+  await seed(supervisor);
+  await assert.rejects(listLiveSheetTabs(supervisor, '2026', SHEET, { workbook: sheets }), /Access denied/);
+
+  const tabs = await listLiveSheetTabs(app, '2026', SHEET, { workbook: sheets });
+  assert.deepEqual(tabs.tabs, ['COHORTDATA: 2026', 'Choices']);
+  assert.equal(tabs.spreadsheetId, 'abc123_XYZ-000000000000');
+  const headers = await getLiveSheetHeaders(app, '2026', { url: SHEET }, 'Choices', { workbook: sheets });
+  assert.deepEqual(headers.headers, ['Student Number', 'Student Email', 'First choice', 'HL subjects']);
+
+  const link = {
+    url: SHEET,
+    sheetName: 'Choices',
+    columnMappings: {
+      core: { studentNumber: 'Student Number', studentEmail: 'Student Email' },
+      subjectChoice: { primary: 'First choice', secondary: '', interdisciplinary: '' },
+      dashboard: { hl: 'HL subjects', support: '' },
+    },
+  };
+  await assert.rejects(saveLiveSheetLink(app, '2026', {
+    url: SHEET,
+    sheetName: 'Choices',
+    columnMappings: { core: { studentEmail: 'Student Email' }, subjectChoice: { primary: '' } },
+  }, { workbook: sheets }), /Primary choice/);
+  await assert.rejects(saveLiveSheetLink(app, '2026', {
+    url: SHEET,
+    sheetName: 'Choices',
+    columnMappings: { subjectChoice: { primary: 'First choice' } },
+  }, { workbook: sheets }), /Student Number or Student Email/);
+
+  const saved = await saveLiveSheetLink(app, '2026', link, { workbook: sheets });
+  assert.equal(saved.spreadsheetId, 'abc123_XYZ-000000000000');
+  assert.equal(saved.sheetName, 'Choices');
+  assert.equal(saved.liveSheetTab, 'Choices');
+  assert.equal(saved.liveSheetUrl, SHEET);
+  assert.equal(saved.columnMappings.subjectChoice.primary, 'First choice');
+  assert.equal(saved.primaryChoiceKey, 'choice1');
+  assert.equal(saved.hlColumn, 'HL subjects');
+
+  const synced = await resyncLiveChoiceData(app, '2026', { workbook: sheets });
+  assert.equal(synced.updated, 1);
+  assert.equal(synced.skipped, 1);
+  assert.match(synced.warnings[0], /999|not on the roster|missing@vsa.edu/);
+  const jane = await app.store.getWorkspace('2026', JANE);
+  assert.equal(jane?.subjectChoices.choice1, 'Physics');
+  assert.equal(jane?.subjectChoices.choice2, 'Eng Lit');
+  assert.equal(jane?.dynamicData['Y10 GPA'], 'Weak');
+  assert.equal(jane?.dynamicData['HL subjects'], 'Bio');
+  assert.ok((await app.store.getAllocationConfig('2026'))?.lastLiveSync);
+
+  const replacement: SheetGrid = {
+    title: 'COHORTDATA: 2026',
+    rows: [
+      ['StudentId', 'SubjectChoice', 'Y10 GPA'],
+      [JANE, '{"choice1":"Art","choice2":"Drama"}', 'Strong'],
+    ],
+  };
+  await applyAllocationIngest(app, '2026', SHEET, 'workspace', { workbook: workbook([replacement]) });
+  const afterStatic = await app.store.getWorkspace('2026', JANE);
+  assert.equal(afterStatic?.subjectChoices.choice1, 'Physics');
+  assert.equal(afterStatic?.subjectChoices.choice2, 'Drama');
+  assert.equal(afterStatic?.dynamicData['Y10 GPA'], 'Strong');
+  assert.equal(afterStatic?.dynamicData['HL subjects'], 'Bio');
+
+  const config = await app.store.getAllocationConfig('2026');
+  await saveAllocationConfig(app, '2026', { primaryChoiceKey: 'choice1', secondaryChoiceKey: 'choice2', columns: config?.columns || [] });
+  const kept = await app.store.getAllocationConfig('2026');
+  assert.equal(kept?.spreadsheetId, 'abc123_XYZ-000000000000');
+  assert.equal(kept?.sheetName, 'Choices');
+  assert.equal(kept?.columnMappings?.subjectChoice?.primary, 'First choice');
+
+  const unlinked = appFor();
+  await seed(unlinked);
+  await assert.rejects(resyncLiveChoiceData(unlinked, '2026', { workbook: sheets }), /Link a live Google Sheet/);
 });

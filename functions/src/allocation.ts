@@ -14,7 +14,8 @@ import {
   emptySettings,
   findAllocationTab,
   isEeActive,
-  mergeDetected,
+  mergeStaticWorkspaceRow,
+  settingsAfterWorkspaceIngest,
   parseTokenGrid,
   parseWorkspaceGrid,
   planBatchDraft,
@@ -628,17 +629,11 @@ async function prepareWorkspace(app: App, cohortId: string, grid: SheetGrid, spr
     }
     writing += 1;
     const prior = existing.get(row.studentId);
-    const workspace: WorkspaceRecord = {
-      studentId: row.studentId,
-      subjectChoices: row.subjectChoices,
-      dynamicData: row.dynamicData,
-      pendingClear: !!prior?.pendingClear,
-      updatedAt: now,
-    };
+    const workspace: WorkspaceRecord = mergeStaticWorkspaceRow(row, prior, settings, now);
     ops.push({ kind: 'workspace', cohortId, id: row.studentId, data: workspace });
     if (row.eeActive !== null) ops.push({ kind: 'member', cohortId, id: row.studentId, data: { ...member, eeActive: row.eeActive } });
   });
-  const next = { ...mergeDetected(settings, parsed.choiceKeys, parsed.dynamicKeys), lastWorkspaceSync: now };
+  const next = settingsAfterWorkspaceIngest(settings, parsed.choiceKeys, parsed.dynamicKeys, now);
   ops.push({ kind: 'config', cohortId, data: next });
   const roster = members.map((member) => ({ studentId: normalizeEmail(member.StudentId), eeActive: member.eeActive }));
   return {

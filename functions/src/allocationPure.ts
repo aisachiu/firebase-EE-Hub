@@ -40,6 +40,38 @@ export interface ColumnFlag {
   expanded: boolean;
 }
 
+export interface LiveColumnMappings {
+  core: { studentNumber: string; studentEmail: string };
+  subjectChoice: { primary: string; secondary: string; interdisciplinary: string };
+  dashboard: { hl: string; support: string };
+}
+
+/** Firestore keys on cohorts/{id}/allocationConfig/settings for a linked live sheet. */
+export const ALLOCATION_LIVE_SHEET_KEYS = [
+  'liveSheetUrl',
+  'liveSheetTab',
+  'spreadsheetId',
+  'sheetName',
+  'columnMappings',
+  'lastLiveSync',
+] as const;
+
+export const LIVE_SHEET_GROUPS = [
+  { id: 'core', title: 'Core Data Fields', note: 'Map Student Number or Student Email. Live rows merge onto the roster with that primary key.' },
+  { id: 'subjectChoice', title: 'Subject Choice Mapping', note: 'The live sheet is the source of truth for these choices. Other choice keys from a static import stay in place.' },
+  { id: 'dashboard', title: 'Dashboard Fields', note: 'These columns update on the allocation desk. Other imported columns stay as auxiliary data.' },
+] as const;
+
+export const LIVE_SHEET_FIELDS = [
+  { group: 'core', key: 'studentNumber', label: 'Student Number', hint: 'primary key' },
+  { group: 'core', key: 'studentEmail', label: 'Student Email', hint: 'primary key' },
+  { group: 'subjectChoice', key: 'primary', label: 'Primary choice', hint: 'required' },
+  { group: 'subjectChoice', key: 'secondary', label: 'Secondary choice', hint: '' },
+  { group: 'subjectChoice', key: 'interdisciplinary', label: 'Is Interdisciplinary?', hint: '' },
+  { group: 'dashboard', key: 'hl', label: 'HL match', hint: '' },
+  { group: 'dashboard', key: 'support', label: 'Support flag', hint: '' },
+] as const;
+
 export interface AllocationSettings {
   primaryChoiceKey: string;
   secondaryChoiceKey: string;
@@ -52,6 +84,14 @@ export interface AllocationSettings {
   lastWorkspaceSync: string;
   lastTokenSync: string;
   lastExport: string;
+  /** Google Sheet URL the cohort is linked to. */
+  liveSheetUrl: string;
+  /** Tab title. Stored again as sheetName so both names from the settings contract are present. */
+  liveSheetTab: string;
+  spreadsheetId: string;
+  sheetName: string;
+  columnMappings: LiveColumnMappings;
+  lastLiveSync: string;
 }
 
 export interface ParsedWorkspaceRow {
@@ -187,6 +227,20 @@ export function emptySettings(): AllocationSettings {
     lastWorkspaceSync: '',
     lastTokenSync: '',
     lastExport: '',
+    liveSheetUrl: '',
+    liveSheetTab: '',
+    spreadsheetId: '',
+    sheetName: '',
+    columnMappings: emptyColumnMappings(),
+    lastLiveSync: '',
+  };
+}
+
+export function emptyColumnMappings(): LiveColumnMappings {
+  return {
+    core: { studentNumber: '', studentEmail: '' },
+    subjectChoice: { primary: '', secondary: '', interdisciplinary: '' },
+    dashboard: { hl: '', support: '' },
   };
 }
 
@@ -866,7 +920,85 @@ export function settingsFromDoc(doc: Doc | null): AllocationSettings {
     lastWorkspaceSync: text(doc.lastWorkspaceSync),
     lastTokenSync: text(doc.lastTokenSync),
     lastExport: text(doc.lastExport),
+    liveSheetUrl: text(doc.liveSheetUrl),
+    liveSheetTab: text(doc.liveSheetTab || doc.sheetName),
+    spreadsheetId: text(doc.spreadsheetId),
+    sheetName: text(doc.sheetName || doc.liveSheetTab),
+    columnMappings: columnMappingsFrom(doc.columnMappings),
+    lastLiveSync: text(doc.lastLiveSync),
   };
+}
+
+export function columnMappingsFrom(value: unknown): LiveColumnMappings {
+  const source = value && typeof value === 'object' ? value as Doc : {};
+  return {
+    core: {
+      studentNumber: text(source.core?.studentNumber),
+      studentEmail: text(source.core?.studentEmail),
+    },
+    subjectChoice: {
+      primary: text(source.subjectChoice?.primary),
+      secondary: text(source.subjectChoice?.secondary),
+      interdisciplinary: text(source.subjectChoice?.interdisciplinary),
+    },
+    dashboard: {
+      hl: text(source.dashboard?.hl),
+      support: text(source.dashboard?.support),
+    },
+  };
+}
+
+export function liveSheetLinked(settings: { spreadsheetId?: string; sheetName?: string; liveSheetTab?: string } | null | undefined): boolean {
+  if (!settings) return false;
+  return !!(text(settings.spreadsheetId) && text(settings.sheetName || settings.liveSheetTab));
+}
+
+export function liveMappingProblems(mappings: LiveColumnMappings): string[] {
+  const problems: string[] = [];
+  if (!text(mappings.core.studentNumber) && !text(mappings.core.studentEmail)) {
+    problems.push('Map Student Number or Student Email before saving.');
+  }
+  if (!text(mappings.subjectChoice.primary)) problems.push('Map Primary choice before saving.');
+  return problems;
+}
+
+export function liveLinkProblems(mappings: LiveColumnMappings, headers: string[]): string[] {
+  const problems = liveMappingProblems(mappings);
+  const known = new Set(headers.map((header) => text(header)).filter(Boolean));
+  mappedLiveHeaders(mappings).forEach((header) => {
+    if (!known.has(header)) problems.push(`Column "${header}" is not on this sheet.`);
+  });
+  return problems;
+}
+
+export function settingsForLiveLink(
+  current: AllocationSettings,
+  url: string,
+  spreadsheetId: string,
+  sheetName: string,
+  mappings: LiveColumnMappings,
+): AllocationSettings {
+  const next: AllocationSettings = {
+    ...current,
+    liveSheetUrl: text(url),
+    liveSheetTab: text(sheetName),
+    spreadsheetId: text(spreadsheetId),
+    sheetName: text(sheetName),
+    columnMappings: columnMappingsFrom(mappings),
+  };
+  if (text(next.columnMappings.subjectChoice.primary) && !next.primaryChoiceKey) next.primaryChoiceKey = 'choice1';
+  if (text(next.columnMappings.subjectChoice.secondary) && !next.secondaryChoiceKey) next.secondaryChoiceKey = 'choice2';
+  if (text(next.columnMappings.subjectChoice.interdisciplinary) && !next.interdisciplinaryKey) next.interdisciplinaryKey = 'interdisciplinary';
+  if (text(next.columnMappings.dashboard.hl)) next.hlColumn = next.columnMappings.dashboard.hl;
+  if (text(next.columnMappings.dashboard.support)) next.supportColumn = next.columnMappings.dashboard.support;
+  const choiceKeys = new Set(next.detectedChoiceKeys);
+  if (text(next.columnMappings.subjectChoice.primary)) choiceKeys.add(next.primaryChoiceKey || 'choice1');
+  if (text(next.columnMappings.subjectChoice.secondary)) choiceKeys.add(next.secondaryChoiceKey || 'choice2');
+  if (text(next.columnMappings.subjectChoice.interdisciplinary)) choiceKeys.add(next.interdisciplinaryKey || 'interdisciplinary');
+  const dynamicKeys = new Set(next.detectedDynamicKeys);
+  if (text(next.columnMappings.dashboard.hl) && next.hlColumn) dynamicKeys.add(next.hlColumn);
+  if (text(next.columnMappings.dashboard.support) && next.supportColumn) dynamicKeys.add(next.supportColumn);
+  return mergeDetected(next, [...choiceKeys].sort(), [...dynamicKeys].sort());
 }
 
 export function mergeDetected(settings: AllocationSettings, choiceKeys: string[], dynamicKeys: string[]): AllocationSettings {
@@ -892,6 +1024,234 @@ export function mergeDetected(settings: AllocationSettings, choiceKeys: string[]
   if (!next.secondaryChoiceKey && choiceKeys.includes('choice2')) next.secondaryChoiceKey = 'choice2';
   if (!next.interdisciplinaryKey && choiceKeys.includes('interdisciplinary')) next.interdisciplinaryKey = 'interdisciplinary';
   return next;
+}
+
+export interface LiveParsedRow {
+  line: number;
+  studentNumber: string;
+  studentEmail: string;
+  primary: string | number | boolean | '';
+  secondary: string | number | boolean | '';
+  interdisciplinary: string | number | boolean | '';
+  hl: string | number | boolean | '';
+  support: string | number | boolean | '';
+}
+
+export interface LiveRosterEntry {
+  studentId: string;
+  studentNumber: string;
+  studentEmail: string;
+}
+
+export interface LiveMatchIndex {
+  byNumber: Map<string, string[]>;
+  byEmail: Map<string, string[]>;
+}
+
+export function gridHeaderNames(grid: Grid): string[] {
+  return headerRow(grid).filter((header) => header);
+}
+
+export function parseLiveSheet(grid: Grid, mappings: LiveColumnMappings): { rows: LiveParsedRow[]; warnings: string[] } {
+  const headers = headerRow(grid);
+  const columns = {
+    studentNumber: mappedColumn(headers, mappings.core.studentNumber),
+    studentEmail: mappedColumn(headers, mappings.core.studentEmail),
+    primary: mappedColumn(headers, mappings.subjectChoice.primary),
+    secondary: mappedColumn(headers, mappings.subjectChoice.secondary),
+    interdisciplinary: mappedColumn(headers, mappings.subjectChoice.interdisciplinary),
+    hl: mappedColumn(headers, mappings.dashboard.hl),
+    support: mappedColumn(headers, mappings.dashboard.support),
+  };
+  const warnings: string[] = [];
+  const rows: LiveParsedRow[] = [];
+  grid.rows.slice(1).forEach((row, index) => {
+    if (!rowHasValue(row)) return;
+    rows.push({
+      line: index + 2,
+      studentNumber: columns.studentNumber < 0 ? '' : text(row[columns.studentNumber]),
+      studentEmail: columns.studentEmail < 0 ? '' : normalizeEmail(row[columns.studentEmail]),
+      primary: cellAt(row, columns.primary),
+      secondary: cellAt(row, columns.secondary),
+      interdisciplinary: cellAt(row, columns.interdisciplinary),
+      hl: cellAt(row, columns.hl),
+      support: cellAt(row, columns.support),
+    });
+  });
+  return { rows, warnings };
+}
+
+export function indexLiveRoster(entries: LiveRosterEntry[]): LiveMatchIndex {
+  const byNumber = new Map<string, string[]>();
+  const byEmail = new Map<string, string[]>();
+  entries.forEach((entry) => {
+    const studentId = normalizeEmail(entry.studentId);
+    if (!studentId) return;
+    const studentNumber = text(entry.studentNumber);
+    if (studentNumber) pushLiveKey(byNumber, studentNumber, studentId);
+    const studentEmail = normalizeEmail(entry.studentEmail);
+    if (studentEmail) pushLiveKey(byEmail, studentEmail, studentId);
+    if (studentId !== studentEmail) pushLiveKey(byEmail, studentId, studentId);
+  });
+  return { byNumber, byEmail };
+}
+
+export function resolveLiveStudent(
+  row: LiveParsedRow,
+  index: LiveMatchIndex,
+  mappings: LiveColumnMappings,
+): { studentId: string; warning: string } {
+  const useNumber = !!text(mappings.core.studentNumber);
+  const useEmail = !!text(mappings.core.studentEmail);
+  const studentNumber = text(row.studentNumber);
+  const studentEmail = normalizeEmail(row.studentEmail);
+  if (useNumber && studentNumber) {
+    const hits = index.byNumber.get(studentNumber) || [];
+    if (hits.length === 1) return { studentId: hits[0], warning: '' };
+    if (hits.length > 1) return { studentId: '', warning: `Student Number ${studentNumber} matches more than one student.` };
+  }
+  if (useEmail && studentEmail) {
+    const hits = index.byEmail.get(studentEmail) || [];
+    if (hits.length === 1) return { studentId: hits[0], warning: '' };
+    if (hits.length > 1) return { studentId: '', warning: `Student Email ${studentEmail} matches more than one student.` };
+    return { studentId: '', warning: `${studentEmail} is not on the roster.` };
+  }
+  if (useNumber && studentNumber) return { studentId: '', warning: `Student Number ${studentNumber} is not on the roster.` };
+  return { studentId: '', warning: 'A live row is missing Student Number and Student Email.' };
+}
+
+export function mergeLiveChoiceRow(
+  existing: WorkspaceRecord | undefined,
+  row: LiveParsedRow,
+  settings: AllocationSettings,
+  studentId: string,
+  now: string,
+): WorkspaceRecord {
+  const subjectChoices = { ...(existing?.subjectChoices || {}) };
+  const dynamicData = { ...(existing?.dynamicData || {}) };
+  const mappings = settings.columnMappings;
+  if (text(mappings.subjectChoice.primary)) assignLiveValue(subjectChoices, settings.primaryChoiceKey || 'choice1', row.primary);
+  if (text(mappings.subjectChoice.secondary)) assignLiveValue(subjectChoices, settings.secondaryChoiceKey || 'choice2', row.secondary);
+  if (text(mappings.subjectChoice.interdisciplinary)) assignLiveValue(subjectChoices, settings.interdisciplinaryKey || 'interdisciplinary', row.interdisciplinary);
+  if (text(mappings.dashboard.hl)) assignLiveValue(dynamicData, settings.hlColumn || mappings.dashboard.hl, row.hl);
+  if (text(mappings.dashboard.support)) assignLiveValue(dynamicData, settings.supportColumn || mappings.dashboard.support, row.support);
+  return {
+    studentId,
+    subjectChoices,
+    dynamicData,
+    pendingClear: !!existing?.pendingClear,
+    updatedAt: now,
+  };
+}
+
+export function settingsAfterWorkspaceIngest(
+  settings: AllocationSettings,
+  choiceKeys: string[],
+  dynamicKeys: string[],
+  now: string,
+): AllocationSettings {
+  if (!liveSheetLinked(settings)) return { ...mergeDetected(settings, choiceKeys, dynamicKeys), lastWorkspaceSync: now };
+  const choices = new Set([...settings.detectedChoiceKeys, ...choiceKeys]);
+  const dynamic = new Set([...settings.detectedDynamicKeys, ...dynamicKeys]);
+  const mappings = settings.columnMappings;
+  if (text(mappings.subjectChoice.primary)) choices.add(settings.primaryChoiceKey || 'choice1');
+  if (text(mappings.subjectChoice.secondary)) choices.add(settings.secondaryChoiceKey || 'choice2');
+  if (text(mappings.subjectChoice.interdisciplinary)) choices.add(settings.interdisciplinaryKey || 'interdisciplinary');
+  if (text(mappings.dashboard.hl) && settings.hlColumn) dynamic.add(settings.hlColumn);
+  if (text(mappings.dashboard.support) && settings.supportColumn) dynamic.add(settings.supportColumn);
+  return { ...mergeDetected(settings, [...choices].sort(), [...dynamic].sort()), lastWorkspaceSync: now };
+}
+
+export function mergeStaticWorkspaceRow(
+  row: ParsedWorkspaceRow,
+  prior: WorkspaceRecord | undefined,
+  settings: AllocationSettings,
+  now: string,
+): WorkspaceRecord {
+  if (!prior || !liveSheetLinked(settings)) {
+    return {
+      studentId: row.studentId,
+      subjectChoices: row.subjectChoices,
+      dynamicData: row.dynamicData,
+      pendingClear: !!prior?.pendingClear,
+      updatedAt: now,
+    };
+  }
+  const subjectChoices = { ...row.subjectChoices };
+  liveOwnedChoiceKeys(settings).forEach((key) => {
+    if (Object.prototype.hasOwnProperty.call(prior.subjectChoices, key)) subjectChoices[key] = prior.subjectChoices[key];
+    else delete subjectChoices[key];
+  });
+  const dynamicData = { ...prior.dynamicData, ...row.dynamicData };
+  liveOwnedDynamicKeys(settings).forEach((key) => {
+    if (Object.prototype.hasOwnProperty.call(prior.dynamicData, key)) dynamicData[key] = prior.dynamicData[key];
+    else delete dynamicData[key];
+  });
+  return {
+    studentId: row.studentId,
+    subjectChoices,
+    dynamicData,
+    pendingClear: prior.pendingClear,
+    updatedAt: now,
+  };
+}
+
+function mappedLiveHeaders(mappings: LiveColumnMappings): string[] {
+  return [...new Set([
+    mappings.core.studentNumber,
+    mappings.core.studentEmail,
+    mappings.subjectChoice.primary,
+    mappings.subjectChoice.secondary,
+    mappings.subjectChoice.interdisciplinary,
+    mappings.dashboard.hl,
+    mappings.dashboard.support,
+  ].map((header) => text(header)).filter(Boolean))];
+}
+
+function liveOwnedChoiceKeys(settings: AllocationSettings): string[] {
+  const keys: string[] = [];
+  const mappings = settings.columnMappings;
+  if (text(mappings.subjectChoice.primary)) keys.push(settings.primaryChoiceKey || 'choice1');
+  if (text(mappings.subjectChoice.secondary)) keys.push(settings.secondaryChoiceKey || 'choice2');
+  if (text(mappings.subjectChoice.interdisciplinary)) keys.push(settings.interdisciplinaryKey || 'interdisciplinary');
+  return keys;
+}
+
+function liveOwnedDynamicKeys(settings: AllocationSettings): string[] {
+  const keys: string[] = [];
+  const mappings = settings.columnMappings;
+  if (text(mappings.dashboard.hl)) keys.push(settings.hlColumn || mappings.dashboard.hl);
+  if (text(mappings.dashboard.support)) keys.push(settings.supportColumn || mappings.dashboard.support);
+  return keys;
+}
+
+function mappedColumn(headers: string[], name: string): number {
+  const header = text(name);
+  if (!header) return -1;
+  const index = headers.findIndex((item) => item === header);
+  if (index < 0) throw new HubError(`Column "${header}" is not on this sheet.`);
+  return index;
+}
+
+function cellAt(row: unknown[], index: number): string | number | boolean | '' {
+  if (index < 0) return '';
+  return plainCell(row[index]);
+}
+
+function assignLiveValue(target: Record<string, string | number | boolean>, key: string, value: string | number | boolean | ''): void {
+  const name = text(key);
+  if (!name) return;
+  if (value === '') {
+    delete target[name];
+    return;
+  }
+  target[name] = value;
+}
+
+function pushLiveKey(map: Map<string, string[]>, key: string, studentId: string): void {
+  const list = map.get(key) || [];
+  if (!list.includes(studentId)) list.push(studentId);
+  map.set(key, list);
 }
 
 export type AllocationPreviewAction = 'Add' | 'Update' | 'Unchanged' | 'Skip';

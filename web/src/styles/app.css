@@ -839,6 +839,9 @@ main.staff-list { max-width: 1480px; }
 .alloc-side footer { border-top: 1px solid var(--line); }
 .alloc-sync { margin-top: 4px; color: var(--muted); font-size: 12px; text-align: right; }
 .alloc-map { display: grid; grid-template-columns: minmax(140px, 180px) minmax(0, 1fr); gap: 8px; align-items: center; margin-bottom: 10px; }
+.alloc-live { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--line); }
+.alloc-live h3 { margin: 12px 0 6px; font-size: 14px; }
+.alloc-live-summary { margin: 8px 0 0; padding-left: 18px; }
 .support-badge { padding: 1px 6px; border-radius: 3px; background: var(--coral); color: white; font-size: 10px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; }
 .info-badge { padding: 1px 6px; border-radius: 3px; background: var(--green-soft); color: #0d7a5f; font-size: 10px; font-weight: 700; }
 .quota-layout { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 16px; align-items: start; }
