@@ -63,6 +63,14 @@ test('allocation desk tags, filter, column order, supervisor cues, and token loa
     state.allocationSelected = [];
     state.allocationSubjects = {};
     state.allocationSubjectFilter = [];
+    state.allocationAllocatedFilter = [];
+    state.allocationTeacherFilter = [];
+    state.allocationSupportFlags = [];
+    state.allocationOpenStudent = '';
+    state.allocationAssignedOpen = {};
+    state.allocationInterdisciplinary = {};
+    state.allocationDataSelected = [];
+    state.adminHeaderOpen = {};
     state.adminTableSort = { 'alloc-desk': { key: 'name', dir: 1 } };
 
     const html = deskMod.allocationDashboardMarkup(desk());
@@ -116,8 +124,108 @@ test('allocation desk tags, filter, column order, supervisor cues, and token loa
     const load = pure.subjectTokenLoad([{ status: 'available', eligibleSubjects: 'Mathematics, Analysis and approaches' }]);
     const table = deskMod.subjectTokenLoadMarkup(load);
     assert.match(table, /Mathematics, Analysis and approaches/);
+    assert.match(table, /Pool \| UPool \| Alloc \| Rem/);
+    assert.match(table, /Total requested \(Pool\)/);
     assert.equal((table.match(/<tr>/g) || []).length, 2);
     assert.doesNotMatch(table, />Mathematics</);
+    assert.match(html, /id="alloc-clear-filters"/);
+    assert.match(html, /data-alloc-allocated-filter="Psychology"/);
+    assert.match(html, /data-alloc-teacher-filter="psy@school.edu"/);
+    assert.match(html, /data-alloc-load="assigned"/);
+    assert.match(html, /aria-label="Star key"/);
+    assert.doesNotMatch(html, /id="alloc-cohort"/);
+    assert.match(html, /class="alloc-side-scroll"/);
+    assert.match(html, /overflow-y: auto|alloc-side-scroll/);
+
+    const sehs = 'Sports, Exercise, and Health Science (SEHS)';
+    const sehsLoad = pure.subjectTokenLoad([{ status: 'available', eligibleSubjects: sehs }]);
+    const sehsTable = deskMod.subjectTokenLoadMarkup(sehsLoad);
+    assert.match(sehsTable, /Sports, Exercise, and Health Science \(SEHS\)/);
+    assert.equal((sehsTable.match(/<tr>/g) || []).length, 2);
+    assert.doesNotMatch(sehsTable, />Sports</);
+
+    state.allocationOpenStudent = 'jane@school.edu';
+    state.allocationDesk = desk();
+    state.allocationDesk.settings.columns = [{ key: 'Research notes', showOnCard: false, expanded: true }];
+    const expandedStudent = student({ dynamicData: { 'Research notes': 'A long paragraph about the question.' }, subjectChoices: { interdisciplinary: 'Yes' } });
+    const expanded = deskMod.allocationRowMarkup(expandedStudent, supervisors(), [], {});
+    assert.match(expanded, /data-alloc-expand="jane@school.edu"/);
+    assert.match(expanded, /<dt>Choice 1<\/dt>/);
+    assert.match(expanded, /<dt>Choice 2<\/dt>/);
+    assert.match(expanded, /<dt>Interdisciplinary<\/dt>/);
+    assert.match(expanded, /Research notes/);
+    assert.match(expanded, /A long paragraph/);
+    assert.match(expanded, /Interdisciplinary EE/);
+    state.allocationOpenStudent = 'mark@school.edu';
+    const onlyMark = deskMod.allocationRowMarkup(expandedStudent, supervisors(), [], {});
+    assert.doesNotMatch(onlyMark, /alloc-expanded/);
+
+    state.adminHeaderOpen = {};
+    const settings = deskMod.allocationSettingsMarkup({
+      driveReady: true,
+      settings: {
+        detectedChoiceKeys: ['choice1', 'interdisciplinary'],
+        detectedDynamicKeys: ['Research notes'],
+        columns: [{ key: 'Research notes', showOnCard: true, expanded: false }],
+        interdisciplinaryKey: 'interdisciplinary',
+        primaryChoiceKey: 'choice1',
+      },
+      summary: { staffCount: 1, tokenCount: 1, activeStudents: 1, buffer: 0 },
+      choiceRows: [{ studentId: 'jane@school.edu', displayName: 'Doe, Jane', subjectChoices: { choice1: 'History', interdisciplinary: 'maybe' }, dynamicData: {} }],
+      students: [],
+    });
+    assert.match(settings, /Google Sheets sync/);
+    assert.match(settings, /COHORTDATA Columns/);
+    assert.match(settings, /Subject choice mapping/);
+    assert.match(settings, /Dashboard Fields/);
+    assert.match(settings, /Data Management/);
+    assert.match(settings, /data-flag="expanded"/);
+    assert.match(settings, /must be exactly Yes or No/);
+    assert.match(settings, /Doe, Jane/);
+    assert.doesNotMatch(settings, /id="alloc-cohort"/);
+    ['alloc-sync', 'alloc-cohortdata', 'alloc-choice-map', 'alloc-fields', 'alloc-data'].forEach(function(id) {
+      assert.match(settings, new RegExp('data-toggle-header="' + id + '" aria-expanded="false"'));
+    });
+
+    const board = deskMod.cohortTokensMarkup({
+      cohortId: '2026',
+      subjects: ['History'],
+      staff: [{ email: 'psy@school.edu', displayName: 'Dr Psy' }],
+      summary: { teachersAllocated: 1, tokenCount: 2, studentCount: 4 },
+      tokens: [{
+        id: 't1',
+        staffId: 'psy@school.edu',
+        staffName: 'Dr Psy',
+        eligibleSubjects: ['History'],
+        status: 'draft',
+        allocatedTo: 'jane@school.edu',
+        studentName: 'Doe, Jane',
+        assignedSubject: 'History',
+      }],
+    });
+    assert.match(board, /Teachers allocated <strong>1<\/strong>/);
+    assert.match(board, /Number of tokens <strong>2<\/strong>/);
+    assert.match(board, /Number of students <strong>4<\/strong>/);
+    assert.match(board, /<strong>Doe, Jane<\/strong><div class="muted">jane@school.edu<\/div>/);
+    assert.doesNotMatch(board, /id="alloc-cohort"/);
+
+    const flagged = student({ supportFlags: ['EAL', 'SEN'] });
+    const flaggedRow = deskMod.allocationRowMarkup(flagged, supervisors(), [], {});
+    assert.match(flaggedRow, /class="support-tag">EAL</);
+    assert.match(flaggedRow, /class="support-tag">SEN</);
+    state.allocationSupportFlags = ['EAL'];
+    state.allocationSubjectFilter = [];
+    const flagSource = desk();
+    flagSource.students[0].supportFlags = ['EAL'];
+    flagSource.students[1].supportFlags = ['SEN'];
+    assert.deepEqual(deskMod.visibleAllocationStudents(flagSource).map((item) => item.studentId), ['jane@school.edu']);
+    state.allocationSupportFlags = [];
+    state.allocationAllocatedFilter = ['Theater'];
+    flagSource.students[1].token = { staffId: 'art@school.edu', staffName: 'Mx Art', assignedSubject: 'Theater', eligibleSubjects: ['Theater'] };
+    assert.deepEqual(deskMod.visibleAllocationStudents(flagSource).map((item) => item.studentId), ['mark@school.edu']);
+    state.allocationAllocatedFilter = [];
+    state.allocationTeacherFilter = ['art@school.edu'];
+    assert.deepEqual(deskMod.visibleAllocationStudents(flagSource).map((item) => item.studentId), ['mark@school.edu']);
   } finally {
     await server.close();
   }

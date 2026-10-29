@@ -6,8 +6,7 @@ export function workspaceHelpMarkup(cohortYear) {
   const year = cohortYear || '2026';
   const row = help.exampleRow;
   const headers = help.exampleHeaders;
-  return `<section class="alloc-panel alloc-help" aria-labelledby="alloc-sheet-help">
-    <h2 id="alloc-sheet-help">COHORTDATA columns</h2>
+  return `<div class="alloc-help">
     <p class="doc-hint">Workspace ingest reads one tab. This cohort uses <code>COHORTDATA: ${escapeHtml(year)}</code>. A colon and the spaces around it are optional.</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Item</th><th>What the sheet needs</th></tr></thead>
@@ -33,5 +32,5 @@ export function workspaceHelpMarkup(cohortYear) {
       }).join('')}</tr></tbody>
     </table></div>
     <p class="doc-hint">${escapeHtml(help.mappingNote)}</p>
-  </section>`;
+  </div>`;
 }

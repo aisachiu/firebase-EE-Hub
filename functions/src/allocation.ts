@@ -96,7 +96,7 @@ export async function getAllocationDesk(app: App, cohortId: unknown): Promise<Al
   return { ...desk, driveReady: drive.ready, driveActor: drive.actorEmail, driveError: drive.ready ? '' : drive.error };
 }
 
-export async function draftAllocation(app: App, cohortId: unknown, studentId: unknown, staffId: unknown, subject: unknown) {
+export async function draftAllocation(app: App, cohortId: unknown, studentId: unknown, staffId: unknown, subject: unknown, interdisciplinary?: unknown) {
   const user = await requireAdmin(app, 'DRAFT_ALLOCATION');
   const cohort = await requireCohort(app, text(cohortId));
   const email = normalizeEmail(studentId);
@@ -111,6 +111,7 @@ export async function draftAllocation(app: App, cohortId: unknown, studentId: un
       tokens,
       memberSupervisorId: normalizeEmail(member.supervisorId),
       pendingClear: workspace.pendingClear,
+      interdisciplinary: interdisciplinary === true || text(interdisciplinary) === 'Yes',
     });
     if (plan.error) throw new HubError(plan.error);
     if (!plan.changed) return { changed: false, studentId: email };
@@ -209,29 +210,75 @@ export async function commitAllocations(app: App, cohortId: unknown) {
     const now = nowIso();
     const ops: AllocationOp[] = [];
     const tokenById = new Map(tokens.map((token) => [token.id, token]));
-    const writeStudentSubject = (studentId: string, subject: string) => {
+    const writeStudentSubject = (studentId: string, subject: string, interdisciplinary: boolean) => {
       if (!profileByStudent.get(studentId)) return;
-      ops.push({ kind: 'student', id: studentId, data: { subject } });
+      ops.push({ kind: 'student', id: studentId, data: { subject, interdisciplinary } });
     };
     plan.assignments.forEach((row) => {
       const workspace = workspaceByStudent.get(row.studentId);
       const subject = publishedAllocationSubject(row.subject, workspace?.subjectChoices, settings.primaryChoiceKey);
-      const member = { ...byStudent.get(row.studentId)!, supervisorId: row.staffId, subject };
-      ops.push({ kind: 'member', cohortId: cohort.id, id: row.studentId, data: member });
-      writeStudentSubject(row.studentId, subject);
       const token = tokenById.get(row.tokenId);
-      if (token) ops.push({ kind: 'token', cohortId: cohort.id, id: token.id, data: { ...token, assignedSubject: subject, status: 'committed' } });
+      const interdisciplinary = token?.interdisciplinary === true;
+      const member = { ...byStudent.get(row.studentId)!, supervisorId: row.staffId, subject, interdisciplinary };
+      ops.push({ kind: 'member', cohortId: cohort.id, id: row.studentId, data: member });
+      writeStudentSubject(row.studentId, subject, interdisciplinary);
+      if (token) ops.push({ kind: 'token', cohortId: cohort.id, id: token.id, data: { ...token, assignedSubject: subject, interdisciplinary, status: 'committed' } });
       if (workspace?.pendingClear) ops.push({ kind: 'workspace', cohortId: cohort.id, id: row.studentId, data: { ...workspace, pendingClear: false, updatedAt: now } });
     });
     plan.clears.forEach((studentId) => {
-      const member = { ...byStudent.get(studentId)!, supervisorId: '', subject: '' };
+      const member = { ...byStudent.get(studentId)!, supervisorId: '', subject: '', interdisciplinary: false };
       ops.push({ kind: 'member', cohortId: cohort.id, id: studentId, data: member });
-      writeStudentSubject(studentId, '');
+      writeStudentSubject(studentId, '', false);
       const workspace = workspaceByStudent.get(studentId);
       if (workspace) ops.push({ kind: 'workspace', cohortId: cohort.id, id: studentId, data: { ...workspace, pendingClear: false, updatedAt: now } });
     });
     await app.store.applyAllocationOps(ops);
     return { published: plan.assignments.length, cleared: plan.clears.length };
+  });
+}
+
+export async function saveAllocationChoices(app: App, cohortId: unknown, updates: unknown) {
+  const user = await requireAdmin(app, 'SAVE_ALLOCATION_CHOICES');
+  const cohort = await requireCohort(app, text(cohortId));
+  const rows = Array.isArray(updates) ? updates : [];
+  if (!rows.length) throw new HubError('Choose at least one cell to update.');
+  if (rows.length > 5000) throw new HubError('Update no more than 5,000 cells at a time.');
+  return audited(app, user, 'SAVE_ALLOCATION_CHOICES', { cohortId: cohort.id, cells: rows.length }, async () => {
+    const settings = settingsFromDoc(await app.store.getAllocationConfig(cohort.id));
+    const choiceKeys = new Set(settings.detectedChoiceKeys);
+    const dynamicKeys = new Set(settings.detectedDynamicKeys);
+    const grouped = new Map<string, { choices: Record<string, string>; dynamic: Record<string, string> }>();
+    rows.forEach((row) => {
+      const item = row && typeof row === 'object' ? row as Doc : {};
+      const studentId = normalizeEmail(item.studentId);
+      const key = text(item.key).slice(0, 80);
+      if (!studentId || !key) throw new HubError('Each update needs a student and a column.');
+      const inChoice = choiceKeys.has(key);
+      const inDynamic = dynamicKeys.has(key);
+      if (!inChoice && !inDynamic) throw new HubError(`${key} is not a detected column.`);
+      let value = text(item.value);
+      if (settings.interdisciplinaryKey && key === settings.interdisciplinaryKey) {
+        if (value !== 'Yes' && value !== 'No') throw new HubError('Is Interdisciplinary? must be Yes or No.');
+      }
+      const bucket = grouped.get(studentId) || { choices: {}, dynamic: {} };
+      if (inChoice) bucket.choices[key] = value;
+      else bucket.dynamic[key] = value;
+      grouped.set(studentId, bucket);
+    });
+    const now = nowIso();
+    for (const [studentId, bucket] of grouped) {
+      const member = await app.store.getMember(cohort.id, studentId);
+      if (!member) throw new HubError(`${studentId} is not on the cohort roster.`);
+      const existing = workspaceFromDoc(await app.store.getWorkspace(cohort.id, studentId) || {}, studentId);
+      await app.store.setWorkspace(cohort.id, studentId, {
+        ...existing,
+        studentId,
+        subjectChoices: { ...existing.subjectChoices, ...bucket.choices },
+        dynamicData: { ...existing.dynamicData, ...bucket.dynamic },
+        updatedAt: now,
+      });
+    }
+    return { updated: grouped.size };
   });
 }
 
@@ -404,21 +451,33 @@ export async function exportStaffQuotaSheet(app: App, cohortId: unknown, deps?: 
 export async function listCohortTokens(app: App, cohortId: unknown) {
   await requireAdmin(app, 'LIST_COHORT_TOKENS');
   const cohort = await requireCohort(app, text(cohortId));
-  const [tokenDocs, staff, subjects] = await Promise.all([
+  const [tokenDocs, staff, subjects, members] = await Promise.all([
     app.store.listTokens(cohort.id),
     app.store.list(COLLECTIONS.staffUsers),
     activeSubjectNames(app),
+    app.store.listMembers(cohort.id),
   ]);
   const names = new Map(staff.map((person) => [normalizeEmail(person.EMAIL), text(person.DisplayName) || normalizeEmail(person.EMAIL)]));
+  const studentNames = new Map(members.map((member) => [normalizeEmail(member.StudentId), text(member['Display Name']) || normalizeEmail(member.StudentId)]));
+  members.forEach((member) => {
+    const id = normalizeEmail(member.StudentId);
+    const surname = text(member.Surname);
+    const first = text(member['Preferred Name']) || text(member['First Name']);
+    if (id && surname && first) studentNames.set(id, `${surname}, ${first}`);
+  });
   const tokens = tokensFrom(tokenDocs, cohort.id)
     .map((token) => ({
       ...token,
       staffName: names.get(token.staffId) || token.staffId,
+      studentName: token.allocatedTo ? (studentNames.get(token.allocatedTo) || token.allocatedTo) : '',
     }))
     .sort((left, right) => left.staffName.localeCompare(right.staffName) || left.status.localeCompare(right.status) || left.id.localeCompare(right.id));
+  const teachersAllocated = new Set(tokens.filter((token) => token.status !== 'available').map((token) => token.staffId)).size;
+  const studentCount = members.filter((member) => normalizeEmail(member.StudentId) && isEeActive(member.eeActive)).length;
   return {
     cohortId: cohort.id,
     tokens,
+    summary: { teachersAllocated, tokenCount: tokens.length, studentCount },
     staff: staff
       .map((person) => ({ email: normalizeEmail(person.EMAIL), displayName: text(person.DisplayName) || normalizeEmail(person.EMAIL) }))
       .filter((person) => person.email)
@@ -454,6 +513,7 @@ export async function addCohortTokens(app: App, cohortId: unknown, staffId: unkn
         eligibleSubjects,
         allocatedTo: '',
         assignedSubject: '',
+        interdisciplinary: false,
         status: 'available',
         createdAt: now,
       };

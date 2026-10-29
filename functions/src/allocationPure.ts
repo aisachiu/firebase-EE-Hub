@@ -15,6 +15,8 @@ export interface TokenRecord {
   eligibleSubjects: string[];
   allocatedTo: string;
   assignedSubject: string;
+  /** Coordinator marked this allocated token as an interdisciplinary EE. */
+  interdisciplinary: boolean;
   status: TokenStatus;
   createdAt: string;
 }
@@ -34,6 +36,8 @@ export interface ColumnFlag {
   sortable: boolean;
   /** Sequential blue fill for numeric cells. Off until a coordinator turns it on. */
   colorScale: boolean;
+  /** Render this field in the desk's expanded student row, for long notes. */
+  expanded: boolean;
 }
 
 export interface AllocationSettings {
@@ -96,7 +100,27 @@ export interface DeskToken {
   staffName: string;
   eligibleSubjects: string[];
   assignedSubject: string;
+  interdisciplinary: boolean;
   status: 'draft' | 'committed';
+}
+
+export interface DeskTokenRow {
+  id: string;
+  status: TokenStatus;
+  eligibleSubjects: string[];
+  staffId: string;
+  staffName: string;
+  studentId: string;
+  studentName: string;
+  assignedSubject: string;
+  interdisciplinary: boolean;
+}
+
+export interface AllocationChoiceRow {
+  studentId: string;
+  displayName: string;
+  subjectChoices: Record<string, string | number | boolean>;
+  dynamicData: Record<string, string | number | boolean>;
 }
 
 export interface DeskStudent {
@@ -111,6 +135,8 @@ export interface DeskStudent {
   token: DeskToken | null;
   /** Subject names to show as tags, in choice order. Colour comes from the subjects collection. */
   requestedSubjects: { name: string; colour: string }[];
+  /** Distinct tags parsed from a comma-separated support flag cell. */
+  supportFlags: string[];
   choices: { primary: string; secondary: string; interdisciplinary: boolean };
   flags: {
     drafted: boolean;
@@ -138,6 +164,10 @@ export interface AllocationDesk {
   supervisors: DeskSupervisor[];
   /** Same cohort tokens the supervisor load is built from, without student assignment. */
   tokenSlots: { status: TokenStatus; eligibleSubjects: string[] }[];
+  /** One row per cohort token, including who holds it, for the Assigned load view. */
+  tokenRows: DeskTokenRow[];
+  /** Ingested choice rows for every roster student, including students who are not active on the desk. */
+  choiceRows: AllocationChoiceRow[];
   settings: AllocationSettings;
   summary: { staffCount: number; tokenCount: number; activeStudents: number; buffer: number };
   publish: { drafts: number; clears: number; blocked: number };
@@ -270,7 +300,7 @@ export function parseTokenGrid(grid: Grid): { rows: ParsedTokenRow[]; warnings: 
       warnings.push(`${grid.title} row ${line} quota must be a whole number.`);
       return;
     }
-    const eligibleSubjects = splitList(subjectIndex < 0 ? '' : row[subjectIndex]);
+    const eligibleSubjects = parseSubjectCell(subjectIndex < 0 ? '' : row[subjectIndex]);
     if (!eligibleSubjects.length) warnings.push(`${grid.title} row ${line} lists no eligible subjects for ${staffId}.`);
     if (seen.has(staffId)) {
       warnings.push(`${grid.title} repeats ${staffId}. The last row is kept.`);
@@ -299,6 +329,7 @@ export function planTokenTopUp(existing: TokenRecord[], rows: ParsedTokenRow[], 
           eligibleSubjects: row.eligibleSubjects.slice(),
           allocatedTo: '',
           assignedSubject: '',
+          interdisciplinary: false,
           status: 'available',
           createdAt: now,
         });
@@ -324,10 +355,12 @@ export function planDraft(input: {
   tokens: TokenRecord[];
   memberSupervisorId: string;
   pendingClear: boolean;
+  interdisciplinary?: boolean;
 }): DraftPlan {
   const studentId = normalizeEmail(input.studentId);
   const staffId = normalizeEmail(input.staffId);
   const subject = text(input.subject);
+  const interdisciplinary = input.interdisciplinary === true;
   const mine = input.tokens.filter((token) => token.allocatedTo === studentId && token.status !== 'available');
   if (mine.length > 1) {
     return { tokens: [], pendingClear: input.pendingClear, changed: false, error: `${studentId} has more than one token.`, code: 'conflict' };
@@ -337,22 +370,24 @@ export function planDraft(input: {
     if (!current) return { tokens: [], pendingClear: input.pendingClear, changed: false, error: '', code: '' };
     const published = current.status === 'committed' || (!!input.memberSupervisorId && input.memberSupervisorId === current.staffId);
     return {
-      tokens: [{ ...current, allocatedTo: '', assignedSubject: '', status: 'available' }],
+      tokens: [{ ...current, allocatedTo: '', assignedSubject: '', interdisciplinary: false, status: 'available' }],
       pendingClear: published ? true : input.pendingClear,
       changed: true,
       error: '',
       code: '',
     };
   }
+  const mismatch = subjectMismatch(subject, current && current.staffId === staffId ? current.eligibleSubjects : []);
   if (current && current.staffId === staffId) {
-    if (current.assignedSubject === subject && current.status !== 'committed') {
-      return { tokens: [], pendingClear: input.pendingClear, changed: false, error: '', code: '' };
+    if (mismatch) {
+      return { tokens: [], pendingClear: input.pendingClear, changed: false, error: mismatch, code: 'conflict' };
     }
-    if (current.assignedSubject === subject && current.status === 'committed') {
+    const sameFlag = (current.interdisciplinary === true) === interdisciplinary;
+    if (current.assignedSubject === subject && sameFlag) {
       return { tokens: [], pendingClear: input.pendingClear, changed: false, error: '', code: '' };
     }
     return {
-      tokens: [{ ...current, assignedSubject: subject, status: 'draft' }],
+      tokens: [{ ...current, assignedSubject: subject, interdisciplinary, status: 'draft' }],
       pendingClear: false,
       changed: true,
       error: '',
@@ -363,10 +398,26 @@ export function planDraft(input: {
   if (!available.length) {
     return { tokens: [], pendingClear: input.pendingClear, changed: false, error: `${staffId} has no available slots.`, code: 'capacity' };
   }
-  const preferred = available.find((token) => subjectsOverlap(subject, token.eligibleSubjects)) || available[0];
-  const updates: TokenRecord[] = [{ ...preferred, allocatedTo: studentId, assignedSubject: subject, status: 'draft' }];
-  if (current) updates.push({ ...current, allocatedTo: '', assignedSubject: '', status: 'available' });
+  const preferred = subject
+    ? available.find((token) => subjectsOverlap(subject, token.eligibleSubjects))
+    : available[0];
+  if (!preferred || (subject && !subjectsOverlap(subject, preferred.eligibleSubjects))) {
+    return {
+      tokens: [],
+      pendingClear: input.pendingClear,
+      changed: false,
+      error: `${subject} does not match the supervisor's EE subjects.`,
+      code: 'conflict',
+    };
+  }
+  const updates: TokenRecord[] = [{ ...preferred, allocatedTo: studentId, assignedSubject: subject, interdisciplinary, status: 'draft' }];
+  if (current) updates.push({ ...current, allocatedTo: '', assignedSubject: '', interdisciplinary: false, status: 'available' });
   return { tokens: updates, pendingClear: false, changed: true, error: '', code: '' };
+}
+
+function subjectMismatch(subject: string, eligible: string[]): string {
+  if (!subject || subjectsOverlap(subject, eligible)) return '';
+  return `${subject} does not match the supervisor's EE subjects.`;
 }
 
 export function planBatchDraft(input: {
@@ -534,21 +585,64 @@ export function activeSubjectNamesFrom(subjects: Doc[]): string[] {
 
 /**
  * Read EE subjects from a staff record or a sheet cell.
- * Arrays stay intact, so a name like "History / Geography" is one subject.
- * A JSON array string does too. Older comma-separated text still splits.
+ * Arrays and JSON arrays stay intact, so a name like "History / Geography" is one subject.
+ * A quoted name that contains commas stays one subject. A plain list such as "English, History" still splits.
+ * A single subject whose own name contains commas, such as "Sports, Exercise, and Health Science (SEHS)", stays one subject.
  */
 export function parseSubjectCell(value: unknown): string[] {
   if (Array.isArray(value)) return uniqueSubjects(value);
   const raw = text(value);
+  if (!raw) return [];
   if (raw.startsWith('[')) {
     try {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed)) return uniqueSubjects(parsed);
     } catch {
-      // Not JSON. Fall through to the legacy comma-separated list.
+      // Not JSON. Fall through to the list parser.
     }
   }
+  const quoted = splitQuotedList(raw);
+  if (quoted) return uniqueSubjects(quoted);
+  if (keepLiteralSubject(raw)) return uniqueSubjects([raw]);
   return uniqueSubjects(raw);
+}
+
+/** True when a cell is one subject name that happens to contain commas, not a list of subjects. */
+export function keepLiteralSubject(value: string): boolean {
+  const raw = text(value);
+  if (!raw.includes(',')) return false;
+  if (/,\s+and\s+/i.test(raw)) return true;
+  if (/\([^)]*\)/.test(raw) && raw.split(',').length >= 3) return true;
+  return raw.split(',').some((part) => part.trim().split(/\s+/).length >= 3);
+}
+
+function splitQuotedList(raw: string): string[] | null {
+  if (!/["']/.test(raw)) return null;
+  const parts: string[] = [];
+  let current = '';
+  let quote = '';
+  for (let index = 0; index < raw.length; index += 1) {
+    const ch = raw[index];
+    if (quote) {
+      if (ch === quote) quote = '';
+      else current += ch;
+      continue;
+    }
+    if ((ch === '"' || ch === "'") && !current.trim()) {
+      quote = ch;
+      continue;
+    }
+    if (ch === ',' || ch === ';') {
+      const item = current.trim();
+      if (item) parts.push(item);
+      current = '';
+      continue;
+    }
+    current += ch;
+  }
+  const last = current.trim();
+  if (last) parts.push(last);
+  return parts.length ? parts : null;
 }
 
 /** Sheet cell for a subject list. Names that contain a list delimiter are written as JSON. */
@@ -575,8 +669,14 @@ export interface QuotaCapacity {
   subjects: { subject: string; capacity: number }[];
 }
 
+export interface SubjectLoadDemand {
+  subjects: string[];
+  allocated: boolean;
+  assignedSubject?: string;
+}
+
 export interface SubjectTokenLoad {
-  subjects: { subject: string; remaining: number }[];
+  subjects: { subject: string; remaining: number; pool: number; upool: number; alloc: number }[];
   /** Available tokens with no eligible subject. */
   untied: number;
   /** An available token can be taken in more than one subject, so those remaining counts overlap. */
@@ -584,10 +684,21 @@ export interface SubjectTokenLoad {
 }
 
 /** Remaining slots for each subject on the tokens that feed supervisor load. An open token counts once per subject it can take. */
-export function subjectTokenLoad(tokens: { status: string; eligibleSubjects?: unknown }[]): SubjectTokenLoad {
+export function subjectTokenLoad(
+  tokens: { status: string; eligibleSubjects?: unknown; assignedSubject?: unknown }[],
+  demand: SubjectLoadDemand[] = [],
+): SubjectTokenLoad {
   let untied = 0;
   let overlaps = false;
-  const groups = new Map<string, { subject: string; remaining: number }>();
+  const groups = new Map<string, { subject: string; remaining: number; pool: number; upool: number; alloc: number }>();
+  const bucket = (subject: string) => {
+    const key = subject.toLowerCase();
+    const current = groups.get(key);
+    if (current) return current;
+    const created = { subject, remaining: 0, pool: 0, upool: 0, alloc: 0 };
+    groups.set(key, created);
+    return created;
+  };
   tokens.forEach((token) => {
     const subjects = subjectLoadNames(token.eligibleSubjects);
     const open = token.status === 'available';
@@ -597,12 +708,27 @@ export function subjectTokenLoad(tokens: { status: string; eligibleSubjects?: un
     }
     if (open && subjects.length > 1) overlaps = true;
     subjects.forEach((subject) => {
-      const key = subject.toLowerCase();
-      const current = groups.get(key);
-      const add = open ? 1 : 0;
-      if (current) current.remaining += add;
-      else groups.set(key, { subject, remaining: add });
+      const current = bucket(subject);
+      if (open) current.remaining += 1;
     });
+    const assigned = text(token.assignedSubject);
+    if (!open && assigned) bucket(assigned).alloc += 1;
+  });
+  demand.forEach((row) => {
+    const seen = new Set<string>();
+    row.subjects.forEach((subject) => {
+      const name = text(subject);
+      const key = name.toLowerCase();
+      if (!name || seen.has(key)) return;
+      seen.add(key);
+      const current = bucket(name);
+      current.pool += 1;
+      if (!row.allocated) current.upool += 1;
+    });
+    if (row.allocated && !tokens.some((token) => text(token.assignedSubject))) {
+      const assigned = text(row.assignedSubject);
+      if (assigned) bucket(assigned).alloc += 1;
+    }
   });
   return {
     untied,
@@ -664,8 +790,33 @@ export function tokenSheetRows(rows: ParsedTokenRow[]): (string | number)[][] {
 }
 
 export function isSupportFlag(value: unknown): boolean {
-  if (value === true || value === 1) return true;
-  return /^(yes|y|true|1|flagged|needs support)$/i.test(text(value));
+  return supportFlagTags(value).length > 0;
+}
+
+/** Split a support-flag cell into distinct tags. "EAL, SEN" is two flags. A single yes/true cell is one flag. */
+export function supportFlagTags(value: unknown): string[] {
+  if (value === true || value === 1) return ['Needs support'];
+  if (value === false || value === 0 || value === null || value === undefined || value === '') return [];
+  const raw = text(value);
+  if (!raw || /^(no|n|false|0|none|na|n\/a)$/i.test(raw)) return [];
+  if (/^(yes|y|true|1|flagged|needs support)$/i.test(raw)) return ['Needs support'];
+  const seen = new Set<string>();
+  const tags: string[] = [];
+  raw.split(',').forEach((part) => {
+    const tag = part.trim();
+    const key = tag.toLowerCase();
+    if (!tag || seen.has(key) || /^(no|n|false|0|none|na|n\/a)$/i.test(tag)) return;
+    seen.add(key);
+    tags.push(tag);
+  });
+  return tags;
+}
+
+/** Interdisciplinary choice cells must be exactly Yes or No. */
+export function strictInterdisciplinaryValue(value: unknown): 'Yes' | 'No' | null {
+  const raw = text(value);
+  if (raw === 'Yes' || raw === 'No') return raw;
+  return null;
 }
 
 export function tokenFromDoc(doc: Doc): TokenRecord | null {
@@ -682,6 +833,7 @@ export function tokenFromDoc(doc: Doc): TokenRecord | null {
     eligibleSubjects: subjectLoadNames(doc.eligibleSubjects),
     allocatedTo: status === 'available' ? '' : allocatedTo,
     assignedSubject: status === 'available' ? '' : text(doc.assignedSubject),
+    interdisciplinary: status !== 'available' && doc.interdisciplinary === true,
     status,
     createdAt: text(doc.createdAt),
   };
@@ -720,13 +872,14 @@ export function settingsFromDoc(doc: Doc | null): AllocationSettings {
 export function mergeDetected(settings: AllocationSettings, choiceKeys: string[], dynamicKeys: string[]): AllocationSettings {
   const columns = dynamicKeys.map((key) => {
     const prior = settings.columns.find((column) => column.key === key);
-    if (prior) return { ...prior, colorScale: prior.colorScale === true };
+    if (prior) return { ...prior, colorScale: prior.colorScale === true, expanded: prior.expanded === true };
     return {
       key,
       showOnCard: true,
       filterable: false,
       sortable: true,
       colorScale: false,
+      expanded: false,
     };
   });
   const next: AllocationSettings = {
@@ -1085,12 +1238,20 @@ function labelsFromChoiceValue(value: unknown, depth: number): string[] {
       // Not JSON. Keep a short plain name below.
     }
   }
-  if (/^(true|false|yes|no|y|n)$/i.test(raw) || raw.length > 80) return [];
-  if (/[,;]/.test(raw) && !/[[\]{}]/.test(raw)) {
-    const parts = raw.split(/[,;]/).map((part) => part.trim()).filter(Boolean);
-    if (parts.length > 1 && parts.length <= 6 && parts.every((part) => part.length <= 40)) return parts;
+  if (/^(true|false|yes|no|y|n)$/i.test(raw)) return [];
+  const plain = unwrapSubjectQuotes(raw);
+  if (keepLiteralSubject(plain)) return [plain];
+  if (plain.length > 120) return [];
+  if (/[;|]/.test(plain) && !/[[\]{}]/.test(plain)) {
+    const parts = plain.split(/[;|]/).map((part) => part.trim()).filter(Boolean);
+    if (parts.length > 1 && parts.length <= 6 && parts.every((part) => !part.includes(',') || keepLiteralSubject(part))) return parts;
   }
-  return [raw];
+  return [plain];
+}
+
+function unwrapSubjectQuotes(raw: string): string {
+  const match = /^["']([\s\S]*)["']$/.exec(raw.trim());
+  return match ? match[1].trim() : raw.trim();
 }
 
 function labelsFromChoiceRecord(record: Record<string, unknown>, depth: number): string[] {
@@ -1135,6 +1296,7 @@ export function buildDesk(input: {
   choiceSources?: Map<string, unknown>;
 }): AllocationDesk {
   const names = new Map(input.staff.map((person) => [normalizeEmail(person.email), person.displayName || person.email]));
+  const studentNames = new Map(input.members.map((member) => [normalizeEmail(member.StudentId), studentLabel(member)]));
   const workspaceByStudent = new Map(input.workspaces.map((workspace) => [workspace.studentId, workspace]));
   const warnings: string[] = [];
   const tokensByStudent = new Map<string, TokenRecord[]>();
@@ -1168,6 +1330,7 @@ export function buildDesk(input: {
       const allocated = !!token;
       const hlValue = input.settings.hlColumn ? workspace?.dynamicData[input.settings.hlColumn] : undefined;
       const supportValue = input.settings.supportColumn ? workspace?.dynamicData[input.settings.supportColumn] : undefined;
+      const supportFlags = input.settings.supportColumn ? supportFlagTags(supportValue) : [];
       return {
         studentId,
         displayName: studentLabel(member),
@@ -1178,12 +1341,14 @@ export function buildDesk(input: {
         dynamicData: workspace?.dynamicData || {},
         pendingClear: !!workspace?.pendingClear,
         requestedSubjects,
+        supportFlags,
         token: token ? {
           id: token.id,
           staffId: token.staffId,
           staffName: names.get(token.staffId) || token.staffId,
           eligibleSubjects: token.eligibleSubjects.slice(),
           assignedSubject: token.assignedSubject,
+          interdisciplinary: token.interdisciplinary === true,
           status: token.status as 'draft' | 'committed',
         } : null,
         choices,
@@ -1192,7 +1357,7 @@ export function buildDesk(input: {
           committed: token?.status === 'committed',
           subjectMatch: !allocated ? 'none' : subjectsOverlap(assignedSubject, eligible) ? 'match' : 'miss',
           hlMatch: !allocated || !input.settings.hlColumn ? 'none' : splitList(hlValue).some((part) => subjectsOverlap(part, eligible)) ? 'match' : 'miss',
-          needsSupport: !!input.settings.supportColumn && isSupportFlag(supportValue),
+          needsSupport: supportFlags.length > 0,
         },
       } satisfies DeskStudent;
     })
@@ -1234,6 +1399,18 @@ export function buildDesk(input: {
       status: token.status,
       eligibleSubjects: token.eligibleSubjects.slice(),
     })),
+    tokenRows: input.tokens.map((token) => ({
+      id: token.id,
+      status: token.status,
+      eligibleSubjects: token.eligibleSubjects.slice(),
+      staffId: token.staffId,
+      staffName: names.get(token.staffId) || token.staffId,
+      studentId: token.allocatedTo,
+      studentName: token.allocatedTo ? (studentNames.get(token.allocatedTo) || token.allocatedTo) : '',
+      assignedSubject: token.assignedSubject,
+      interdisciplinary: token.interdisciplinary === true,
+    })),
+    choiceRows: choiceRowsFrom(input.members, input.workspaces),
     settings: input.settings,
     summary: {
       staffCount: supervisors.length,
@@ -1362,6 +1539,31 @@ function wordOverlap(left: string, right: string): boolean {
   return left.length >= 3 && right.length >= 3 && (left.includes(right) || right.includes(left));
 }
 
+function choiceRowsFrom(members: Doc[], workspaces: WorkspaceRecord[]): AllocationChoiceRow[] {
+  const byId = new Map<string, AllocationChoiceRow>();
+  members.forEach((member) => {
+    const studentId = normalizeEmail(member.StudentId);
+    if (!studentId) return;
+    byId.set(studentId, {
+      studentId,
+      displayName: studentLabel(member),
+      subjectChoices: {},
+      dynamicData: {},
+    });
+  });
+  workspaces.forEach((workspace) => {
+    if (!workspace.studentId) return;
+    const current = byId.get(workspace.studentId);
+    byId.set(workspace.studentId, {
+      studentId: workspace.studentId,
+      displayName: current?.displayName || workspace.studentId,
+      subjectChoices: workspace.subjectChoices,
+      dynamicData: workspace.dynamicData,
+    });
+  });
+  return [...byId.values()].sort((left, right) => left.displayName.localeCompare(right.displayName, 'en', { sensitivity: 'base' }));
+}
+
 function choiceText(choices: Record<string, string | number | boolean> | undefined, key: string): string {
   if (!choices || !key || choices[key] === undefined || typeof choices[key] === 'boolean') return '';
   return text(choices[key]);
@@ -1384,6 +1586,7 @@ function flagFrom(key: string, row: Doc | undefined): ColumnFlag {
     filterable: row ? row.filterable === true : false,
     sortable: row ? row.sortable === true : false,
     colorScale: row ? row.colorScale === true : false,
+    expanded: row ? row.expanded === true : false,
   };
 }
 

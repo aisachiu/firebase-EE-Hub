@@ -85,13 +85,14 @@ export function sortedRows(tableId, rows, valueOf) {
   return sortByKey(rows, function(row) { return valueOf(row, sort.key); }, sort.dir);
 }
 
-export function headerOpen(id) {
-  if (!Object.prototype.hasOwnProperty.call(state.adminHeaderOpen, id)) return true;
+export function headerOpen(id, fallbackOpen) {
+  if (!Object.prototype.hasOwnProperty.call(state.adminHeaderOpen, id)) return fallbackOpen !== false;
   return state.adminHeaderOpen[id] !== false;
 }
 
-export function collapsibleHeader(id, title, bodyHtml) {
-  const open = headerOpen(id);
+export function collapsibleHeader(id, title, bodyHtml, options) {
+  const fallbackOpen = !options || options.open !== false;
+  const open = headerOpen(id, fallbackOpen);
   return `<section class="table-header" data-table-header="${escapeHtml(id)}">
     <div class="table-header-bar"><h2>${escapeHtml(title)}</h2><button type="button" class="button secondary" data-toggle-header="${escapeHtml(id)}" aria-expanded="${open ? 'true' : 'false'}">${open ? 'Hide' : 'Show'}</button></div>
     <div class="table-header-body"${open ? '' : ' hidden'}>${bodyHtml}</div>
@@ -103,10 +104,10 @@ export function bindCollapsibleHeaders(root) {
   root.querySelectorAll('[data-toggle-header]').forEach(function(button) {
     button.addEventListener('click', function() {
       const id = button.getAttribute('data-toggle-header');
-      const open = !headerOpen(id);
-      state.adminHeaderOpen[id] = open;
       const section = button.closest('[data-table-header]');
       const body = section ? section.querySelector('.table-header-body') : null;
+      const open = body ? !!body.hidden : !headerOpen(id);
+      state.adminHeaderOpen[id] = open;
       if (body) body.hidden = !open;
       button.setAttribute('aria-expanded', open ? 'true' : 'false');
       button.textContent = open ? 'Hide' : 'Show';
