@@ -278,6 +278,17 @@ function bindHeaderContext() {
       return;
     }
     state.cohortId = next;
+    state.allocationSelected = [];
+    state.allocationSubjects = {};
+    state.allocationSubjectFilter = [];
+    state.allocationAllocatedFilter = [];
+    state.allocationTeacherFilter = [];
+    state.allocationSupportFlags = [];
+    state.allocationOpenStudent = '';
+    state.allocationAssignedOpen = {};
+    state.allocationDataSelected = [];
+    state.allocationInterdisciplinary = {};
+    state.tokenEditId = '';
     state.memberProvisionFilter = 'all';
     state.staffSupervisor = '';
     state.staffSelected = [];

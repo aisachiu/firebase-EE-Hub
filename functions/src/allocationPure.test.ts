@@ -26,7 +26,10 @@ import {
   activeSubjectNamesFrom,
   canonicalSubjectAssignment,
   formatSubjectCell,
+  keepLiteralSubject,
   parseSubjectCell,
+  supportFlagTags,
+  strictInterdisciplinaryValue,
   quotaCapacity,
   subjectTokenLoad,
   subjectLoadNames,
@@ -52,6 +55,7 @@ function token(partial: Partial<TokenRecord> & Pick<TokenRecord, 'id' | 'staffId
     eligibleSubjects: ['History'],
     allocatedTo: '',
     assignedSubject: '',
+    interdisciplinary: false,
     createdAt: '2026-10-18T00:00:00.000Z',
     ...partial,
   };
@@ -213,10 +217,10 @@ test('subject token load groups remaining slots by subject', () => {
   assert.equal(load.untied, 1);
   assert.equal(load.overlaps, true);
   assert.deepEqual(load.subjects, [
-    { subject: 'Art', remaining: 0 },
-    { subject: 'Biology', remaining: 1 },
-    { subject: 'Geography', remaining: 1 },
-    { subject: 'History', remaining: 2 },
+    { subject: 'Art', remaining: 0, pool: 0, upool: 0, alloc: 0 },
+    { subject: 'Biology', remaining: 1, pool: 0, upool: 0, alloc: 0 },
+    { subject: 'Geography', remaining: 1, pool: 0, upool: 0, alloc: 0 },
+    { subject: 'History', remaining: 2, pool: 0, upool: 0, alloc: 0 },
   ]);
   const single = subjectTokenLoad([{ status: 'available', eligibleSubjects: ['Chemistry'] }]);
   assert.equal(single.overlaps, false);
@@ -272,9 +276,10 @@ test('the desk marks subject match, an HL miss, and support flags from the saved
   assert.equal(desk.supervisors[0].used, 1);
   assert.deepEqual(desk.tokenSlots, [{ status: 'draft', eligibleSubjects: ['History', 'Geography'] }]);
   assert.deepEqual(subjectTokenLoad(desk.tokenSlots).subjects, [
-    { subject: 'Geography', remaining: 0 },
-    { subject: 'History', remaining: 0 },
+    { subject: 'Geography', remaining: 0, pool: 0, upool: 0, alloc: 0 },
+    { subject: 'History', remaining: 0, pool: 0, upool: 0, alloc: 0 },
   ]);
+  assert.deepEqual(desk.students[0].supportFlags, ['Needs support']);
   assert.equal(desk.summary.buffer, 0);
   assert.equal(subjectsOverlap('Vis Art', ['Visual Arts']), true);
 
@@ -293,6 +298,7 @@ test('the desk marks subject match, an HL miss, and support flags from the saved
   assert.equal(saved.secondaryChoiceKey, '');
   assert.equal(saved.columns.find((column) => column.key === 'Y10 GPA')?.sortable, true);
   assert.equal(saved.columns.find((column) => column.key === 'Y10 GPA')?.colorScale, false);
+  assert.equal(saved.columns.find((column) => column.key === 'Y10 GPA')?.expanded, false);
   assert.equal(settings.columns.every((column) => column.showOnCard && column.sortable && column.colorScale === false), true);
   const rows = allocationExportRows(desk.students, saved);
   assert.equal(rows[1][2], 'Draft');
@@ -482,7 +488,7 @@ test('token load keeps a comma-joined subject string as one entry and still list
   assert.deepEqual(subjectLoadNames('["Theatre / Film","Biology"]'), ['Theatre / Film', 'Biology']);
   const joined = subjectTokenLoad([{ status: 'available', eligibleSubjects: 'Mathematics, Analysis and approaches' }]);
   assert.equal(joined.overlaps, false);
-  assert.deepEqual(joined.subjects, [{ subject: 'Mathematics, Analysis and approaches', remaining: 1 }]);
+  assert.deepEqual(joined.subjects, [{ subject: 'Mathematics, Analysis and approaches', remaining: 1, pool: 0, upool: 0, alloc: 0 }]);
   const stored = tokenFromDoc({
     id: 't1',
     staffId: SMITH,
@@ -497,6 +503,65 @@ test('token load keeps a comma-joined subject string as one entry and still list
     eligibleSubjects: ['History', 'Geography'],
   });
   assert.deepEqual(listed?.eligibleSubjects, ['History', 'Geography']);
+});
+
+test('a subject name that contains commas stays one requested subject and one token-load row', () => {
+  const name = 'Sports, Exercise, and Health Science (SEHS)';
+  assert.equal(keepLiteralSubject(name), true);
+  assert.equal(keepLiteralSubject('English, History'), false);
+  assert.deepEqual(parseSubjectCell(name), [name]);
+  assert.deepEqual(parseSubjectCell('English, History'), ['English', 'History']);
+  assert.deepEqual(parseSubjectCell(`"${name}", Biology`), [name, 'Biology']);
+  assert.deepEqual(requestedSubjectNames({ choice1: name }, { primaryChoiceKey: 'choice1' }), [name]);
+  const load = subjectTokenLoad([
+    { status: 'available', eligibleSubjects: [name] },
+    { status: 'draft', eligibleSubjects: [name], assignedSubject: name },
+  ], [
+    { subjects: [name], allocated: false },
+    { subjects: [name, 'Biology'], allocated: true, assignedSubject: name },
+  ]);
+  assert.deepEqual(load.subjects.find((item) => item.subject === name), {
+    subject: name,
+    remaining: 1,
+    pool: 2,
+    upool: 1,
+    alloc: 1,
+  });
+  assert.deepEqual(supportFlagTags('EAL, SEN, EAL'), ['EAL', 'SEN']);
+  assert.deepEqual(supportFlagTags('Needs Support'), ['Needs support']);
+  assert.equal(strictInterdisciplinaryValue('Yes'), 'Yes');
+  assert.equal(strictInterdisciplinaryValue('yes'), null);
+  assert.equal(strictInterdisciplinaryValue('No'), 'No');
+});
+
+test('a draft is refused when the EE subject does not match the supervisor token', () => {
+  const tokens = [token({ id: 's1', staffId: SMITH, status: 'available', eligibleSubjects: ['History'] })];
+  const refused = planDraft({
+    studentId: JANE,
+    staffId: SMITH,
+    subject: 'Biology',
+    tokens,
+    memberSupervisorId: '',
+    pendingClear: false,
+  });
+  assert.equal(refused.changed, false);
+  assert.match(refused.error, /does not match/);
+  const marked = planDraft({
+    studentId: JANE,
+    staffId: SMITH,
+    subject: 'History',
+    tokens,
+    memberSupervisorId: '',
+    pendingClear: false,
+    interdisciplinary: true,
+  });
+  assert.equal(marked.tokens[0].interdisciplinary, true);
+  assert.equal(marked.tokens[0].assignedSubject, 'History');
+  const saved = applySavedConfig(mergeDetected(emptySettings(), ['choice1'], ['Notes']), {
+    primaryChoiceKey: 'choice1',
+    columns: [{ key: 'Notes', showOnCard: false, filterable: false, sortable: false, expanded: true }],
+  });
+  assert.equal(saved.columns.find((column) => column.key === 'Notes')?.expanded, true);
 });
 
 function rgb(hex: string): [number, number, number] {

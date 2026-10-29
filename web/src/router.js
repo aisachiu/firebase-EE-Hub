@@ -44,7 +44,7 @@ const ADMIN_PANELS = {
 const ALLOCATION_VIEWS = {
   dashboard: { title: 'Allocation' },
   tokens: { title: 'Cohort tokens' },
-  settings: { title: 'Allocation settings' },
+  settings: { title: 'Student data' },
 };
 
 let historyMode = 'replace';

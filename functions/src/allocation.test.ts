@@ -14,6 +14,8 @@ import {
   getStaffQuotaSheet,
   previewAllocationIngest,
   previewStaffQuotaTokens,
+  listCohortTokens,
+  saveAllocationChoices,
   saveAllocationConfig,
   saveStaffQuotas,
   saveStaffSubjects,
@@ -383,4 +385,44 @@ test('multiple EE subjects persist on the staff record and in bulk', async () =>
     { value: 'English', label: 'English' },
     { value: 'Theatre / Film', label: 'Theatre / Film' },
   ]);
+});
+
+test('choice edits enforce Yes or No and an interdisciplinary token publishes onto the student', async () => {
+  const app = appFor();
+  await seed(app);
+  await applyAllocationIngest(app, '2026', SHEET, 'workspace', { workbook: workbook([workspaceGrid]) });
+  await applyAllocationIngest(app, '2026', SHEET, 'tokens', { workbook: workbook([tokenGrid]) });
+  await saveAllocationChoices(app, '2026', [{ studentId: JANE, key: 'choice1', value: 'Sports, Exercise, and Health Science (SEHS)' }]);
+  assert.equal((await app.store.getWorkspace('2026', JANE))?.subjectChoices.choice1, 'Sports, Exercise, and Health Science (SEHS)');
+  const config = await app.store.getAllocationConfig('2026');
+  await app.store.setAllocationConfig('2026', {
+    ...config,
+    interdisciplinaryKey: 'interdisciplinary',
+    detectedChoiceKeys: ['choice1', 'choice2', 'interdisciplinary'],
+  });
+  await assert.rejects(
+    saveAllocationChoices(app, '2026', [{ studentId: JANE, key: 'interdisciplinary', value: 'maybe' }]),
+    /Yes or No/,
+  );
+  await saveAllocationChoices(app, '2026', [
+    { studentId: JANE, key: 'interdisciplinary', value: 'Yes' },
+    { studentId: JANE, key: 'interdisciplinary', value: 'Yes' },
+  ]);
+  assert.equal((await app.store.getWorkspace('2026', JANE))?.subjectChoices.interdisciplinary, 'Yes');
+
+  await app.store.set(COLLECTIONS.studentUsers, JANE, { StudentId: JANE, DisplayName: 'Jane Doe', subject: '' });
+  await assert.rejects(draftAllocation(app, '2026', JANE, SMITH, 'Biology', true), /does not match/);
+  await draftAllocation(app, '2026', JANE, SMITH, 'History', true);
+  const drafted = (await app.store.listTokens('2026')).find((token) => token.allocatedTo === JANE);
+  assert.equal(drafted?.interdisciplinary, true);
+  await commitAllocations(app, '2026');
+  assert.equal((await app.store.getMember('2026', JANE))?.interdisciplinary, true);
+  assert.equal((await app.store.get(COLLECTIONS.studentUsers, JANE))?.interdisciplinary, true);
+  const board = await listCohortTokens(app, '2026');
+  const held = board.tokens.find((token) => token.allocatedTo === JANE);
+  assert.equal(held?.studentName, 'Doe, Jane');
+  assert.equal(held?.allocatedTo, JANE);
+  assert.equal(board.summary.teachersAllocated, 1);
+  assert.equal(board.summary.tokenCount, 2);
+  assert.ok(board.summary.studentCount >= 1);
 });

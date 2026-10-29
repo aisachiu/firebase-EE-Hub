@@ -78,6 +78,7 @@ export const APP_TABLES: Record<string, TableDef> = {
       { name: 'Student Email', type: 'email', validator: 'email', label: 'Student Email' },
       { name: 'parentEmail', type: 'email' },
       { name: 'subject', type: 'text', label: 'EE subject', table: false, form: false },
+      { name: 'interdisciplinary', type: 'checkbox', label: 'Interdisciplinary EE', table: false, form: false },
     ],
   },
   staffUsers: {

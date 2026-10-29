@@ -805,7 +805,22 @@ main.staff-list { max-width: 1480px; }
 .supervisor-cue.is-chosen { font-weight: 800; outline: 3px solid var(--ink); outline-offset: 1px; box-shadow: 0 0 0 1px white; }
 .alloc-cue-empty { margin: 6px 0 0; }
 .id-tag { padding: 1px 5px; border-radius: 3px; background: #e7f1f8; color: var(--ink); font-size: 10px; font-weight: 800; letter-spacing: .04em; }
-.alloc-side { position: sticky; top: 52px; background: white; border: 1px solid var(--line); }
+.alloc-legend { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; margin: 0 0 8px; }
+.alloc-legend-item { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); font-size: 12px; }
+.alloc-student-name { font-weight: 700; text-align: left; }
+.alloc-expanded td { background: #f4f7fb; }
+.alloc-expanded dl { display: grid; grid-template-columns: minmax(120px, 180px) minmax(0, 1fr); gap: 6px 12px; margin: 4px 0; }
+.alloc-expanded dt { color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+.alloc-expanded dd { margin: 0; white-space: pre-wrap; }
+.support-tag { padding: 1px 6px; border: 1px solid var(--line); border-radius: 3px; background: white; color: var(--ink); font-size: 11px; font-weight: 700; }
+.alloc-ee-flag { margin-top: 6px; }
+.alloc-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.alloc-metrics p { margin: 0; }
+.alloc-assigned { border-bottom: 1px solid var(--line); }
+.alloc-assigned > button { display: flex; justify-content: space-between; gap: 8px; width: 100%; padding: 8px 12px; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.alloc-assigned ul { margin: 0; padding: 0 12px 8px 28px; }
+.alloc-side { position: sticky; top: 52px; display: flex; flex-direction: column; max-height: calc(100vh - 68px); overflow: hidden; background: white; border: 1px solid var(--line); }
+.alloc-side-scroll { overflow-y: auto; min-height: 0; flex: 1 1 auto; }
 .alloc-side header, .alloc-side footer { padding: 12px; }
 .alloc-side header { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; border-bottom: 1px solid var(--line); }
 .alloc-side header h2 { margin: 0; font-size: 14px; }
@@ -848,7 +863,7 @@ th .sort-button:hover, .alloc-head .sort-button:hover, .sort-button:hover { colo
 .form-panel.resource-modal { width: min(1100px, 100%); }
 @container (max-width: 860px) {
   .alloc-layout, .alloc-config, .alloc-filters, .alloc-ingest-layout, .quota-layout { grid-template-columns: 1fr; }
-  .alloc-side { position: static; }
+  .alloc-side { position: static; max-height: 70vh; }
 }
 @container (max-width: 860px) {
   .docs-layout { flex-direction: column; }
