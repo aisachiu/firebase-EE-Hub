@@ -1,6 +1,64 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null && request.auth.token.email is string;
+    }
+
+    function staffPath(email) {
+      return /databases/$(database)/documents/staffUsers/$(email);
+    }
+
+    function coordinatorDoc(email) {
+      return get(staffPath(email)).data;
+    }
+
+    function coordinatorFlag(data) {
+      return data.isCoordinator == true || data.isAdmin == true;
+    }
+
+    // Allocation listeners are read-only. Mutations stay on Cloud Functions (admin SDK).
+    function isCoordinator() {
+      return signedIn()
+        && exists(staffPath(request.auth.token.email.lower()))
+        && coordinatorFlag(coordinatorDoc(request.auth.token.email.lower()));
+    }
+
+    match /staffUsers/{email} {
+      allow read: if isCoordinator();
+      allow write: if false;
+    }
+
+    match /subjects/{subjectId} {
+      allow read: if isCoordinator();
+      allow write: if false;
+    }
+
+    match /cohorts/{cohortId} {
+      allow read: if isCoordinator();
+      allow write: if false;
+
+      match /members/{memberId} {
+        allow read: if isCoordinator();
+        allow write: if false;
+      }
+
+      match /allocationWorkspace/{studentId} {
+        allow read: if isCoordinator();
+        allow write: if false;
+      }
+
+      match /supervisorTokens/{tokenId} {
+        allow read: if isCoordinator();
+        allow write: if false;
+      }
+
+      match /allocationConfig/{docId} {
+        allow read: if isCoordinator();
+        allow write: if false;
+      }
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }

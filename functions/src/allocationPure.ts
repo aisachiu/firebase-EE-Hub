@@ -56,7 +56,11 @@ export const ALLOCATION_LIVE_SHEET_KEYS = [
   'sheetName',
   'columnMappings',
   'lastLiveSync',
+  'lastSyncedAt',
 ] as const;
+
+/** Minimum gap between live sheet resyncs. Shared by the function and the dashboard button. */
+export const LIVE_SYNC_COOLDOWN_MS = 60_000;
 
 export const LIVE_SHEET_GROUPS = [
   { id: 'core', title: 'Core Data Fields', note: 'Map Student Number or Student Email. Live rows merge onto the roster with that primary key.' },
@@ -94,6 +98,8 @@ export interface AllocationSettings {
   sheetName: string;
   columnMappings: LiveColumnMappings;
   lastLiveSync: string;
+  /** When a live sheet resync last finished. Drives the shared resync cooldown. */
+  lastSyncedAt: string;
 }
 
 export interface ParsedWorkspaceRow {
@@ -237,6 +243,7 @@ export function emptySettings(): AllocationSettings {
     sheetName: '',
     columnMappings: emptyColumnMappings(),
     lastLiveSync: '',
+    lastSyncedAt: '',
   };
 }
 
@@ -1007,7 +1014,35 @@ export function settingsFromDoc(doc: Doc | null): AllocationSettings {
     sheetName: text(doc.sheetName || doc.liveSheetTab),
     columnMappings: columnMappingsFrom(doc.columnMappings),
     lastLiveSync: text(doc.lastLiveSync),
+    lastSyncedAt: text(doc.lastSyncedAt),
   };
+}
+
+export interface LiveSyncAge {
+  blocked: boolean;
+  secondsAgo: number;
+  waitSeconds: number;
+  label: string;
+}
+
+/** How long ago a live resync finished, and whether another one must wait. */
+export function liveSyncAge(lastSyncedAt: unknown, nowMs: number): LiveSyncAge {
+  const at = Date.parse(text(lastSyncedAt));
+  if (!Number.isFinite(at)) return { blocked: false, secondsAgo: -1, waitSeconds: 0, label: '' };
+  const elapsed = nowMs - at;
+  const secondsAgo = elapsed < 0 ? 0 : Math.floor(elapsed / 1000);
+  const remaining = elapsed < 0 ? LIVE_SYNC_COOLDOWN_MS : LIVE_SYNC_COOLDOWN_MS - elapsed;
+  const blocked = remaining > 0;
+  const waitSeconds = blocked ? Math.max(1, Math.ceil(remaining / 1000)) : 0;
+  const unit = secondsAgo === 1 ? 'second' : 'seconds';
+  return { blocked, secondsAgo, waitSeconds, label: `Last synced ${secondsAgo} ${unit} ago` };
+}
+
+export function liveSyncCooldownError(lastSyncedAt: unknown, nowMs: number): string {
+  const age = liveSyncAge(lastSyncedAt, nowMs);
+  if (!age.blocked) return '';
+  const unit = age.waitSeconds === 1 ? 'second' : 'seconds';
+  return `${age.label}. Wait ${age.waitSeconds} ${unit} before syncing again.`;
 }
 
 export function columnMappingsFrom(value: unknown): LiveColumnMappings {
@@ -1290,6 +1325,14 @@ export function mergeLiveChoiceRow(
     pendingClear: !!existing?.pendingClear,
     updatedAt: now,
   };
+}
+
+/** True when a live row would change stored choice data. `updatedAt` alone does not count. */
+export function liveWorkspaceDirty(prior: WorkspaceRecord | undefined, next: WorkspaceRecord): boolean {
+  if (!prior) return true;
+  return prior.pendingClear !== next.pendingClear
+    || !sameRecord(prior.subjectChoices, next.subjectChoices)
+    || !sameRecord(prior.dynamicData, next.dynamicData);
 }
 
 export function settingsAfterWorkspaceIngest(

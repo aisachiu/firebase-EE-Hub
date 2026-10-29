@@ -511,7 +511,22 @@ test('a live sheet link merges choice rows onto static auxiliary data', async ()
   assert.equal(jane?.dynamicData['Y10 GPA'], 'Weak');
   assert.equal(jane?.dynamicData['HL subjects'], 'Bio');
   assert.equal(jane?.dynamicData['Mentor note'], 'Bring sources');
-  assert.ok((await app.store.getAllocationConfig('2026'))?.lastLiveSync);
+  const syncedConfig = await app.store.getAllocationConfig('2026');
+  assert.ok(syncedConfig?.lastLiveSync);
+  assert.equal(syncedConfig?.lastSyncedAt, syncedConfig?.lastLiveSync);
+  assert.equal(synced.lastSyncedAt, syncedConfig?.lastSyncedAt);
+  const stamped = jane?.updatedAt;
+  await assert.rejects(resyncLiveChoiceData(app, '2026', { workbook: sheets }), /Last synced/);
+  await app.store.setAllocationConfig('2026', {
+    ...syncedConfig,
+    lastSyncedAt: '2000-01-01T00:00:00.000Z',
+    lastLiveSync: '2000-01-01T00:00:00.000Z',
+  });
+  const again = await resyncLiveChoiceData(app, '2026', { workbook: sheets });
+  assert.equal(again.updated, 0);
+  assert.equal(again.matched, 1);
+  assert.equal((await app.store.getWorkspace('2026', JANE))?.updatedAt, stamped);
+  assert.notEqual((await app.store.getAllocationConfig('2026'))?.lastSyncedAt, '2000-01-01T00:00:00.000Z');
 
   const replacement: SheetGrid = {
     title: 'COHORTDATA: 2026',

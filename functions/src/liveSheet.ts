@@ -7,6 +7,8 @@ import {
   liveLinkProblems,
   liveMappingProblems,
   liveSheetLinked,
+  liveSyncCooldownError,
+  liveWorkspaceDirty,
   mergeLiveChoiceRow,
   parseLiveSheet,
   resolveLiveStudent,
@@ -51,6 +53,7 @@ export interface LiveResyncResult {
   skipped: number;
   updated: number;
   warnings: string[];
+  lastSyncedAt: string;
 }
 
 export async function listLiveSheetTabs(app: App, cohortId: unknown, source: unknown, deps?: LiveDeps): Promise<LiveSheetTabs> {
@@ -102,6 +105,8 @@ export async function resyncLiveChoiceData(app: App, cohortId: unknown, deps?: L
   return audited(app, user, 'RESYNC_LIVE_CHOICE_DATA', { cohortId: cohort.id }, async () => {
     const settings = settingsFromDoc(await app.store.getAllocationConfig(cohort.id));
     if (!liveSheetLinked(settings)) throw new HubError('Link a live Google Sheet before resyncing choice data.');
+    const cooldown = liveSyncCooldownError(settings.lastSyncedAt || settings.lastLiveSync, Date.now());
+    if (cooldown) throw new HubError(cooldown);
     const mappingProblems = liveMappingProblems(settings.columnMappings);
     if (mappingProblems.length) throw new HubError(mappingProblems[0]);
     const workbook = await workbookFor(app, deps);
@@ -122,8 +127,8 @@ export async function resyncLiveChoiceData(app: App, cohortId: unknown, deps?: L
     const now = nowIso();
     const warnings = parsed.warnings.slice();
     const seen = new Set<string>();
+    const merged = new Map<string, ReturnType<typeof mergeLiveChoiceRow>>();
     let skipped = 0;
-    const ops: AllocationOp[] = [];
     parsed.rows.forEach((row) => {
       const match = resolveLiveStudent(row, index, settings.columnMappings);
       if (!match.studentId) {
@@ -135,14 +140,26 @@ export async function resyncLiveChoiceData(app: App, cohortId: unknown, deps?: L
       seen.add(match.studentId);
       const priorDoc = existing.get(match.studentId);
       const prior = priorDoc ? workspaceFromDoc(priorDoc, match.studentId) : undefined;
-      const workspace = mergeLiveChoiceRow(prior, row, settings, match.studentId, now);
-      ops.push({ kind: 'workspace', cohortId: cohort.id, id: match.studentId, data: workspace });
+      merged.set(match.studentId, mergeLiveChoiceRow(prior, row, settings, match.studentId, now));
+    });
+    const ops: AllocationOp[] = [];
+    let updated = 0;
+    merged.forEach((workspace, studentId) => {
+      const priorDoc = existing.get(studentId);
+      const prior = priorDoc ? workspaceFromDoc(priorDoc, studentId) : undefined;
+      if (!liveWorkspaceDirty(prior, workspace)) return;
+      updated += 1;
+      ops.push({ kind: 'workspace', cohortId: cohort.id, id: studentId, data: workspace });
     });
     const choiceKeys = new Set(settings.detectedChoiceKeys);
     if (text(settings.columnMappings.subjectChoice.primary)) choiceKeys.add(settings.primaryChoiceKey || 'choice1');
     if (text(settings.columnMappings.subjectChoice.secondary)) choiceKeys.add(settings.secondaryChoiceKey || 'choice2');
     if (text(settings.columnMappings.subjectChoice.interdisciplinary)) choiceKeys.add(settings.interdisciplinaryKey || 'interdisciplinary');
-    const next = { ...ingestLiveHeaders({ ...settings, detectedChoiceKeys: [...choiceKeys].sort() }, headers), lastLiveSync: now };
+    const next = {
+      ...ingestLiveHeaders({ ...settings, detectedChoiceKeys: [...choiceKeys].sort() }, headers),
+      lastLiveSync: now,
+      lastSyncedAt: now,
+    };
     ops.push({ kind: 'config', cohortId: cohort.id, data: next });
     await app.store.applyAllocationOps(ops);
     return {
@@ -152,7 +169,8 @@ export async function resyncLiveChoiceData(app: App, cohortId: unknown, deps?: L
       incoming: parsed.rows.length,
       matched: seen.size,
       skipped,
-      updated: seen.size,
+      updated,
+      lastSyncedAt: now,
       warnings: warnings.slice(0, WARNING_LIMIT),
     };
   });

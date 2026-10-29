@@ -117,8 +117,20 @@ export async function draftAllocation(app: App, cohortId: unknown, studentId: un
     });
     if (plan.error) throw new HubError(plan.error);
     if (!plan.changed) return { changed: false, studentId: email };
-    for (const token of plan.tokens) await app.store.setToken(cohort.id, token.id, token);
-    await app.store.setWorkspace(cohort.id, email, { ...workspace, studentId: email, pendingClear: plan.pendingClear, updatedAt: nowIso() });
+    const now = nowIso();
+    const ops: AllocationOp[] = plan.tokens.map((token) => ({
+      kind: 'token' as const,
+      cohortId: cohort.id,
+      id: token.id,
+      data: { ...token, updatedAt: now },
+    }));
+    ops.push({
+      kind: 'workspace',
+      cohortId: cohort.id,
+      id: email,
+      data: { ...workspace, studentId: email, pendingClear: plan.pendingClear, updatedAt: now },
+    });
+    await app.store.applyAllocationOps(ops);
     return { changed: true, studentId: email, pendingClear: plan.pendingClear };
   });
 }
@@ -164,11 +176,22 @@ export async function batchDraftAllocations(app: App, cohortId: unknown, staffId
       pendingClearByStudent: Object.fromEntries(active.map((id) => [id, !!workspaceByStudent.get(id)?.pendingClear])),
     });
     const now = nowIso();
-    for (const token of plan.tokenWrites) await app.store.setToken(cohort.id, token.id, token);
-    for (const studentId of Object.keys(plan.pendingClears)) {
+    const ops: AllocationOp[] = plan.tokenWrites.map((token) => ({
+      kind: 'token' as const,
+      cohortId: cohort.id,
+      id: token.id,
+      data: { ...token, updatedAt: now },
+    }));
+    Object.keys(plan.pendingClears).forEach((studentId) => {
       const workspace = workspaceByStudent.get(studentId) || emptyWorkspace(studentId, now);
-      await app.store.setWorkspace(cohort.id, studentId, { ...workspace, pendingClear: plan.pendingClears[studentId], updatedAt: now });
-    }
+      ops.push({
+        kind: 'workspace',
+        cohortId: cohort.id,
+        id: studentId,
+        data: { ...workspace, pendingClear: plan.pendingClears[studentId], updatedAt: now },
+      });
+    });
+    if (ops.length) await app.store.applyAllocationOps(ops);
     return {
       assigned: plan.assigned,
       skipped: skippedInactive.concat(plan.skipped),

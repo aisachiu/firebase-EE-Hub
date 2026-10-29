@@ -1,4 +1,4 @@
-import { coalesceKnownSubjects, colorScaleFill, columnMappingsFrom, columnScaleExtent, LIVE_SHEET_FIELDS, LIVE_SHEET_GROUPS, liveLinkProblems, liveSheetLinked, scaleNumber, subjectTokenLoad, subjectsOverlap } from '../../../functions/src/allocationPure.ts';
+import { coalesceKnownSubjects, colorScaleFill, columnMappingsFrom, columnScaleExtent, LIVE_SHEET_FIELDS, LIVE_SHEET_GROUPS, liveLinkProblems, liveSheetLinked, liveSyncAge, scaleNumber, subjectTokenLoad, subjectsOverlap } from '../../../functions/src/allocationPure.ts';
 import { adminDialogKind, closeAdminDialog, openAdminDialog } from '../admin/records.js';
 import { openStaffQuotas } from '../admin/staff.js';
 import { callServer } from '../shared/api.js';
@@ -19,6 +19,7 @@ import {
 } from '../shared/tables.js';
 import { requestPush, syncHistory } from '../router.js';
 import { renderShell } from '../navigation.js';
+import { beginAllocationWatch, overlayPendingEdits, pendingSettled, releaseAllocationWatch, setAllocationPainter } from './realtime.js';
 import { workspaceHelpMarkup } from './workspaceHelp.js';
 
 function allocationSection(id, title, body, options) {
@@ -52,9 +53,10 @@ export function renderAllocation() {
     : view === 'tokens'
       ? 'Add, edit, or remove the supervisor tokens already on a cohort. Generating tokens from EE quotas will not replace these. The cohort follows the header.'
       : 'Draft a supervisor for each active student. Publish writes the supervisor and subject onto the live roster. The cohort follows the header.';
+  const deskReady = !!(state.allocationDesk && state.allocationWatchCohort === state.cohortId);
   main.innerHTML = `<div class="page-head"><div><p class="eyebrow">Allocation</p><h1>${heading}</h1><p class="lede">${lede}</p></div></div>
     <nav class="subnav" aria-label="Allocation"><button type="button" data-alloc-view="dashboard" aria-current="${view === 'dashboard' ? 'page' : 'false'}">Dashboard</button><button type="button" data-alloc-view="tokens" aria-current="${view === 'tokens' ? 'page' : 'false'}">Cohort tokens</button><button type="button" data-alloc-view="settings" aria-current="${view === 'settings' ? 'page' : 'false'}">Student Data</button></nav>
-    <div id="alloc-body">${loadingLine('Loading allocation...')}</div>`;
+    <div id="alloc-body">${deskReady ? '' : loadingLine('Loading allocation...')}</div>`;
   main.querySelectorAll('[data-alloc-view]').forEach(function(button) {
     button.addEventListener('click', function() {
       if (!requestPush()) return;
@@ -69,34 +71,134 @@ export function renderAllocation() {
 export function loadAllocation() {
   const target = document.getElementById('alloc-body');
   if (!target) return;
-  callServer('getCohorts').then(function(cohorts) {
-    state.allocationCohorts = cohorts || [];
-    if (!state.allocationCohorts.length) {
-      target.innerHTML = '<div class="empty">Create an active cohort before allocating supervisors.</div>';
-      return null;
-    }
-    if (!state.allocationCohorts.some(function(cohort) { return cohort.id === state.cohortId; })) state.cohortId = state.allocationCohorts[0].id;
-    syncHeaderCohortSelect();
-    return callServer('getAllocationDesk', state.cohortId);
-  }).then(function(desk) {
-    if (!desk) return;
-    rememberLiveCohort(desk);
-    state.allocationDesk = desk;
-    paintAllocation();
-  }).catch(showError);
+  if (!state.cohortId) {
+    callServer('getCohorts').then(function(cohorts) {
+      state.allocationCohorts = cohorts || [];
+      const host = document.getElementById('alloc-body');
+      if (!host) return;
+      if (!state.allocationCohorts.length) {
+        host.innerHTML = '<div class="empty">Create an active cohort before allocating supervisors.</div>';
+        return;
+      }
+      state.cohortId = state.allocationCohorts[0].id;
+      syncHeaderCohortSelect();
+      beginAllocationWatch(state.cohortId);
+    }).catch(showError);
+    return;
+  }
+  if (!(state.allocationCohorts || []).some(function(cohort) { return cohort.id === state.cohortId; })) {
+    callServer('getCohorts').then(function(cohorts) {
+      state.allocationCohorts = cohorts || [];
+      const host = document.getElementById('alloc-body');
+      if (!state.allocationCohorts.length) {
+        releaseAllocationWatch();
+        if (host) host.innerHTML = '<div class="empty">Create an active cohort before allocating supervisors.</div>';
+        return;
+      }
+      if (!state.allocationCohorts.some(function(cohort) { return cohort.id === state.cohortId; })) {
+        state.cohortId = state.allocationCohorts[0].id;
+        beginAllocationWatch(state.cohortId);
+      }
+      syncHeaderCohortSelect();
+    }).catch(function() {});
+  }
+  beginAllocationWatch(state.cohortId);
+  if (state.allocationDesk && state.allocationWatchCohort === state.cohortId) paintAllocationLive();
 }
 
 export function paintAllocation() {
   const target = document.getElementById('alloc-body');
   const desk = state.allocationDesk;
   if (!target || !desk) return;
+  rememberLiveCohort(desk);
   if (state.allocationView === 'tokens') {
     paintCohortTokens(target);
     return;
   }
   syncAllocationDrawerChrome();
+  const wrap = document.querySelector('.alloc-desk-wrap');
+  const top = wrap ? wrap.scrollTop : 0;
+  const left = wrap ? wrap.scrollLeft : 0;
+  const page = document.scrollingElement ? document.scrollingElement.scrollTop : 0;
   target.innerHTML = state.allocationView === 'settings' ? allocationSettingsMarkup(desk) : allocationDashboardMarkup(desk);
   bindAllocation(target, desk);
+  const next = document.querySelector('.alloc-desk-wrap');
+  if (next) {
+    next.scrollTop = top;
+    next.scrollLeft = left;
+  }
+  if (document.scrollingElement && page) document.scrollingElement.scrollTop = page;
+}
+
+function allocationInteractionHeld() {
+  if (typeof document === 'undefined') return false;
+  const active = document.activeElement;
+  if (!active || !active.closest || !active.matches) return false;
+  if (!active.closest('#alloc-body')) return false;
+  return active.matches('select, input, textarea');
+}
+
+let interactionReleaseBound = false;
+
+function ensureAllocationInteractionRelease() {
+  if (interactionReleaseBound || typeof document === 'undefined') return;
+  interactionReleaseBound = true;
+  document.addEventListener('focusout', function() {
+    window.setTimeout(function() {
+      if (!state.allocationPaintDeferred) return;
+      if (allocationInteractionHeld()) return;
+      state.allocationPaintDeferred = false;
+      paintAllocationLive();
+    }, 0);
+  });
+}
+
+function currentSyncAge() {
+  const settings = state.allocationDesk && state.allocationDesk.settings;
+  return liveSyncAge((settings && (settings.lastSyncedAt || settings.lastLiveSync)) || '', Date.now());
+}
+
+function syncAgeNodes() {
+  const age = currentSyncAge();
+  if (typeof document === 'undefined') return age;
+  const ageNode = document.getElementById('alloc-resync-age');
+  const button = document.getElementById('alloc-resync-live');
+  if (ageNode && age.label) ageNode.textContent = age.label;
+  if (button && state.allocationLiveBusy !== 'resync') {
+    button.disabled = age.blocked || !!(state.allocationDesk && state.allocationDesk.driveReady === false);
+  }
+  return age;
+}
+
+function armSyncClock() {
+  const settings = state.allocationDesk && state.allocationDesk.settings;
+  if (!(settings && (settings.lastSyncedAt || settings.lastLiveSync))) return;
+  syncAgeNodes();
+  if (state.allocationSyncClock) return;
+  state.allocationSyncClock = setInterval(function() {
+    const onDashboard = state.section === 'allocation' && (state.allocationView || 'dashboard') === 'dashboard';
+    const button = typeof document !== 'undefined' ? document.getElementById('alloc-resync-live') : null;
+    if (!onDashboard || !button) {
+      clearInterval(state.allocationSyncClock);
+      state.allocationSyncClock = 0;
+      return;
+    }
+    syncAgeNodes();
+  }, 1000);
+}
+
+export function paintAllocationLive() {
+  if (typeof document === 'undefined') return;
+  const target = document.getElementById('alloc-body');
+  if (!target || !state.allocationDesk) return;
+  armSyncClock();
+  if (allocationInteractionHeld()) {
+    state.allocationPaintDeferred = true;
+    ensureAllocationInteractionRelease();
+    return;
+  }
+  state.allocationPaintDeferred = false;
+  paintAllocation();
 }
 
 export function allocationDeskColumns(settings) {
@@ -107,7 +209,10 @@ export function allocationDashboardMarkup(desk) {
   const students = visibleAllocationStudents(desk);
   const settings = desk.settings || {};
   const liveLinked = liveSheetLinked(settings);
+  const syncedAt = settings.lastSyncedAt || settings.lastLiveSync || '';
+  const syncAge = liveSyncAge(syncedAt, Date.now());
   const liveSyncing = state.allocationLiveBusy === 'resync';
+  const resyncDisabled = liveSyncing || syncAge.blocked || desk.driveReady === false;
   const columns = allocationDeskColumns(desk.settings);
   const sort = adminSortState('alloc-desk');
   const supervisors = desk.supervisors || [];
@@ -133,10 +238,11 @@ export function allocationDashboardMarkup(desk) {
   return `<div class="alloc-layout"><div>
       <div class="toolbar">
         <p class="muted">${summary.activeStudents} active students · ${summary.tokenCount} tokens · ${summary.buffer >= 0 ? '+' + summary.buffer + ' buffer' : 'short by ' + (-summary.buffer)}</p>
-        ${liveLinked ? `<button type="button" class="button secondary" id="alloc-resync-live" ${liveSyncing || desk.driveReady === false ? 'disabled' : ''} aria-busy="${liveSyncing ? 'true' : 'false'}">Resync Live Choice Data</button>` : ''}
+        ${liveLinked ? `<button type="button" class="button secondary" id="alloc-resync-live" ${resyncDisabled ? 'disabled' : ''} aria-busy="${liveSyncing ? 'true' : 'false'}">Resync Live Choice Data</button>` : ''}
       </div>
       ${liveSyncing ? '<p class="load-status" id="alloc-resync-status">Resyncing live choice data…</p>' : ''}
-      ${liveLinked && settings.lastLiveSync ? `<p class="muted">Last live sync ${escapeHtml(allocationWhen(settings.lastLiveSync))}</p>` : ''}
+      ${liveLinked && syncAge.label ? `<p class="muted" id="alloc-resync-age">${escapeHtml(syncAge.label)}</p>` : ''}
+      ${liveLinked && syncedAt ? `<p class="muted">Last live sync ${escapeHtml(allocationWhen(syncedAt))}</p>` : ''}
       ${desk.warnings && desk.warnings.length ? `<p class="notice">${escapeHtml(desk.warnings[0])}</p>` : ''}
       ${allocationSection('alloc-filters', 'Filters', `<div class="alloc-filters">
         <div><span class="alloc-kicker">Status</span><div class="view-toggle" role="group" aria-label="Status">
@@ -438,12 +544,53 @@ export function supervisorAcceptsSubject(desk, staffId, subject) {
   return subjectsOverlap(subject, person ? (person.eligibleSubjects || []) : []);
 }
 
+function applyPendingDesk() {
+  const base = state.allocationRemoteDesk || state.allocationDesk;
+  if (!base) return;
+  state.allocationDesk = overlayPendingEdits(base, state.allocationPendingEdits);
+}
+
 function saveAllocationDraft(studentId, staffId, subject, interdisciplinary, message) {
-  callServer('draftAllocation', state.cohortId, studentId, staffId, subject, interdisciplinary === true).then(function() {
-    delete state.allocationInterdisciplinary[studentId];
+  const edit = {
+    staffId: staffId || '',
+    subject: subject || '',
+    interdisciplinary: interdisciplinary === true,
+    startedAt: new Date().toISOString(),
+    acked: false,
+  };
+  if (!state.allocationRemoteDesk && state.allocationDesk) state.allocationRemoteDesk = state.allocationDesk;
+  state.allocationPendingEdits[studentId] = edit;
+  delete state.allocationInterdisciplinary[studentId];
+  applyPendingDesk();
+  paintAllocationLive();
+  const cohortId = state.cohortId;
+  callServer('draftAllocation', cohortId, studentId, staffId, subject, interdisciplinary === true).then(function(result) {
+    if (state.cohortId !== cohortId) return;
+    const current = state.allocationPendingEdits[studentId];
+    if (current && current !== edit) return;
+    if (current === edit) {
+      if (result && result.changed === false) {
+        delete state.allocationPendingEdits[studentId];
+      } else {
+        edit.acked = true;
+        const remote = (state.allocationRemoteDesk && state.allocationRemoteDesk.students || []).find(function(student) {
+          return student.studentId === studentId;
+        });
+        if (pendingSettled(remote || null, edit)) delete state.allocationPendingEdits[studentId];
+      }
+      applyPendingDesk();
+      paintAllocationLive();
+    }
     if (message) showSuccess(message);
-    loadAllocation();
-  }).catch(showError);
+    if (state.allocationListenFallback) loadAllocation();
+  }).catch(function(error) {
+    if (state.cohortId === cohortId && state.allocationPendingEdits[studentId] === edit) {
+      delete state.allocationPendingEdits[studentId];
+      applyPendingDesk();
+      paintAllocationLive();
+    }
+    showError(error);
+  });
 }
 
 function bindAllocationData(target, desk) {
@@ -1366,7 +1513,7 @@ export function allocationLiveSheetMarkup(desk) {
   return `<div class="alloc-live">
       <h3>Live choice sheet</h3>
       <p class="muted">Link a Google Sheet that stays the source of truth for subject choices. Every other column on that sheet is ingested as a live dashboard field. Static ingest still fills auxiliary columns and leaves live columns in place. Student Number or Student Email is the merge key, and Primary choice has to be mapped before the link can be saved.</p>
-      ${linked ? `<p class="muted">Linked spreadsheet <code>${escapeHtml(settings.spreadsheetId || '')}</code>${tab ? ` · tab <strong>${escapeHtml(settings.sheetName || settings.liveSheetTab || tab)}</strong>` : ''}${settings.lastLiveSync ? ` · last sync ${escapeHtml(allocationWhen(settings.lastLiveSync))}` : ''}.</p>` : ''}
+      ${linked ? `<p class="muted">Linked spreadsheet <code>${escapeHtml(settings.spreadsheetId || '')}</code>${tab ? ` · tab <strong>${escapeHtml(settings.sheetName || settings.liveSheetTab || tab)}</strong>` : ''}${(settings.lastSyncedAt || settings.lastLiveSync) ? ` · last sync ${escapeHtml(allocationWhen(settings.lastSyncedAt || settings.lastLiveSync))}` : ''}.</p>` : ''}
       <label class="field" for="alloc-live-url">Live Google Sheet URL</label>
       <input id="alloc-live-url" value="${escapeHtml(url)}" placeholder="https://docs.google.com/spreadsheets/d/..." ${driveBlocked ? 'disabled' : ''}>
       <div class="toolbar"><button type="button" class="button secondary" id="alloc-live-load" ${driveBlocked || loading ? 'disabled' : ''}>${loadLabel}</button></div>
@@ -1593,23 +1740,35 @@ export function saveLiveSheetLink() {
   });
 }
 
+function rememberSyncStamp(stamp) {
+  if (!stamp) return;
+  [state.allocationDesk, state.allocationRemoteDesk].forEach(function(desk) {
+    if (!desk) return;
+    desk.settings = Object.assign({}, desk.settings || {}, { lastSyncedAt: stamp, lastLiveSync: stamp });
+  });
+}
+
 export function resyncLiveChoiceData() {
   if (state.allocationLiveBusy === 'resync') return;
+  const settings = (state.allocationDesk && state.allocationDesk.settings) || {};
+  if (liveSyncAge(settings.lastSyncedAt || settings.lastLiveSync, Date.now()).blocked) return;
   const cohortId = state.cohortId;
   state.allocationLiveBusy = 'resync';
-  paintAllocation();
+  paintAllocationLive();
   callServer('resyncLiveChoiceData', cohortId).then(function(result) {
     if (state.cohortId === cohortId) state.allocationLiveBusy = '';
     if (state.cohortId !== cohortId) return;
+    rememberSyncStamp(result && result.lastSyncedAt);
     const updated = result && result.updated ? result.updated : 0;
     const warnings = (result && result.warnings) || [];
     showSuccess(warnings.length
       ? 'Live choice data updated for ' + updated + ' students. ' + warnings[0]
       : 'Live choice data updated for ' + updated + ' students.');
-    loadAllocation();
+    if (state.allocationListenFallback) loadAllocation();
+    else paintAllocationLive();
   }).catch(function(error) {
     if (state.cohortId === cohortId) state.allocationLiveBusy = '';
-    if (state.cohortId === cohortId) paintAllocation();
+    if (state.cohortId === cohortId) paintAllocationLive();
     showError(error);
   });
 }
@@ -1712,3 +1871,5 @@ export function allocationWhen(value) {
   if (isNaN(date.getTime())) return value;
   return date.toLocaleString();
 }
+
+setAllocationPainter(paintAllocationLive);
