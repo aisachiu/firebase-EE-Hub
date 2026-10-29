@@ -1,4 +1,4 @@
-import { colorScaleFill, columnMappingsFrom, columnScaleExtent, LIVE_SHEET_FIELDS, LIVE_SHEET_GROUPS, liveLinkProblems, liveSheetLinked, scaleNumber, subjectTokenLoad, subjectsOverlap } from '../../../functions/src/allocationPure.ts';
+import { coalesceKnownSubjects, colorScaleFill, columnMappingsFrom, columnScaleExtent, LIVE_SHEET_FIELDS, LIVE_SHEET_GROUPS, liveLinkProblems, liveSheetLinked, scaleNumber, subjectTokenLoad, subjectsOverlap } from '../../../functions/src/allocationPure.ts';
 import { adminDialogKind, closeAdminDialog, openAdminDialog } from '../admin/records.js';
 import { openStaffQuotas } from '../admin/staff.js';
 import { callServer } from '../shared/api.js';
@@ -21,6 +21,16 @@ import { requestPush, syncHistory } from '../router.js';
 import { renderShell } from '../navigation.js';
 import { workspaceHelpMarkup } from './workspaceHelp.js';
 
+function allocationSection(id, title, body, options) {
+  return collapsibleHeader(id, title, body, Object.assign({ titleToggle: true }, options || {}));
+}
+
+function syncAllocationDrawerChrome() {
+  const onDashboard = state.section === 'allocation' && state.allocationView !== 'settings' && state.allocationView !== 'tokens';
+  document.body.classList.toggle('has-alloc-drawer', onDashboard);
+  document.body.classList.toggle('alloc-drawer-open', onDashboard && state.allocationDrawerOpen === true);
+}
+
 export function openAllocationTokens() {
   if (!requestPush()) return;
   state.section = 'allocation';
@@ -35,6 +45,7 @@ export function renderAllocation() {
   main.classList.add('plan-wide');
   const view = state.allocationView === 'settings' || state.allocationView === 'tokens' ? state.allocationView : 'dashboard';
   state.allocationView = view;
+  syncAllocationDrawerChrome();
   const heading = view === 'settings' ? 'Student data' : view === 'tokens' ? 'Cohort allocation tokens' : 'Supervisor allocation';
   const lede = view === 'settings'
     ? 'Ingest student choices and staff tokens, then choose what the dashboard shows. The cohort follows the header.'
@@ -83,6 +94,7 @@ export function paintAllocation() {
     paintCohortTokens(target);
     return;
   }
+  syncAllocationDrawerChrome();
   target.innerHTML = state.allocationView === 'settings' ? allocationSettingsMarkup(desk) : allocationDashboardMarkup(desk);
   bindAllocation(target, desk);
 }
@@ -126,7 +138,7 @@ export function allocationDashboardMarkup(desk) {
       ${liveSyncing ? '<p class="load-status" id="alloc-resync-status">Resyncing live choice data…</p>' : ''}
       ${liveLinked && settings.lastLiveSync ? `<p class="muted">Last live sync ${escapeHtml(allocationWhen(settings.lastLiveSync))}</p>` : ''}
       ${desk.warnings && desk.warnings.length ? `<p class="notice">${escapeHtml(desk.warnings[0])}</p>` : ''}
-      ${collapsibleHeader('alloc-filters', 'Filters', `<div class="alloc-filters">
+      ${allocationSection('alloc-filters', 'Filters', `<div class="alloc-filters">
         <div><span class="alloc-kicker">Status</span><div class="view-toggle" role="group" aria-label="Status">
           ${[['all', 'All'], ['unallocated', 'Unallocated'], ['draft', 'Drafted']].map(function(item) {
             return `<button type="button" data-alloc-status="${item[0]}" aria-pressed="${state.allocationStatus === item[0] ? 'true' : 'false'}">${item[1]}</button>`;
@@ -161,17 +173,8 @@ export function allocationDashboardMarkup(desk) {
         </tr></thead>
         <tbody>${students.length ? students.map(function(student) { return allocationRowMarkup(student, supervisors, columns, extents); }).join('') : `<tr><td class="empty" colspan="${4 + columns.length}">No students in this view.</td></tr>`}</tbody>
       </table></div>
-    </div>
-    <aside class="alloc-side">
-      <div class="alloc-side-scroll">
-        ${allocationLoadPanel(desk, supervisors)}
-      </div>
-      <footer>
-        <p class="muted">Allocations stay in draft until they are published to the hub.</p>
-        <button type="button" class="button" id="alloc-publish" ${publish.blocked || (!publish.drafts && !publish.clears) ? 'disabled' : ''}>Publish allocations to hub</button>
-        <p class="muted">${publish.drafts} draft${publish.drafts === 1 ? '' : 's'}${publish.clears ? ' · ' + publish.clears + ' to clear' : ''}</p>
-      </footer>
-    </aside></div>`;
+    </div></div>
+    ${allocationDrawerMarkup(desk, supervisors, publish)}`;
 }
 
 export function allocationRowMarkup(student, supervisors, columns, extents) {
@@ -271,7 +274,7 @@ export function allocationSubjectFilterMarkup(desk) {
   const chips = options.map(function(subject) {
     const on = selected.some(function(name) { return sameSubjectName(name, subject.name); });
     const colour = subjectChipStyle(subject.colour);
-    return `<button type="button" class="subject-chip" data-alloc-subject-filter="${escapeHtml(subject.name)}" aria-pressed="${on ? 'true' : 'false'}"${colour ? ` style="${colour}"` : ''}>${escapeHtml(subject.name)}</button>`;
+    return `<button type="button" class="subject-chip" data-alloc-subject-filter="${escapeHtml(subject.name)}" aria-pressed="${on ? 'true' : 'false'}"${colour ? ` style="${colour}"` : ''}>${subjectLabelHtml(subject.name, subject.shortName)}</button>`;
   }).join('');
   return `<div class="alloc-subject-filter"><span class="alloc-kicker">Requested subject</span><div class="alloc-subject-picks" role="group" aria-label="Requested subject"><button type="button" class="alloc-filter-all" data-alloc-subject-filter="" aria-pressed="${allOn ? 'true' : 'false'}">All</button>${chips}</div></div>`;
 }
@@ -284,7 +287,7 @@ export function allocationAllocatedFilterMarkup(desk) {
   const chips = options.map(function(subject) {
     const on = selected.some(function(name) { return sameSubjectName(name, subject.name); });
     const colour = subjectChipStyle(subject.colour);
-    return `<button type="button" class="subject-chip" data-alloc-allocated-filter="${escapeHtml(subject.name)}" aria-pressed="${on ? 'true' : 'false'}"${colour ? ` style="${colour}"` : ''}>${escapeHtml(subject.name)}</button>`;
+    return `<button type="button" class="subject-chip" data-alloc-allocated-filter="${escapeHtml(subject.name)}" aria-pressed="${on ? 'true' : 'false'}"${colour ? ` style="${colour}"` : ''}>${subjectLabelHtml(subject.name, subject.shortName)}</button>`;
   }).join('');
   return `<div class="alloc-subject-filter"><span class="alloc-kicker">Allocated subject</span><div class="alloc-subject-picks" role="group" aria-label="Allocated subject"><button type="button" class="alloc-filter-all" data-alloc-allocated-filter="" aria-pressed="${allOn ? 'true' : 'false'}">All</button>${chips}</div></div>`;
 }
@@ -369,15 +372,38 @@ export function subjectChipStyle(colour) {
 export function allocationRequestedSubjects(student) {
   const listed = student && Array.isArray(student.requestedSubjects) ? student.requestedSubjects : [];
   const fromServer = listed.map(function(item) {
-    if (item && typeof item === 'object') return { name: String(item.name || '').trim(), colour: String(item.colour || item.color || '').trim() };
-    return { name: String(item || '').trim(), colour: '' };
+    if (item && typeof item === 'object') return { name: String(item.name || '').trim(), colour: String(item.colour || item.color || '').trim(), shortName: String(item.shortName || '').trim() };
+    return { name: String(item || '').trim(), colour: '', shortName: '' };
   }).filter(function(item) { return item.name; });
   if (fromServer.length) return fromServer;
   const names = [];
   const choices = (student && student.choices) || {};
   if (choices.primary) names.push(String(choices.primary));
   if (choices.secondary && choices.secondary !== choices.primary) names.push(String(choices.secondary));
-  return names.filter(Boolean).map(function(name) { return { name: name, colour: '' }; });
+  return names.filter(Boolean).map(function(name) { return { name: name, colour: '', shortName: '' }; });
+}
+
+export function subjectLabelHtml(name, shortName) {
+  const full = String(name || '').trim();
+  const short = String(shortName || '').trim();
+  if (!short || short.toLowerCase() === full.toLowerCase()) return escapeHtml(full);
+  return `<span title="${escapeHtml(full)}">${escapeHtml(short)}</span>`;
+}
+
+export function subjectCatalogue(desk) {
+  return ((desk && desk.subjects) || []).map(function(subject) {
+    if (subject && typeof subject === 'object') return { name: String(subject.name || '').trim(), shortName: String(subject.shortName || '').trim(), colour: String(subject.colour || '').trim() };
+    return { name: String(subject || '').trim(), shortName: '', colour: '' };
+  }).filter(function(subject) { return subject.name; });
+}
+
+function catalogueNames(desk) {
+  return subjectCatalogue(desk).map(function(subject) { return subject.name; });
+}
+
+function shortNameFor(name, desk) {
+  const match = subjectCatalogue(desk).find(function(subject) { return sameSubjectName(subject.name, name); });
+  return match ? match.shortName : '';
 }
 
 export function allocationSubjectOptions(desk) {
@@ -526,23 +552,23 @@ export function allocationTokenSlots(desk) {
   return slots;
 }
 
-export function subjectTokenLoadMarkup(load) {
+export function subjectTokenLoadMarkup(load, desk) {
   const subjects = load.subjects || [];
   if (!subjects.length) {
     if (load.untied) return untiedTokenNote(load.untied);
     return '<div class="empty">No tokens yet. Build them in Staff users → EE quotas, or ingest a token sheet from Student Data.</div>';
   }
-  const rows = subjects.map(function(item) {
+  const metricTitle = 'Total requested (Pool), total unallocated requesting (UPool), total allocated (Alloc), tokens remaining (Rem).';
+  const blocks = subjects.map(function(item) {
     const pool = Number(item.pool) || 0;
     const upool = Number(item.upool) || 0;
     const alloc = Number(item.alloc) || 0;
     const remaining = Number(item.remaining) || 0;
-    return `<tr><th scope="row">${escapeHtml(item.subject)}</th><td>${pool} | ${upool} | ${alloc} | ${remaining}</td></tr>`;
+    return `<div class="alloc-subject-block"><p class="alloc-subject-name">${subjectLabelHtml(item.subject, shortNameFor(item.subject, desk))}</p><p class="alloc-subject-figures" title="${escapeHtml(metricTitle)}">${pool} | ${upool} | ${alloc} | ${remaining}</p></div>`;
   }).join('');
   const untied = load.untied ? untiedTokenNote(load.untied) : '';
   const note = load.overlaps ? '<p class="muted alloc-load-note">An open token counts toward every subject it can take.</p>' : '';
-  const metricTitle = 'Total requested (Pool), total unallocated requesting (UPool), total allocated (Alloc), tokens remaining (Rem).';
-  return `<table class="alloc-subject-load"><caption class="sr-only">Subject token load</caption><thead><tr><th scope="col">Subject</th><th scope="col" title="${escapeHtml(metricTitle)}">Pool | UPool | Alloc | Rem</th></tr></thead><tbody>${rows}</tbody></table>${untied}${note}`;
+  return `<div class="alloc-subject-load"><p class="sr-only">Subject token load</p><p class="alloc-subject-metrics" title="${escapeHtml(metricTitle)}">Pool | UPool | Alloc | Rem</p>${blocks}</div>${untied}${note}`;
 }
 
 function untiedTokenNote(count) {
@@ -557,7 +583,7 @@ export function allocationLoadPanel(desk, supervisors) {
   const body = view === 'assigned'
     ? allocationAssignedMarkup(desk)
     : view === 'subject'
-      ? subjectTokenLoadMarkup(subjectTokenLoad(tokens, allocationDemand(desk)))
+      ? subjectTokenLoadMarkup(subjectTokenLoad(tokens, allocationDemand(desk), catalogueNames(desk)), desk)
       : (supervisors.length ? supervisors.map(allocationLoadMarkup).join('') : '<div class="empty">No tokens yet. Build them in Staff users → EE quotas, or ingest a token sheet from Student Data.</div>');
   return `<header><h2>${heading}</h2><div class="view-toggle" role="group" aria-label="Token load"><button type="button" data-alloc-load="subject" aria-pressed="${view === 'subject' ? 'true' : 'false'}">Subject</button><button type="button" data-alloc-load="supervisor" aria-pressed="${view === 'supervisor' ? 'true' : 'false'}">Supervisor</button><button type="button" data-alloc-load="assigned" aria-pressed="${view === 'assigned' ? 'true' : 'false'}">Assigned</button></div></header>${body}`;
 }
@@ -586,7 +612,7 @@ export function allocationAssignedMarkup(desk) {
       const student = token.studentName || (token.status === 'available' ? 'Available' : (token.studentId || 'Available'));
       return `<li><strong>${escapeHtml(token.staffName || token.staffId || 'Staff')}</strong> · ${escapeHtml(student)}</li>`;
     }).join('');
-    return `<div class="alloc-assigned"><button type="button" data-alloc-assigned="${escapeHtml(group.subject)}" aria-expanded="${open ? 'true' : 'false'}"><span>${escapeHtml(group.subject)}</span><span class="muted">taken ${group.taken.length} · available ${group.available.length}</span></button>${open ? `<ul>${people || '<li class="muted">No tokens</li>'}</ul>` : ''}</div>`;
+    return `<div class="alloc-assigned"><button type="button" data-alloc-assigned="${escapeHtml(group.subject)}" aria-expanded="${open ? 'true' : 'false'}"><span>${subjectLabelHtml(group.subject, shortNameFor(group.subject, desk))}</span><span class="muted">taken ${group.taken.length} · available ${group.available.length}</span></button>${open ? `<ul>${people || '<li class="muted">No tokens</li>'}</ul>` : ''}</div>`;
   }).join('');
 }
 
@@ -601,7 +627,7 @@ export function allocationAssignedGroups(desk) {
     return groups.get(key);
   }
   rows.forEach(function(token) {
-    const eligible = token.eligibleSubjects || [];
+    const eligible = coalesceKnownSubjects(token.eligibleSubjects || [], catalogueNames(desk));
     if (token.status === 'available') {
       (eligible.length ? eligible : ['Untied']).forEach(function(subject) {
         const group = groupFor(subject);
@@ -609,7 +635,7 @@ export function allocationAssignedGroups(desk) {
       });
       return;
     }
-    const assigned = token.assignedSubject || eligible[0] || 'Unassigned';
+    const assigned = coalesceKnownSubjects([token.assignedSubject || eligible[0] || 'Unassigned'], catalogueNames(desk))[0] || 'Unassigned';
     const group = groupFor(assigned);
     if (group) group.taken.push(token);
   });
@@ -630,7 +656,27 @@ export function allocationAssignedGroups(desk) {
 export function allocationLoadMarkup(person) {
   const pct = person.total ? Math.round((person.used / person.total) * 100) : 0;
   const tone = person.total && person.used >= person.total ? 'full' : pct >= 60 ? 'mid' : '';
-  return `<div class="alloc-load"><p><strong>${escapeHtml(person.displayName)}</strong> <span class="muted">${person.used}/${person.total} slots</span></p><p class="muted">Eligible: ${escapeHtml((person.eligibleSubjects || []).join(', ') || 'None')}</p><div class="alloc-meter ${tone}" role="progressbar" aria-valuenow="${person.used}" aria-valuemin="0" aria-valuemax="${person.total}"><span style="width:${pct}%"></span></div></div>`;
+  const eligible = (person.eligibleSubjects || []).map(function(name) {
+    return subjectLabelHtml(name, shortNameFor(name, state.allocationDesk));
+  }).join(', ');
+  return `<div class="alloc-load"><p><strong>${escapeHtml(person.displayName)}</strong> <span class="muted">${person.used}/${person.total} slots</span></p><p class="muted">Eligible: ${eligible || 'None'}</p><div class="alloc-meter ${tone}" role="progressbar" aria-valuenow="${person.used}" aria-valuemin="0" aria-valuemax="${person.total}"><span style="width:${pct}%"></span></div></div>`;
+}
+
+export function allocationDrawerMarkup(desk, supervisors, publish) {
+  const open = state.allocationDrawerOpen === true;
+  const summary = publish || { drafts: 0, clears: 0, blocked: 0 };
+  return `<aside id="alloc-drawer" class="alloc-drawer${open ? ' open' : ''}" aria-label="Token load">
+    <button type="button" class="alloc-drawer-peek" id="alloc-drawer-peek" aria-expanded="${open ? 'true' : 'false'}" aria-controls="alloc-drawer-panel">Token load</button>
+    <div class="alloc-drawer-panel" id="alloc-drawer-panel"${open ? '' : ' inert'} aria-hidden="${open ? 'false' : 'true'}">
+      <div class="alloc-drawer-bar"><strong>Token load</strong><button type="button" id="alloc-drawer-close">Close</button></div>
+      <div class="alloc-drawer-scroll">${allocationLoadPanel(desk, supervisors)}</div>
+      <footer>
+        <p class="muted">Allocations stay in draft until they are published to the hub.</p>
+        <button type="button" class="button" id="alloc-publish" ${summary.blocked || (!summary.drafts && !summary.clears) ? 'disabled' : ''}>Publish allocations to hub</button>
+        <p class="muted">${summary.drafts} draft${summary.drafts === 1 ? '' : 's'}${summary.clears ? ' · ' + summary.clears + ' to clear' : ''}</p>
+      </footer>
+    </div>
+  </aside>`;
 }
 
 export function allocationSettingsMarkup(desk) {
@@ -646,7 +692,7 @@ export function allocationSettingsMarkup(desk) {
   const flagLabels = [['showOnCard', 'Show in table'], ['filterable', 'Filterable'], ['sortable', 'Sortable'], ['colorScale', 'Color scale'], ['expanded', 'Expanded']];
   const collapsed = { open: false };
   return `<p class="muted">Showing student data for the cohort selected in the header.</p>
-    ${collapsibleHeader('alloc-sync', 'Google Sheets sync', `<section class="alloc-panel">
+    ${allocationSection('alloc-sync', 'Google Sheets sync', `<section class="alloc-panel">
         ${desk.driveReady ? '' : `<p class="notice">${escapeHtml(desk.driveError || 'Connect Google in Admin → Google account before ingesting sheets.')}</p>`}
         <p class="doc-hint">Choose workspace or tokens, export a workbook if you need one, paste the link, then preview. Workspace ingest reads <code>COHORTDATA: ${escapeHtml(state.cohortId)}</code> and upserts by StudentId. Token ingest reads <code>SUPERVISORTOKENS: ${escapeHtml(state.cohortId)}</code> and tops up quotas. Neither deletes rows that are missing from the sheet. When a live choice sheet is linked, a workspace ingest keeps the live choice values and live dashboard columns, and still updates the other auxiliary columns.</p>
         <div class="sheet-choices" role="radiogroup" aria-label="Ingest kind">
@@ -666,9 +712,9 @@ export function allocationSettingsMarkup(desk) {
         <div class="toolbar"><button class="button secondary" id="alloc-preview" type="button">Preview ingest</button><button class="button" id="alloc-apply" type="button" disabled>Apply ingest</button></div>
         ${allocationLiveSheetMarkup(desk)}
       </section>`, collapsed)}
-    ${collapsibleHeader('alloc-cohortdata', 'COHORTDATA Columns', workspaceHelpMarkup(state.cohortId), collapsed)}
+    ${allocationSection('alloc-cohortdata', 'COHORTDATA Columns', workspaceHelpMarkup(state.cohortId), collapsed)}
     <div id="alloc-preview-result"></div>
-    ${collapsibleHeader('alloc-data', 'Data Management', allocationDataManagementMarkup(desk), collapsed)}
+    ${allocationSection('alloc-data', 'Data Management', allocationDataManagementMarkup(desk), collapsed)}
     <div class="alloc-config"><div>
       <section class="alloc-panel"><h2>Token summary</h2>
         <p>Total eligible staff <strong>${summary.staffCount}</strong></p>
@@ -678,7 +724,7 @@ export function allocationSettingsMarkup(desk) {
       </section>
     </div>
     <div>
-      ${collapsibleHeader('alloc-choice-map', 'Subject choice mapping', `<p class="muted">Map keys from the SubjectChoice JSON, or from columns named Choice_..., onto the dashboard.</p>
+      ${allocationSection('alloc-choice-map', 'Subject choice mapping', `<p class="muted">Map keys from the SubjectChoice JSON, or from columns named Choice_..., onto the dashboard.</p>
         <div class="alloc-map"><label for="alloc-primary">Primary choice</label><select id="alloc-primary">${allocationKeyOptions(settings.detectedChoiceKeys, settings.primaryChoiceKey, false)}</select></div>
         <div class="alloc-map"><label for="alloc-secondary">Secondary choice</label><select id="alloc-secondary">${allocationKeyOptions(settings.detectedChoiceKeys, settings.secondaryChoiceKey, false)}</select></div>
         <div class="alloc-map"><label for="alloc-inter">Is Interdisciplinary?</label><select id="alloc-inter">${allocationKeyOptions(settings.detectedChoiceKeys, settings.interdisciplinaryKey, true)}</select></div>
@@ -686,10 +732,11 @@ export function allocationSettingsMarkup(desk) {
         <div class="alloc-map"><label for="alloc-hl">HL match column</label><select id="alloc-hl">${allocationKeyOptions(columns, settings.hlColumn, true)}</select></div>
         <div class="alloc-map"><label for="alloc-flag">Support flag column</label><select id="alloc-flag">${allocationKeyOptions(columns, settings.supportColumn, true)}</select></div>
         <div class="toolbar"><button type="button" class="button" id="alloc-save-config">Save configuration</button></div>`, collapsed)}
-      ${collapsibleHeader('alloc-fields', 'Dashboard Fields', `<p class="muted">These columns were detected in the latest COHORTDATA import. New columns start visible and sortable. Color scale stays off until you turn it on. It paints numbers, and words such as Weak or Strong, from light blue to deep blue across the students in the current view. It does not use red and green. Uncheck Sortable to leave a column on the desk without a sort button. Check Expanded to show a long note in the row that opens from the student name.</p>
+      ${allocationSection('alloc-fields', 'Dashboard Fields', `<p class="muted">These columns were detected in the latest COHORTDATA import and on the linked live sheet. Columns that stay in sync with the live sheet are marked LIVE. New columns start visible and sortable. Color scale stays off until you turn it on. It paints numbers, and words such as Weak or Strong, from light blue to deep blue across the students in the current view. It does not use red and green. Uncheck Sortable to leave a column on the desk without a sort button. Check Expanded to show a long note in the row that opens from the student name.</p>
         ${columns.length ? `<div class="table-wrap"><table><thead><tr>${sortableHeader('alloc-columns', 'column', 'Imported column')}${flagLabels.map(function(flag) { return `<th>${escapeHtml(flag[1])}</th>`; }).join('')}</tr></thead><tbody>${sortedRows('alloc-columns', columns, function(key) { return key; }).map(function(key) {
           const column = flags[key] || {};
-          return `<tr><td><code>${escapeHtml(key)}</code></td>${flagLabels.map(function(flag) {
+          const liveBadge = column.source === 'live' ? ' <span class="live-badge">LIVE</span>' : '';
+          return `<tr><td><code>${escapeHtml(key)}</code>${liveBadge}</td>${flagLabels.map(function(flag) {
             return `<td><input type="checkbox" data-alloc-col="${escapeHtml(key)}" data-flag="${flag[0]}" ${column[flag[0]] ? 'checked' : ''} aria-label="${escapeHtml(flag[1] + ' ' + key)}"></td>`;
           }).join('')}</tr>`;
         }).join('')}</tbody></table></div>` : '<div class="empty">Ingest student data to detect columns.</div>'}
@@ -816,6 +863,18 @@ export function bindAllocation(target, desk) {
     state.allocationAllocatedFilter = [];
     state.allocationTeacherFilter = [];
     paintAllocation();
+  });
+  const drawerPeek = document.getElementById('alloc-drawer-peek');
+  if (drawerPeek) drawerPeek.addEventListener('click', function() {
+    state.allocationDrawerOpen = true;
+    paintAllocation();
+  });
+  const drawerClose = document.getElementById('alloc-drawer-close');
+  if (drawerClose) drawerClose.addEventListener('click', function() {
+    state.allocationDrawerOpen = false;
+    paintAllocation();
+    const peek = document.getElementById('alloc-drawer-peek');
+    if (peek) peek.focus();
   });
   target.querySelectorAll('[data-alloc-load]').forEach(function(button) {
     button.addEventListener('click', function() {
@@ -1005,14 +1064,14 @@ export function cohortTokensMarkup(board) {
   const subjects = board.subjects || [];
   const tableId = 'cohort-tokens';
   const summary = tokenBoardSummary(board);
-  return `${collapsibleHeader('token-metrics', 'Cohort summary', `<div class="alloc-metrics">
+  return `${allocationSection('token-metrics', 'Cohort summary', `<div class="alloc-metrics">
       <p>Teachers allocated <strong>${summary.teachersAllocated}</strong></p>
       <p>Number of tokens <strong>${summary.tokenCount}</strong></p>
       <p>Number of students <strong>${summary.studentCount}</strong></p>
     </div>`)}
     <div class="toolbar"><button type="button" class="button secondary" id="alloc-open-quotas">Edit EE quotas</button><span class="muted">${tokens.length} token${tokens.length === 1 ? '' : 's'} · cohort ${escapeHtml(board.cohortId || state.cohortId)}</span></div>
     <p class="muted">These slots already belong to ${escapeHtml(board.cohortId)}. Adding tokens does not remove the ones here. A published token has to go back to draft on the dashboard before it can be deleted.</p>
-    ${collapsibleHeader('token-add', 'Add tokens', `<div class="alloc-batch">
+    ${allocationSection('token-add', 'Add tokens', `<div class="alloc-batch">
         <label for="token-staff">Staff</label>
         <select id="token-staff"><option value="">Choose staff</option>${(board.staff || []).map(function(person) {
           return `<option value="${escapeHtml(person.email)}">${escapeHtml(person.displayName)}</option>`;
@@ -1022,7 +1081,8 @@ export function cohortTokensMarkup(board) {
         <button type="button" class="button" id="token-add">Add tokens</button>
       </div>
       <div class="quota-pick">${subjects.length ? subjects.map(function(subject) {
-        return `<label class="check-option"><input type="checkbox" data-new-token-subject="${escapeHtml(subject)}"> ${escapeHtml(subject)}</label>`;
+        const name = tokenSubjectName(subject);
+        return `<label class="check-option"><input type="checkbox" data-new-token-subject="${escapeHtml(name)}"> ${subjectLabelHtml(name, tokenSubjectShort(subject))}</label>`;
       }).join('') : '<span class="muted">No active subjects yet.</span>'}</div>`)}
     ${tokens.length ? `<div class="table-wrap"><table><thead><tr>${sortableHeader(tableId, 'staff', 'Staff')}${sortableHeader(tableId, 'subjects', 'EE subjects')}${sortableHeader(tableId, 'status', 'Status')}${sortableHeader(tableId, 'student', 'Student')}${sortableHeader(tableId, 'assigned', 'Assigned subject')}<th>Actions</th></tr></thead><tbody>${tokens.map(function(token) {
       return `<tr>
@@ -1048,10 +1108,22 @@ export function tokenBoardSummary(board) {
   };
 }
 
+function tokenSubjectName(subject) {
+  if (subject && typeof subject === 'object') return String(subject.name || '');
+  return String(subject || '');
+}
+
+function tokenSubjectShort(subject) {
+  if (subject && typeof subject === 'object') return String(subject.shortName || '');
+  return '';
+}
+
 export function tokenSubjectChoices(token, board) {
-  const choices = (board.subjects || []).slice();
+  const choices = (board.subjects || []).map(function(subject) {
+    return { name: tokenSubjectName(subject), shortName: tokenSubjectShort(subject) };
+  }).filter(function(subject) { return subject.name; });
   (token.eligibleSubjects || []).forEach(function(subject) {
-    if (!choices.some(function(item) { return item.toLowerCase() === subject.toLowerCase(); })) choices.push(subject);
+    if (!choices.some(function(item) { return item.name.toLowerCase() === String(subject).toLowerCase(); })) choices.push({ name: String(subject), shortName: '' });
   });
   return choices;
 }
@@ -1063,8 +1135,9 @@ export function openTokenEditor(token, board) {
   openAdminDialog('cohort-token', `<div class="form-panel member-editor" role="dialog" aria-modal="true" aria-labelledby="token-editor-title"><div class="toolbar"><h2 id="token-editor-title">Edit token</h2><button type="button" class="button secondary" data-close-admin-dialog>Close</button></div>
     <p class="muted">${escapeHtml(token.staffName)} · ${escapeHtml(token.staffId)}</p>
     <div class="quota-pick" role="group" aria-label="EE subjects">${choices.length ? choices.map(function(subject) {
-      const on = (token.eligibleSubjects || []).some(function(item) { return item.toLowerCase() === subject.toLowerCase(); });
-      return `<label class="check-option"><input type="checkbox" data-token-subject="${escapeHtml(subject)}" ${on ? 'checked' : ''}> ${escapeHtml(subject)}</label>`;
+      const name = tokenSubjectName(subject);
+      const on = (token.eligibleSubjects || []).some(function(item) { return item.toLowerCase() === name.toLowerCase(); });
+      return `<label class="check-option"><input type="checkbox" data-token-subject="${escapeHtml(name)}" ${on ? 'checked' : ''}> ${subjectLabelHtml(name, tokenSubjectShort(subject))}</label>`;
     }).join('') : '<span class="muted">No active subjects yet.</span>'}</div>
     <p class="notice error" id="token-editor-error" hidden></p>
     <div class="toolbar"><button type="button" class="button" id="token-editor-save">Save</button><button type="button" class="button secondary" data-close-admin-dialog>Cancel</button></div></div>`);
@@ -1240,6 +1313,19 @@ function paintAllocationExport(exported, message) {
   showSuccess(message);
 }
 
+function allocationColumnDraft(key) {
+  const prior = ((state.allocationDesk && state.allocationDesk.settings && state.allocationDesk.settings.columns) || []).find(function(column) { return column.key === key; });
+  return {
+    key: key,
+    showOnCard: false,
+    filterable: false,
+    sortable: false,
+    colorScale: false,
+    expanded: false,
+    source: prior && prior.source === 'live' ? 'live' : 'static',
+  };
+}
+
 export function captureAllocationColumns() {
   const boxes = document.querySelectorAll('[data-alloc-col]');
   if (!boxes.length || !state.allocationDesk || !state.allocationDesk.settings) return;
@@ -1247,7 +1333,7 @@ export function captureAllocationColumns() {
   boxes.forEach(function(box) {
     const key = box.getAttribute('data-alloc-col');
     const flag = box.getAttribute('data-flag');
-    if (!columns[key]) columns[key] = { key: key, showOnCard: false, filterable: false, sortable: false, colorScale: false, expanded: false };
+    if (!columns[key]) columns[key] = allocationColumnDraft(key);
     columns[key][flag] = box.checked;
   });
   state.allocationDesk.settings.columns = Object.keys(columns).map(function(key) { return columns[key]; });
@@ -1279,7 +1365,7 @@ export function allocationLiveSheetMarkup(desk) {
   }).join('')}<p class="notice" id="alloc-live-problems"${problems.length ? '' : ' hidden'}>${escapeHtml(problems.join(' '))}</p><div class="toolbar"><button type="button" class="button" id="alloc-live-save" ${saveBlocked ? 'disabled' : ''}>Save live link</button></div></div>` : `<p class="muted" id="alloc-live-problems">${tabs.length ? 'Choose a sheet tab to map its columns.' : (linked ? 'Load the workbook to change the linked tab or columns.' : 'Load the workbook to choose a tab.')}</p>`;
   return `<div class="alloc-live">
       <h3>Live choice sheet</h3>
-      <p class="muted">Link a Google Sheet that stays the source of truth for subject choices. Static ingest still fills auxiliary columns. Student Number or Student Email is the merge key, and Primary choice has to be mapped before the link can be saved.</p>
+      <p class="muted">Link a Google Sheet that stays the source of truth for subject choices. Every other column on that sheet is ingested as a live dashboard field. Static ingest still fills auxiliary columns and leaves live columns in place. Student Number or Student Email is the merge key, and Primary choice has to be mapped before the link can be saved.</p>
       ${linked ? `<p class="muted">Linked spreadsheet <code>${escapeHtml(settings.spreadsheetId || '')}</code>${tab ? ` · tab <strong>${escapeHtml(settings.sheetName || settings.liveSheetTab || tab)}</strong>` : ''}${settings.lastLiveSync ? ` · last sync ${escapeHtml(allocationWhen(settings.lastLiveSync))}` : ''}.</p>` : ''}
       <label class="field" for="alloc-live-url">Live Google Sheet URL</label>
       <input id="alloc-live-url" value="${escapeHtml(url)}" placeholder="https://docs.google.com/spreadsheets/d/..." ${driveBlocked ? 'disabled' : ''}>
@@ -1533,7 +1619,7 @@ export function saveAllocationSettings() {
   document.querySelectorAll('[data-alloc-col]').forEach(function(box) {
     const key = box.getAttribute('data-alloc-col');
     const flag = box.getAttribute('data-flag');
-    if (!columns[key]) columns[key] = { key: key, showOnCard: false, filterable: false, sortable: false, colorScale: false, expanded: false };
+    if (!columns[key]) columns[key] = allocationColumnDraft(key);
     columns[key][flag] = box.checked;
   });
   const config = {

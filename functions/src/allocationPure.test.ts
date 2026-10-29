@@ -42,6 +42,8 @@ import {
   supportFlagTags,
   strictInterdisciplinaryValue,
   quotaCapacity,
+  spectrumColours,
+  subjectNamesForLoad,
   subjectTokenLoad,
   subjectLoadNames,
   staffQuotaTokenRows,
@@ -538,6 +540,22 @@ test('a subject name that contains commas stays one requested subject and one to
     upool: 1,
     alloc: 1,
   });
+  const plain = 'Sports, Exercise, and Health Science';
+  const fragments = ['Sports', 'Exercise', 'and Health Science'];
+  assert.deepEqual(subjectNamesForLoad(fragments, [plain, name, 'Biology']), [plain]);
+  assert.deepEqual(subjectNamesForLoad(`${name}, Biology`, [name, 'Biology']), [name, 'Biology']);
+  assert.deepEqual(subjectNamesForLoad('English, History', ['English', 'History']), ['English', 'History']);
+  const rejoined = subjectTokenLoad([
+    { status: 'available', eligibleSubjects: fragments },
+  ], [{ subjects: fragments, allocated: false }], [plain]);
+  assert.deepEqual(rejoined.subjects.map((item) => item.subject), [plain]);
+  assert.equal(rejoined.subjects[0].remaining, 1);
+  assert.equal(rejoined.subjects[0].pool, 1);
+  const colours = spectrumColours(6);
+  assert.equal(colours.length, 6);
+  assert.equal(new Set(colours).size, 6);
+  colours.forEach((colour) => assert.match(colour, /^#[0-9a-f]{6}$/));
+  assert.notEqual(colours[0], colours[3]);
   assert.deepEqual(supportFlagTags('EAL, SEN, EAL'), ['EAL', 'SEN']);
   assert.deepEqual(supportFlagTags('Needs Support'), ['Needs support']);
   assert.equal(strictInterdisciplinaryValue('Yes'), 'Yes');
@@ -578,7 +596,7 @@ test('a draft is refused when the EE subject does not match the supervisor token
 });
 
 test('live sheet mappings merge choice data onto static auxiliary columns', () => {
-  const headers = ['Student Number', 'Student Email', 'First choice', 'HL subjects'];
+  const headers = ['Student Number', 'Student Email', 'First choice', 'HL subjects', 'Mentor note'];
   const mappings = columnMappingsFrom({
     core: { studentNumber: 'Student Number', studentEmail: 'Student Email' },
     subjectChoice: { primary: 'First choice' },
@@ -593,19 +611,29 @@ test('live sheet mappings merge choice data onto static auxiliary columns', () =
     title: 'Choices',
     rows: [
       headers,
-      ['20260001', JANE, 'Physics', 'Bio'],
-      ['', '', '', ''],
-      ['999', 'missing@vsa.edu', 'Art', ''],
+      ['20260001', JANE, 'Physics', 'Bio', 'Bring sources'],
+      ['', '', '', '', ''],
+      ['999', 'missing@vsa.edu', 'Art', '', ''],
     ],
   }, mappings);
   assert.equal(parsed.rows.length, 2);
   assert.equal(parsed.rows[0].line, 2);
   assert.equal(parsed.rows[1].line, 4);
-  const settings = settingsForLiveLink(emptySettings(), 'https://docs.google.com/spreadsheets/d/abc123_XYZ-000000000000/edit', 'abc123_XYZ-000000000000', 'Choices', mappings);
+  assert.equal(parsed.rows[0].fields['Mentor note'], 'Bring sources');
+  assert.equal(parsed.rows[0].fields['HL subjects'], 'Bio');
+  assert.equal(parsed.rows[0].fields['First choice'], undefined);
+  assert.equal(parsed.rows[0].fields['Student Email'], undefined);
+  const settings = settingsForLiveLink(emptySettings(), 'https://docs.google.com/spreadsheets/d/abc123_XYZ-000000000000/edit', 'abc123_XYZ-000000000000', 'Choices', mappings, headers);
   assert.equal(liveSheetLinked(settings), true);
   assert.equal(settings.primaryChoiceKey, 'choice1');
   assert.equal(settings.hlColumn, 'HL subjects');
   assert.equal(settings.sheetName, 'Choices');
+  assert.ok(settings.detectedDynamicKeys.includes('Mentor note'));
+  assert.ok(settings.detectedDynamicKeys.includes('HL subjects'));
+  assert.equal(settings.detectedDynamicKeys.includes('First choice'), false);
+  assert.equal(settings.detectedDynamicKeys.includes('Student Email'), false);
+  assert.equal(settings.columns.find((column) => column.key === 'Mentor note')?.source, 'live');
+  assert.equal(settings.columns.find((column) => column.key === 'HL subjects')?.source, 'live');
   assert.equal(settings.liveSheetTab, 'Choices');
   const index = indexLiveRoster([
     { studentId: JANE, studentNumber: '20260001', studentEmail: '' },
@@ -630,6 +658,7 @@ test('live sheet mappings merge choice data onto static auxiliary columns', () =
   assert.equal(merged.subjectChoices.choice2, 'Eng Lit');
   assert.equal(merged.dynamicData['Y10 GPA'], 'Weak');
   assert.equal(merged.dynamicData['HL subjects'], 'Bio');
+  assert.equal(merged.dynamicData['Mentor note'], 'Bring sources');
   assert.equal(merged.pendingClear, true);
   const roundTrip = settingsFromDoc(settings);
   assert.equal(roundTrip.spreadsheetId, settings.spreadsheetId);
@@ -647,6 +676,7 @@ test('live sheet mappings merge choice data onto static auxiliary columns', () =
   assert.equal(staticAgain.subjectChoices.choice2, 'Drama');
   assert.equal(staticAgain.dynamicData['Y10 GPA'], 'Strong');
   assert.equal(staticAgain.dynamicData['HL subjects'], 'Bio');
+  assert.equal(staticAgain.dynamicData['Mentor note'], 'Bring sources');
 });
 
 function rgb(hex: string): [number, number, number] {

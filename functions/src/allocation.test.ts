@@ -21,7 +21,7 @@ import {
   saveStaffSubjects,
   updateCohortToken,
 } from './allocation';
-import { getAdminRecords, saveAdminRecord } from './admin';
+import { autoApplySubjectColours, getAdminRecords, saveAdminRecord } from './admin';
 import { getStaffHome, getStudentHome } from './journey';
 import { COLLECTIONS } from './schema';
 import { getLiveSheetHeaders, listLiveSheetTabs, resyncLiveChoiceData, saveLiveSheetLink } from './liveSheet';
@@ -446,9 +446,9 @@ test('a live sheet link merges choice rows onto static auxiliary data', async ()
     {
       title: 'Choices',
       rows: [
-        ['Student Number', 'Student Email', 'First choice', 'HL subjects'],
-        ['20260001', JANE, 'Physics', 'Bio'],
-        ['999', 'missing@vsa.edu', 'Art', ''],
+        ['Student Number', 'Student Email', 'First choice', 'HL subjects', 'Mentor note'],
+        ['20260001', JANE, 'Physics', 'Bio', 'Bring sources'],
+        ['999', 'missing@vsa.edu', 'Art', '', ''],
       ],
     },
   ]);
@@ -465,7 +465,7 @@ test('a live sheet link merges choice rows onto static auxiliary data', async ()
   assert.deepEqual(tabs.tabs, ['COHORTDATA: 2026', 'Choices']);
   assert.equal(tabs.spreadsheetId, 'abc123_XYZ-000000000000');
   const headers = await getLiveSheetHeaders(app, '2026', { url: SHEET }, 'Choices', { workbook: sheets });
-  assert.deepEqual(headers.headers, ['Student Number', 'Student Email', 'First choice', 'HL subjects']);
+  assert.deepEqual(headers.headers, ['Student Number', 'Student Email', 'First choice', 'HL subjects', 'Mentor note']);
 
   const link = {
     url: SHEET,
@@ -495,6 +495,11 @@ test('a live sheet link merges choice rows onto static auxiliary data', async ()
   assert.equal(saved.columnMappings.subjectChoice.primary, 'First choice');
   assert.equal(saved.primaryChoiceKey, 'choice1');
   assert.equal(saved.hlColumn, 'HL subjects');
+  assert.equal(saved.columns.find((column) => column.key === 'Mentor note')?.source, 'live');
+  assert.equal(saved.columns.find((column) => column.key === 'HL subjects')?.source, 'live');
+  assert.equal(saved.columns.find((column) => column.key === 'Y10 GPA')?.source, 'static');
+  assert.equal(saved.detectedDynamicKeys.includes('First choice'), false);
+  assert.equal(saved.detectedDynamicKeys.includes('Student Number'), false);
 
   const synced = await resyncLiveChoiceData(app, '2026', { workbook: sheets });
   assert.equal(synced.updated, 1);
@@ -505,6 +510,7 @@ test('a live sheet link merges choice rows onto static auxiliary data', async ()
   assert.equal(jane?.subjectChoices.choice2, 'Eng Lit');
   assert.equal(jane?.dynamicData['Y10 GPA'], 'Weak');
   assert.equal(jane?.dynamicData['HL subjects'], 'Bio');
+  assert.equal(jane?.dynamicData['Mentor note'], 'Bring sources');
   assert.ok((await app.store.getAllocationConfig('2026'))?.lastLiveSync);
 
   const replacement: SheetGrid = {
@@ -520,6 +526,7 @@ test('a live sheet link merges choice rows onto static auxiliary data', async ()
   assert.equal(afterStatic?.subjectChoices.choice2, 'Drama');
   assert.equal(afterStatic?.dynamicData['Y10 GPA'], 'Strong');
   assert.equal(afterStatic?.dynamicData['HL subjects'], 'Bio');
+  assert.equal(afterStatic?.dynamicData['Mentor note'], 'Bring sources');
 
   const config = await app.store.getAllocationConfig('2026');
   await saveAllocationConfig(app, '2026', { primaryChoiceKey: 'choice1', secondaryChoiceKey: 'choice2', columns: config?.columns || [] });
@@ -531,4 +538,22 @@ test('a live sheet link merges choice rows onto static auxiliary data', async ()
   const unlinked = appFor();
   await seed(unlinked);
   await assert.rejects(resyncLiveChoiceData(unlinked, '2026', { workbook: sheets }), /Link a live Google Sheet/);
+});
+
+test('auto apply colours writes a distinct hex onto every subject', async () => {
+  const app = appFor();
+  await seed(app);
+  await saveAdminRecord(app, 'subjects', { 'Subject ID': 'sehs', Name: 'Sports, Exercise, and Health Science', 'Short Name': 'SEHS', Active: true }, '');
+  await saveAdminRecord(app, 'subjects', { 'Subject ID': 'bio', Name: 'Biology', Active: true }, '');
+  const applied = await autoApplySubjectColours(app);
+  assert.equal(applied.updated, 2);
+  const sehs = await app.store.get(COLLECTIONS.subjects, 'sehs');
+  const bio = await app.store.get(COLLECTIONS.subjects, 'bio');
+  assert.match(String(sehs?.Colour), /^#[0-9a-f]{6}$/);
+  assert.match(String(bio?.Colour), /^#[0-9a-f]{6}$/);
+  assert.notEqual(sehs?.Colour, bio?.Colour);
+  assert.equal(sehs?.['Short Name'], 'SEHS');
+  const denied = appFor(SMITH);
+  await seed(denied);
+  await assert.rejects(autoApplySubjectColours(denied), /Access denied/);
 });

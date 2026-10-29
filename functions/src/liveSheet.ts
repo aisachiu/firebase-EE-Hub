@@ -3,10 +3,10 @@ import {
   columnMappingsFrom,
   gridHeaderNames,
   indexLiveRoster,
+  ingestLiveHeaders,
   liveLinkProblems,
   liveMappingProblems,
   liveSheetLinked,
-  mergeDetected,
   mergeLiveChoiceRow,
   parseLiveSheet,
   resolveLiveStudent,
@@ -90,7 +90,7 @@ export async function saveLiveSheetLink(app: App, cohortId: unknown, link: unkno
     const problems = liveLinkProblems(mappings, headers);
     if (problems.length) throw new HubError(problems[0]);
     const current = settingsFromDoc(await app.store.getAllocationConfig(cohort.id));
-    const next = settingsForLiveLink(current, url, spreadsheetId, grid.title || sheetName, mappings);
+    const next = settingsForLiveLink(current, url, spreadsheetId, grid.title || sheetName, mappings, headers);
     await app.store.setAllocationConfig(cohort.id, next);
     return next;
   });
@@ -142,10 +142,7 @@ export async function resyncLiveChoiceData(app: App, cohortId: unknown, deps?: L
     if (text(settings.columnMappings.subjectChoice.primary)) choiceKeys.add(settings.primaryChoiceKey || 'choice1');
     if (text(settings.columnMappings.subjectChoice.secondary)) choiceKeys.add(settings.secondaryChoiceKey || 'choice2');
     if (text(settings.columnMappings.subjectChoice.interdisciplinary)) choiceKeys.add(settings.interdisciplinaryKey || 'interdisciplinary');
-    const dynamicKeys = new Set(settings.detectedDynamicKeys);
-    if (settings.hlColumn && text(settings.columnMappings.dashboard.hl)) dynamicKeys.add(settings.hlColumn);
-    if (settings.supportColumn && text(settings.columnMappings.dashboard.support)) dynamicKeys.add(settings.supportColumn);
-    const next = { ...mergeDetected(settings, [...choiceKeys].sort(), [...dynamicKeys].sort()), lastLiveSync: now };
+    const next = { ...ingestLiveHeaders({ ...settings, detectedChoiceKeys: [...choiceKeys].sort() }, headers), lastLiveSync: now };
     ops.push({ kind: 'config', cohortId: cohort.id, data: next });
     await app.store.applyAllocationOps(ops);
     return {

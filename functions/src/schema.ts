@@ -104,6 +104,8 @@ export const APP_TABLES: Record<string, TableDef> = {
     fields: [
       { name: 'Subject ID', type: 'text', key: true, generated: true },
       { name: 'Name', type: 'text', required: true },
+      { name: 'Short Name', type: 'text', label: 'Short Name' },
+      { name: 'Colour', type: 'color', label: 'Colour', validator: 'phaseColor' },
       { name: 'Department', type: 'text' },
       { name: 'Active', type: 'checkbox', defaultValue: true },
     ],

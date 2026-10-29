@@ -93,8 +93,13 @@ export function headerOpen(id, fallbackOpen) {
 export function collapsibleHeader(id, title, bodyHtml, options) {
   const fallbackOpen = !options || options.open !== false;
   const open = headerOpen(id, fallbackOpen);
+  const titleToggle = !!(options && options.titleToggle);
+  const mark = open ? 'v' : '>';
+  const bar = titleToggle
+    ? `<button type="button" class="table-header-toggle" data-toggle-header="${escapeHtml(id)}" aria-expanded="${open ? 'true' : 'false'}"><span class="table-header-mark" aria-hidden="true">${mark}</span><span class="table-header-title">${escapeHtml(title)}</span></button>`
+    : `<h2>${escapeHtml(title)}</h2><button type="button" class="button secondary" data-toggle-header="${escapeHtml(id)}" aria-expanded="${open ? 'true' : 'false'}">${open ? 'Hide' : 'Show'}</button>`;
   return `<section class="table-header" data-table-header="${escapeHtml(id)}">
-    <div class="table-header-bar"><h2>${escapeHtml(title)}</h2><button type="button" class="button secondary" data-toggle-header="${escapeHtml(id)}" aria-expanded="${open ? 'true' : 'false'}">${open ? 'Hide' : 'Show'}</button></div>
+    <div class="table-header-bar">${bar}</div>
     <div class="table-header-body"${open ? '' : ' hidden'}>${bodyHtml}</div>
   </section>`;
 }
@@ -110,7 +115,9 @@ export function bindCollapsibleHeaders(root) {
       state.adminHeaderOpen[id] = open;
       if (body) body.hidden = !open;
       button.setAttribute('aria-expanded', open ? 'true' : 'false');
-      button.textContent = open ? 'Hide' : 'Show';
+      const mark = button.querySelector('.table-header-mark');
+      if (mark) mark.textContent = open ? 'v' : '>';
+      else button.textContent = open ? 'Hide' : 'Show';
     });
   });
 }

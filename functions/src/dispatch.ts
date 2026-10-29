@@ -14,6 +14,7 @@ import {
   setActionItemStatus,
 } from './actions';
 import {
+  autoApplySubjectColours,
   clearCohortWorkspaceLinks,
   createStudentUsersFromCohort,
   deleteAdminRecord,
@@ -120,6 +121,7 @@ export async function dispatch(app: App, method: string, args: unknown[]): Promi
     case 'saveCohortPlanAnchor': return saveCohortPlanAnchor(app, args[0], args[1]);
     case 'seedCohortPathway': return seedCohortPathway(app, args[0], args[1], args[2]);
     case 'saveAdminRecord': return saveAdminRecord(app, text(args[0]), (args[1] || {}) as any, args[2]);
+    case 'autoApplySubjectColours': return autoApplySubjectColours(app);
     case 'setMilestoneAnchor': return setMilestoneAnchor(app, args[0], args[1], args[2]);
     case 'deleteAdminRecord': return deleteAdminRecord(app, text(args[0]), args[1]);
     case 'saveCohortMember': return saveCohortMember(app, args[0], (args[1] || {}) as any, args[2]);

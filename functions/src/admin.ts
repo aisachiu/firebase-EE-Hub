@@ -1,4 +1,4 @@
-import { activeSubjectNamesFrom, canonicalSubjectAssignment, parseSubjectCell } from './allocationPure';
+import { activeSubjectNamesFrom, canonicalSubjectAssignment, parseSubjectCell, spectrumColours } from './allocationPure';
 import { validatePhasePrerequisites } from './phaseRules';
 import { setCohortMilestoneAnchor } from './cohortPathway';
 import { AnchorMode, reanchorMilestones } from './pathwayPlan';
@@ -36,6 +36,24 @@ function coerce(entity: string, values: Doc) {
 
 async function phases(app: App) {
   return app.store.list(COLLECTIONS.phases);
+}
+
+export async function autoApplySubjectColours(app: App) {
+  const user = await requireAdmin(app, 'AUTO_APPLY_SUBJECT_COLOURS');
+  return audited(app, user, 'AUTO_APPLY_SUBJECT_COLOURS', {}, async () => {
+    const records = (await app.store.list(COLLECTIONS.subjects))
+      .filter((record) => text(record.Name))
+      .sort((left, right) => text(left.Name).localeCompare(text(right.Name), 'en', { sensitivity: 'base' }));
+    const colours = spectrumColours(records.length);
+    for (let index = 0; index < records.length; index += 1) {
+      const record = records[index];
+      const id = text(record['Subject ID']);
+      if (!id) continue;
+      record.Colour = colours[index];
+      await app.store.set(COLLECTIONS.subjects, id, record);
+    }
+    return { updated: records.length };
+  });
 }
 
 export async function getAdminRecords(app: App, entity: string) {
@@ -121,6 +139,10 @@ export async function saveAdminRecord(app: App, entity: string, record: Doc, ori
     values['Body Format'] = text(values['Body Format']).toLowerCase() || 'plain';
     if (values['Body Format'] === 'html') assertSafeResourceHtml(text(values.Body));
     if (toBoolean(values.Published) && !text(values.URL) && !text(values.Body)) throw new HubError('A published resource needs a URL or a body.');
+  }
+  if (entity === 'subjects') {
+    if (text(values.Colour)) values.Colour = normalizePhaseColor(values.Colour);
+    values['Short Name'] = text(values['Short Name']);
   }
   if (entity === 'ticketCategories') await validateTicketCategory(app, values, keyName);
   const key = tableKey(entity);
