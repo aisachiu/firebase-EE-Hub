@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createServer } from 'vite';
 
-const psychology = { name: 'Psychology', colour: '#6b4c9a' };
+const psychology = { name: 'Psychology', colour: '#6b4c9a', shortName: 'Psy' };
 const theater = { name: 'Theater', colour: '#0e8a6a' };
 
 function student(partial) {
@@ -126,24 +126,32 @@ test('allocation desk tags, filter, column order, supervisor cues, and token loa
     assert.match(table, /Mathematics, Analysis and approaches/);
     assert.match(table, /Pool \| UPool \| Alloc \| Rem/);
     assert.match(table, /Total requested \(Pool\)/);
-    assert.equal((table.match(/<tr>/g) || []).length, 2);
+    assert.match(table, /class="alloc-subject-block"/);
+    assert.match(table, /class="alloc-subject-figures"/);
+    assert.equal((table.match(/alloc-subject-block/g) || []).length, 1);
+    assert.doesNotMatch(table, /<table/);
     assert.doesNotMatch(table, />Mathematics</);
     assert.match(html, /id="alloc-clear-filters"/);
     assert.match(html, /data-alloc-allocated-filter="Psychology"/);
+    assert.match(html, /title="Psychology">Psy</);
     assert.match(html, /data-alloc-teacher-filter="psy@school.edu"/);
     assert.match(html, /data-alloc-load="assigned"/);
     assert.match(html, /aria-label="Star key"/);
     assert.doesNotMatch(html, /id="alloc-cohort"/);
     assert.doesNotMatch(html, /Resync Live Choice Data/);
-    assert.match(html, /class="alloc-side-scroll"/);
-    assert.match(html, /overflow-y: auto|alloc-side-scroll/);
+    assert.match(html, /class="alloc-drawer"/);
+    assert.match(html, /id="alloc-drawer-peek"/);
+    assert.match(html, /Token load/);
+    assert.doesNotMatch(html, /class="alloc-side"/);
 
     const sehs = 'Sports, Exercise, and Health Science (SEHS)';
-    const sehsLoad = pure.subjectTokenLoad([{ status: 'available', eligibleSubjects: sehs }]);
-    const sehsTable = deskMod.subjectTokenLoadMarkup(sehsLoad);
+    const sehsLoad = pure.subjectTokenLoad([{ status: 'available', eligibleSubjects: ['Sports', 'Exercise', 'and Health Science (SEHS)'] }], [], [sehs]);
+    const sehsTable = deskMod.subjectTokenLoadMarkup(sehsLoad, { subjects: [{ name: sehs, shortName: 'SEHS' }] });
     assert.match(sehsTable, /Sports, Exercise, and Health Science \(SEHS\)/);
-    assert.equal((sehsTable.match(/<tr>/g) || []).length, 2);
+    assert.match(sehsTable, /title="Sports, Exercise, and Health Science \(SEHS\)">SEHS</);
+    assert.equal((sehsTable.match(/alloc-subject-block/g) || []).length, 1);
     assert.doesNotMatch(sehsTable, />Sports</);
+    assert.doesNotMatch(sehsTable, /<table/);
 
     state.allocationOpenStudent = 'jane@school.edu';
     state.allocationDesk = desk();
@@ -193,7 +201,10 @@ test('allocation desk tags, filter, column order, supervisor cues, and token loa
     assert.doesNotMatch(settings, /id="alloc-cohort"/);
     ['alloc-sync', 'alloc-cohortdata', 'alloc-choice-map', 'alloc-fields', 'alloc-data'].forEach(function(id) {
       assert.match(settings, new RegExp('data-toggle-header="' + id + '" aria-expanded="false"'));
+      assert.match(settings, new RegExp('data-toggle-header="' + id + '" aria-expanded="false"><span class="table-header-mark" aria-hidden="true">></span>'));
     });
+    assert.doesNotMatch(settings, />Hide</);
+    assert.doesNotMatch(settings, />Show</);
     assert.match(settings, /id="alloc-live-url"/);
     assert.match(settings, /Live Google Sheet URL/);
     assert.match(settings, /Load sheet tabs/);

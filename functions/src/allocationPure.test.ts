@@ -42,6 +42,8 @@ import {
   supportFlagTags,
   strictInterdisciplinaryValue,
   quotaCapacity,
+  spectrumColours,
+  subjectNamesForLoad,
   subjectTokenLoad,
   subjectLoadNames,
   staffQuotaTokenRows,
@@ -538,6 +540,22 @@ test('a subject name that contains commas stays one requested subject and one to
     upool: 1,
     alloc: 1,
   });
+  const plain = 'Sports, Exercise, and Health Science';
+  const fragments = ['Sports', 'Exercise', 'and Health Science'];
+  assert.deepEqual(subjectNamesForLoad(fragments, [plain, name, 'Biology']), [plain]);
+  assert.deepEqual(subjectNamesForLoad(`${name}, Biology`, [name, 'Biology']), [name, 'Biology']);
+  assert.deepEqual(subjectNamesForLoad('English, History', ['English', 'History']), ['English', 'History']);
+  const rejoined = subjectTokenLoad([
+    { status: 'available', eligibleSubjects: fragments },
+  ], [{ subjects: fragments, allocated: false }], [plain]);
+  assert.deepEqual(rejoined.subjects.map((item) => item.subject), [plain]);
+  assert.equal(rejoined.subjects[0].remaining, 1);
+  assert.equal(rejoined.subjects[0].pool, 1);
+  const colours = spectrumColours(6);
+  assert.equal(colours.length, 6);
+  assert.equal(new Set(colours).size, 6);
+  colours.forEach((colour) => assert.match(colour, /^#[0-9a-f]{6}$/));
+  assert.notEqual(colours[0], colours[3]);
   assert.deepEqual(supportFlagTags('EAL, SEN, EAL'), ['EAL', 'SEN']);
   assert.deepEqual(supportFlagTags('Needs Support'), ['Needs support']);
   assert.equal(strictInterdisciplinaryValue('Yes'), 'Yes');

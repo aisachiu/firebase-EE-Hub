@@ -9,6 +9,7 @@ export const state = {
   allocationCohorts: [],
   allocationStatus: 'all',
   allocationLoadView: 'subject',
+  allocationDrawerOpen: false,
   allocationSupport: 'all',
   allocationSubjectFilter: [],
   allocationAllocatedFilter: [],

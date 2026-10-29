@@ -12,7 +12,7 @@ import { bindStaffPane, renderStaffRecords, staffSectionNav } from './staff.js';
 import { callServer, runMutation } from '../shared/api.js';
 import { subjectList } from '../shared/checks.js';
 import { showError } from '../shared/feedback.js';
-import { cssEscape, escapeHtml, formatValue, toBoolean } from '../shared/html.js';
+import { cssEscape, escapeHtml, formatValue, hexColour, toBoolean } from '../shared/html.js';
 import { renderResourceCard } from '../shared/resources.js';
 import { registerMemberEditorCloser } from '../shared/sessionChrome.js';
 import { state } from '../shared/state.js';
@@ -139,7 +139,8 @@ export function renderAdminData(data, options) {
   const selectionHeader = isCohortMembers ? collapsibleHeader('cohort-member-selection', 'Selection and import', `<div class="toolbar"><button type="button" class="button secondary" id="open-roster-import">Import CSV / paste</button><button type="button" class="button secondary" id="create-selected-users" disabled>Add selected as users</button>${cohortProvisionSelectionActions()}<label><input type="checkbox" id="select-all-members"> Select all</label><span id="selected-count" class="muted">0 selected</span></div>`) : '';
   const categoryNote = entity === 'ticketCategories' ? '<p class="lede">These names are the choices a student sees when they send a message. Who they message sends it to that student\'s supervisor or to the EE Coordinator.</p>' : '';
   const filterControl = isCohortMembers ? cohortProvisionFilterControl(state.memberProvisionFilter) : '';
-  target.innerHTML = `${staffNav}${categoryNote}<div class="toolbar"><button type="button" class="button" id="new-record">Add ${escapeHtml(addLabel)}</button>${filterControl}<span class="muted">${shownCount}</span></div>
+  const colourAction = entity === 'subjects' ? '<button type="button" class="button secondary" id="auto-subject-colours">Auto Apply Colours</button>' : '';
+  target.innerHTML = `${staffNav}${categoryNote}<div class="toolbar"><button type="button" class="button" id="new-record">Add ${escapeHtml(addLabel)}</button>${colourAction}${filterControl}<span class="muted">${shownCount}</span></div>
     ${selectionHeader}
     ${state.status ? `<p class="status">${escapeHtml(state.status)}</p>` : ''}
     ${sorted.length ? `<div class="table-wrap"><table><thead><tr>${isCohortMembers ? '<th scope="col"><span class="sr-only">Select</span></th>' : ''}${columns.map(function(field) { return sortableHeader(tableId, field.name, field.label || field.name); }).join('')}${isCohortMembers ? sortableHeader(tableId, 'workspace', 'Workspace') : ''}<th scope="col">Actions</th></tr></thead><tbody>${sorted.map(function(item) {
@@ -150,6 +151,18 @@ export function renderAdminData(data, options) {
     }).join('')}</tbody></table></div>` : `<div class="empty">${records.length ? 'No students match this workspace filter.' : 'No records yet.'}</div>`}
     <div id="roster-import-panel"></div>`;
   document.getElementById('new-record').addEventListener('click', function() { openEditor(null); });
+  const autoColours = document.getElementById('auto-subject-colours');
+  if (autoColours) autoColours.addEventListener('click', function() {
+    if (!window.confirm('Replace the colour on every subject with colours spaced evenly across the spectrum?')) return;
+    autoColours.disabled = true;
+    runMutation('autoApplySubjectColours', [], { key: 'subjects:colours' }).then(function(result) {
+      state.status = 'Applied colours to ' + (result && result.updated ? result.updated : 0) + ' subjects.';
+      refreshAdminSectionSilently();
+    }).catch(function(error) {
+      autoColours.disabled = false;
+      showError(error);
+    });
+  });
   bindSortableHeaders(target, function() { renderAdminData(state.adminData, { preserveSelection: true }); });
   bindCollapsibleHeaders(target);
   if (entity === 'staffUsers') bindStaffPane(target);
@@ -367,6 +380,17 @@ export function openEditor(record, preserve) {
   const form = document.getElementById('record-form');
   if (!form) return;
   form.addEventListener('submit', saveForm);
+  form.querySelectorAll('[data-colour-picker]').forEach(function(picker) {
+    const fieldName = picker.getAttribute('data-colour-picker');
+    const textInput = form.querySelector('[data-field="' + cssEscape(fieldName) + '"]');
+    picker.addEventListener('input', function() {
+      if (textInput) textInput.value = picker.value;
+    });
+    if (textInput) textInput.addEventListener('input', function() {
+      const next = hexColour(textInput.value);
+      if (next) picker.value = next;
+    });
+  });
   document.getElementById('cancel-edit').addEventListener('click', closeAdminDialog);
   if (entity === 'studentUsers' && !editing) renderCohortImport();
 }
@@ -434,6 +458,10 @@ export function fieldMarkup(field, value, editing) {
   const label = field.label || name;
   const wide = field.type === 'textarea' ? 'wide' : '';
   const currentValue = value === undefined || value === null ? (field.defaultValue === undefined ? '' : field.defaultValue) : value;
+  if (field.type === 'color') {
+    const hex = hexColour(currentValue);
+    return `<div class="field"><label>${escapeHtml(label)}</label><div class="colour-field"><input type="color" data-colour-picker="${escapeHtml(name)}" value="${escapeHtml(hex || '#004c80')}" aria-label="${escapeHtml(label)} picker"><input type="text" data-field="${escapeHtml(name)}" value="${escapeHtml(hex)}" placeholder="#004c80" ${disabled}></div></div>`;
+  }
   if (field.type === 'checkbox') {
     const checked = toBoolean(currentValue);
     return `<div class="field check"><label><input type="checkbox" data-field="${escapeHtml(name)}" ${checked ? 'checked' : ''} ${disabled}> ${escapeHtml(label)}</label></div>`;

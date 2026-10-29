@@ -181,6 +181,9 @@ export function renderShell() {
   document.body.classList.toggle('has-notes', showNotes);
   document.body.classList.toggle('notes-open', showNotes && state.notesOpen);
   document.body.classList.toggle('student-drawers', showNotes);
+  const allocationDrawer = state.section === 'allocation' && state.allocationView !== 'settings' && state.allocationView !== 'tokens';
+  document.body.classList.toggle('has-alloc-drawer', allocationDrawer);
+  document.body.classList.toggle('alloc-drawer-open', allocationDrawer && state.allocationDrawerOpen === true);
   document.getElementById('app').innerHTML = `
     <header class="topbar">
       <div class="brand"><span class="brand-mark">EE</span><span>EE Hub</span>${student ? '' : '<span class="staff-pill">Staff</span>'}</div>

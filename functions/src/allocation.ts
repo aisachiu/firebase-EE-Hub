@@ -28,6 +28,7 @@ import {
   activeSubjectNamesFrom,
   canonicalSubjectAssignment,
   parseSubjectCell,
+  tokenSubjectCatalogue,
   staffQuotaTokenRows,
   tokenFromDoc,
   tokenPreviewRows,
@@ -452,12 +453,13 @@ export async function exportStaffQuotaSheet(app: App, cohortId: unknown, deps?: 
 export async function listCohortTokens(app: App, cohortId: unknown) {
   await requireAdmin(app, 'LIST_COHORT_TOKENS');
   const cohort = await requireCohort(app, text(cohortId));
-  const [tokenDocs, staff, subjects, members] = await Promise.all([
+  const [tokenDocs, staff, subjectDocs, members] = await Promise.all([
     app.store.listTokens(cohort.id),
     app.store.list(COLLECTIONS.staffUsers),
-    activeSubjectNames(app),
+    app.store.list(COLLECTIONS.subjects),
     app.store.listMembers(cohort.id),
   ]);
+  const subjects = tokenSubjectCatalogue(subjectDocs);
   const names = new Map(staff.map((person) => [normalizeEmail(person.EMAIL), text(person.DisplayName) || normalizeEmail(person.EMAIL)]));
   const studentNames = new Map(members.map((member) => [normalizeEmail(member.StudentId), text(member['Display Name']) || normalizeEmail(member.StudentId)]));
   members.forEach((member) => {

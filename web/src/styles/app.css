@@ -488,6 +488,9 @@ main.plan-wide { max-width: none; padding-inline: clamp(12px, 2vw, 28px); }
 }
 @media (max-width: 720px) {
   .journey-panel.open { z-index: 40; width: min(100vw - 12px, 420px); }
+  .alloc-drawer.open { z-index: 40; width: min(100vw - 12px, 420px); }
+  .alloc-drawer.open .alloc-drawer-panel { width: min(100vw - 12px, 420px); }
+  body.has-alloc-drawer.alloc-drawer-open { padding-right: 0; }
   .journey-panel.open .journey-drawer { width: min(100vw - 12px, 420px); }
   body.has-journey.journey-open { padding-right: 0; }
   .notes-panel.open { z-index: 41; width: min(100vw - 12px, 420px); }
@@ -766,7 +769,7 @@ main.staff-list { max-width: 1480px; }
 .heat-cell.lvl-3 { background: #239a3b; }
 .heat-cell.lvl-4 { background: #196127; }
 .heat-cell.is-future { background: transparent; }
-.alloc-layout { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 16px; align-items: start; }
+.alloc-layout { min-width: 0; }
 .alloc-ingest-layout { display: grid; grid-template-columns: minmax(280px, 1.05fr) minmax(320px, 1fr); gap: 16px; align-items: start; margin-bottom: 16px; }
 .alloc-config { display: grid; grid-template-columns: minmax(240px, 320px) minmax(0, 1fr); gap: 16px; align-items: start; }
 .alloc-panel { background: white; border: 1px solid var(--line); padding: 14px; }
@@ -828,10 +831,28 @@ main.staff-list { max-width: 1480px; }
 .alloc-side header { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; border-bottom: 1px solid var(--line); }
 .alloc-side header h2 { margin: 0; font-size: 14px; }
 .alloc-side header .view-toggle { margin-left: 0; }
-.alloc-subject-load th { position: static; background: #f8fafb; }
-.alloc-subject-load tbody th { background: transparent; color: inherit; font-size: 14px; letter-spacing: 0; text-transform: none; }
-.alloc-subject-load th:last-child,
-.alloc-subject-load td:last-child { text-align: right; white-space: nowrap; }
+.alloc-side footer { border-top: 1px solid var(--line); }
+.alloc-drawer { position: fixed; top: 0; right: 0; z-index: 25; height: 100vh; width: 36px; overflow: hidden; background: var(--ink); transition: width .2s ease; }
+.alloc-drawer.open { width: clamp(300px, 34vw, 420px); background: #f6f8f9; border-left: 1px solid var(--line); box-shadow: -8px 0 24px rgba(0, 30, 50, .12); }
+.alloc-drawer-peek { position: absolute; top: 40px; right: auto; bottom: 0; left: 0; width: 36px; border: 0; color: white; background: transparent; writing-mode: vertical-rl; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; }
+.alloc-drawer.open .alloc-drawer-peek { display: none; }
+.alloc-drawer:not(.open) .alloc-drawer-panel { visibility: hidden; }
+.alloc-drawer-panel { width: clamp(300px, 34vw, 420px); height: 100%; display: flex; flex-direction: column; background: #f6f8f9; }
+.alloc-drawer-bar { display: flex; align-items: center; justify-content: space-between; height: 40px; padding: 0 10px; color: white; background: var(--ink); flex: none; }
+.alloc-drawer-bar button { border: 0; color: white; background: transparent; font-weight: 700; }
+.alloc-drawer-scroll { flex: 1; overflow: auto; min-height: 0; }
+.alloc-drawer-panel header, .alloc-drawer-panel footer { padding: 12px; }
+.alloc-drawer-panel header { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; border-bottom: 1px solid var(--line); }
+.alloc-drawer-panel header h2 { margin: 0; font-size: 14px; }
+.alloc-drawer-panel header .view-toggle { margin-left: 0; }
+.alloc-drawer-panel footer { border-top: 1px solid var(--line); }
+body.has-alloc-drawer { padding-right: 36px; transition: padding-right .2s ease; }
+body.has-alloc-drawer.alloc-drawer-open { padding-right: clamp(300px, 34vw, 420px); }
+.alloc-subject-load { display: flex; flex-direction: column; }
+.alloc-subject-metrics { margin: 0; padding: 8px 12px 0; text-align: right; color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: .04em; }
+.alloc-subject-block { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 8px 12px; border-bottom: 1px solid var(--line); }
+.alloc-subject-name { margin: 0; text-align: left; }
+.alloc-subject-figures { margin: 0; align-self: flex-end; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .alloc-load-note { margin: 0; padding: 10px 12px 12px; font-size: 12px; }
 .alloc-load { padding: 12px; border-bottom: 1px solid var(--line); }
 .alloc-load p { margin: 0 0 6px; }
@@ -839,7 +860,9 @@ main.staff-list { max-width: 1480px; }
 .alloc-meter span { display: block; height: 100%; background: var(--ink); }
 .alloc-meter.mid span { background: var(--gold); }
 .alloc-meter.full span { background: var(--green); }
-.alloc-side footer { border-top: 1px solid var(--line); }
+.colour-field { display: flex; align-items: center; gap: 8px; }
+.colour-field input[type="color"] { width: 42px; height: 32px; padding: 2px; border: 1px solid var(--line); background: white; }
+.colour-field input[type="text"] { flex: 1; min-width: 0; }
 .alloc-sync { margin-top: 4px; color: var(--muted); font-size: 12px; text-align: right; }
 .alloc-map { display: grid; grid-template-columns: minmax(140px, 180px) minmax(0, 1fr); gap: 8px; align-items: center; margin-bottom: 10px; }
 .alloc-live { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--line); }
@@ -863,6 +886,9 @@ th .sort-button:hover, .alloc-head .sort-button:hover, .sort-button:hover { colo
 .table-header { margin: 0 0 12px; background: var(--surface); border: 1px solid var(--line); }
 .table-header-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px; }
 .table-header-bar h2 { margin: 0; font-size: 15px; }
+.table-header-toggle { display: inline-flex; align-items: center; gap: 8px; border: 0; padding: 0; background: transparent; color: inherit; font: inherit; font-weight: 700; cursor: pointer; text-align: left; }
+.table-header-mark { width: 1em; color: var(--ink); font-weight: 700; }
+.table-header-title { font-size: 15px; }
 .table-header-body { padding: 0 10px 8px; }
 .table-header-body[hidden] { display: none; }
 .table-header .alloc-filters, .table-header .alloc-batch { margin-bottom: 8px; }

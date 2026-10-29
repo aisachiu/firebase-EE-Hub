@@ -175,8 +175,8 @@ export interface DeskStudent {
   dynamicData: Record<string, string | number | boolean>;
   pendingClear: boolean;
   token: DeskToken | null;
-  /** Subject names to show as tags, in choice order. Colour comes from the subjects collection. */
-  requestedSubjects: { name: string; colour: string }[];
+  /** Subject names to show as tags, in choice order. Colour and short name come from the subjects collection. */
+  requestedSubjects: { name: string; colour: string; shortName?: string }[];
   /** Distinct tags parsed from a comma-separated support flag cell. */
   supportFlags: string[];
   choices: { primary: string; secondary: string; interdisciplinary: boolean };
@@ -211,6 +211,8 @@ export interface AllocationDesk {
   /** Ingested choice rows for every roster student, including students who are not active on the desk. */
   choiceRows: AllocationChoiceRow[];
   settings: AllocationSettings;
+  /** Registered subjects, used to keep comma-containing names whole and to show short names. */
+  subjects: { name: string; shortName: string; colour: string }[];
   summary: { staffCount: number; tokenCount: number; activeStudents: number; buffer: number };
   publish: { drafts: number; clears: number; blocked: number };
   warnings: string[];
@@ -610,6 +612,82 @@ export function subjectLoadNames(value: unknown): string[] {
   return names;
 }
 
+/**
+ * Names for the allocation drawer. A known token subject stays one entry even when it contains commas.
+ * Fragments that were split earlier are joined back when they spell a catalogue name. Unknown text is not split on commas.
+ */
+export function subjectNamesForLoad(value: unknown, catalogue: string[] = []): string[] {
+  const known = catalogue.map((name) => text(name)).filter(Boolean);
+  const items = subjectLoadItems(value);
+  if (items.length === 1) {
+    const raw = items[0];
+    const exact = known.find((name) => name.toLowerCase() === raw.toLowerCase());
+    if (exact) return [exact];
+    const segmented = segmentKnownSubjects(raw, known);
+    if (segmented) return segmented;
+    return [raw];
+  }
+  return coalesceKnownSubjects(items, known);
+}
+
+/** Join neighbouring fragments when, together, they are exactly a known token subject. */
+export function coalesceKnownSubjects(names: string[], catalogue: string[]): string[] {
+  const known = catalogue.map((name) => text(name)).filter(Boolean);
+  const byKey = new Map(known.map((name) => [name.toLowerCase(), name]));
+  const result: string[] = [];
+  const seen = new Set<string>();
+  const push = (name: string) => {
+    const canonical = byKey.get(name.toLowerCase()) || text(name);
+    const key = canonical.toLowerCase();
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    result.push(canonical);
+  };
+  let index = 0;
+  while (index < names.length) {
+    let matched = '';
+    let take = 1;
+    const longest = Math.min(names.length - index, 12);
+    for (let size = longest; size >= 1; size -= 1) {
+      const joined = names.slice(index, index + size).map((part) => text(part)).filter(Boolean).join(', ');
+      const hit = byKey.get(joined.toLowerCase());
+      if (hit) {
+        matched = hit;
+        take = size;
+        break;
+      }
+    }
+    if (matched) {
+      push(matched);
+      index += take;
+      continue;
+    }
+    push(names[index]);
+    index += 1;
+  }
+  return result;
+}
+
+function segmentKnownSubjects(raw: string, catalogue: string[]): string[] | null {
+  const known = catalogue.filter(Boolean).slice().sort((left, right) => right.length - left.length);
+  if (!known.length || !raw.includes(',')) return null;
+  const found: string[] = [];
+  let rest = raw.trim();
+  while (rest) {
+    const lower = rest.toLowerCase();
+    const hit = known.find((name) => {
+      const key = name.toLowerCase();
+      if (lower === key) return true;
+      if (!lower.startsWith(key)) return false;
+      return /^(\s*[,;|]\s*|$)/.test(rest.slice(name.length));
+    });
+    if (!hit) return null;
+    found.push(hit);
+    rest = rest.slice(hit.length).replace(/^\s*[,;|]\s*/, '').trim();
+  }
+  return found.length ? found : null;
+}
+
 function subjectLoadItems(value: unknown): string[] {
   if (Array.isArray(value)) return value.flatMap((item) => subjectLoadItems(item));
   if (value === null || value === undefined || value === '' || typeof value === 'boolean' || typeof value === 'number') return [];
@@ -743,6 +821,7 @@ export interface SubjectTokenLoad {
 export function subjectTokenLoad(
   tokens: { status: string; eligibleSubjects?: unknown; assignedSubject?: unknown }[],
   demand: SubjectLoadDemand[] = [],
+  catalogue: string[] = [],
 ): SubjectTokenLoad {
   let untied = 0;
   let overlaps = false;
@@ -756,7 +835,7 @@ export function subjectTokenLoad(
     return created;
   };
   tokens.forEach((token) => {
-    const subjects = subjectLoadNames(token.eligibleSubjects);
+    const subjects = subjectNamesForLoad(token.eligibleSubjects, catalogue);
     const open = token.status === 'available';
     if (!subjects.length) {
       if (open) untied += 1;
@@ -767,12 +846,12 @@ export function subjectTokenLoad(
       const current = bucket(subject);
       if (open) current.remaining += 1;
     });
-    const assigned = text(token.assignedSubject);
+    const assigned = subjectNamesForLoad(token.assignedSubject, catalogue)[0] || '';
     if (!open && assigned) bucket(assigned).alloc += 1;
   });
   demand.forEach((row) => {
     const seen = new Set<string>();
-    row.subjects.forEach((subject) => {
+    coalesceKnownSubjects(row.subjects, catalogue).forEach((subject) => {
       const name = text(subject);
       const key = name.toLowerCase();
       if (!name || seen.has(key)) return;
@@ -782,7 +861,7 @@ export function subjectTokenLoad(
       if (!row.allocated) current.upool += 1;
     });
     if (row.allocated && !tokens.some((token) => text(token.assignedSubject))) {
-      const assigned = text(row.assignedSubject);
+      const assigned = subjectNamesForLoad(row.assignedSubject, catalogue)[0] || '';
       if (assigned) bucket(assigned).alloc += 1;
     }
   });
@@ -1503,6 +1582,52 @@ export interface SubjectSwatch {
   name: string;
   id: string;
   colour: string;
+  shortName: string;
+}
+
+const SUBJECT_SHORT_FIELDS = ['Short Name', 'shortName', 'ShortName'];
+
+export function subjectShortLabel(subject: Doc): string {
+  for (const key of SUBJECT_SHORT_FIELDS) {
+    const value = text(subject[key]);
+    if (value) return value;
+  }
+  return '';
+}
+
+/** Distinct colours spaced evenly around the hue wheel. */
+export function spectrumColours(count: number): string[] {
+  const total = Math.max(0, Math.floor(count));
+  const colours: string[] = [];
+  for (let index = 0; index < total; index += 1) {
+    const hue = total <= 1 ? 204 : (index * 360) / total;
+    colours.push(hslToHex(hue, 0.68, 0.4));
+  }
+  return colours;
+}
+
+function hslToHex(hue: number, saturation: number, lightness: number): string {
+  const h = ((hue % 360) + 360) % 360;
+  const chroma = (1 - Math.abs((2 * lightness) - 1)) * saturation;
+  const x = chroma * (1 - Math.abs(((h / 60) % 2) - 1));
+  const match = lightness - (chroma / 2);
+  let red = 0;
+  let green = 0;
+  let blue = 0;
+  if (h < 60) { red = chroma; green = x; }
+  else if (h < 120) { red = x; green = chroma; }
+  else if (h < 180) { green = chroma; blue = x; }
+  else if (h < 240) { green = x; blue = chroma; }
+  else if (h < 300) { red = x; blue = chroma; }
+  else { red = chroma; blue = x; }
+  const channel = (value: number) => Math.round((value + match) * 255).toString(16).padStart(2, '0');
+  return `#${channel(red)}${channel(green)}${channel(blue)}`;
+}
+
+/** Active subjects for token pickers, with the short name coordinators saved. */
+export function tokenSubjectCatalogue(subjects: Doc[]): { name: string; shortName: string; colour: string }[] {
+  const active = subjects.filter((subject) => subject.Active === '' || subject.Active === undefined || toBoolean(subject.Active));
+  return subjectSwatches(active).map((row) => ({ name: row.name, shortName: row.shortName, colour: row.colour }));
 }
 
 /** Same hex rule as phase colours: a #rrggbb value, lowercased, or nothing. */
@@ -1518,6 +1643,7 @@ export function subjectSwatches(subjects: Doc[]): SubjectSwatch[] {
       name: text(subject.Name),
       id: text(subject['Subject ID']),
       colour: stored,
+      shortName: subjectShortLabel(subject),
       active: subject.Active === '' || subject.Active === undefined || toBoolean(subject.Active),
     };
   }).filter((row) => row.name);
@@ -1529,6 +1655,7 @@ export function subjectSwatches(subjects: Doc[]): SubjectSwatch[] {
     name: row.name,
     id: row.id,
     colour: row.colour || SUBJECT_COLOURS[index % SUBJECT_COLOURS.length],
+    shortName: row.shortName,
   }));
 }
 
@@ -1599,19 +1726,19 @@ export function resolveRequestedSubjects(
   choices: unknown,
   settings: { primaryChoiceKey?: string; secondaryChoiceKey?: string; interdisciplinaryKey?: string } | undefined,
   subjects: Doc[] | undefined,
-): { name: string; colour: string }[] {
+): { name: string; colour: string; shortName: string }[] {
   const swatches = subjectSwatches(subjects || []);
   const byName = new Map(swatches.map((item) => [item.name.toLowerCase(), item]));
   const byId = new Map(swatches.filter((item) => item.id).map((item) => [item.id.toLowerCase(), item]));
   const seen = new Set<string>();
-  const out: { name: string; colour: string }[] = [];
+  const out: { name: string; colour: string; shortName: string }[] = [];
   requestedSubjectNames(choices, settings).forEach((label) => {
     const known = byName.get(label.toLowerCase()) || byId.get(label.toLowerCase());
     const name = known ? known.name : label;
     const key = name.toLowerCase();
     if (seen.has(key)) return;
     seen.add(key);
-    out.push({ name, colour: known ? known.colour : fallbackSubjectColour(name) });
+    out.push({ name, colour: known ? known.colour : fallbackSubjectColour(name), shortName: known ? known.shortName : '' });
   });
   return out;
 }
@@ -1725,6 +1852,8 @@ export function buildDesk(input: {
   /** Raw workspace choice values, before nested objects are flattened to text. */
   choiceSources?: Map<string, unknown>;
 }): AllocationDesk {
+  const subjectRows = subjectSwatches(input.subjects || []).map((row) => ({ name: row.name, shortName: row.shortName, colour: row.colour }));
+  const catalogue = subjectRows.map((row) => row.name);
   const names = new Map(input.staff.map((person) => [normalizeEmail(person.email), person.displayName || person.email]));
   const studentNames = new Map(input.members.map((member) => [normalizeEmail(member.StudentId), studentLabel(member)]));
   const workspaceByStudent = new Map(input.workspaces.map((workspace) => [workspace.studentId, workspace]));
@@ -1755,8 +1884,8 @@ export function buildDesk(input: {
         secondary: choiceText(workspace?.subjectChoices, input.settings.secondaryChoiceKey),
         interdisciplinary: interdisciplinaryMarked(choiceSource, input.settings, { ...(workspace?.dynamicData || {}), ...member }),
       };
-      const assignedSubject = token?.assignedSubject || '';
-      const eligible = token?.eligibleSubjects || [];
+      const assignedSubject = subjectNamesForLoad(token?.assignedSubject || '', catalogue)[0] || '';
+      const eligible = subjectNamesForLoad(token?.eligibleSubjects || [], catalogue);
       const allocated = !!token;
       const hlValue = input.settings.hlColumn ? workspace?.dynamicData[input.settings.hlColumn] : undefined;
       const supportValue = input.settings.supportColumn ? workspace?.dynamicData[input.settings.supportColumn] : undefined;
@@ -1776,8 +1905,8 @@ export function buildDesk(input: {
           id: token.id,
           staffId: token.staffId,
           staffName: names.get(token.staffId) || token.staffId,
-          eligibleSubjects: token.eligibleSubjects.slice(),
-          assignedSubject: token.assignedSubject,
+          eligibleSubjects: eligible.slice(),
+          assignedSubject,
           interdisciplinary: token.interdisciplinary === true,
           status: token.status as 'draft' | 'committed',
         } : null,
@@ -1804,7 +1933,7 @@ export function buildDesk(input: {
     groups.set(token.staffId, list);
   });
   const supervisors = [...groups.entries()].map(([staffId, tokens]) => {
-    const subjects = [...new Set(tokens.flatMap((token) => token.eligibleSubjects))].sort();
+    const subjects = coalesceKnownSubjects(tokens.flatMap((token) => token.eligibleSubjects), catalogue).sort((left, right) => left.localeCompare(right, 'en', { sensitivity: 'base' }));
     const draft = tokens.filter((token) => token.status === 'draft').length;
     const committed = tokens.filter((token) => token.status === 'committed').length;
     const available = tokens.filter((token) => token.status === 'available').length;
@@ -1827,21 +1956,22 @@ export function buildDesk(input: {
     supervisors,
     tokenSlots: input.tokens.map((token) => ({
       status: token.status,
-      eligibleSubjects: token.eligibleSubjects.slice(),
+      eligibleSubjects: subjectNamesForLoad(token.eligibleSubjects, catalogue),
     })),
     tokenRows: input.tokens.map((token) => ({
       id: token.id,
       status: token.status,
-      eligibleSubjects: token.eligibleSubjects.slice(),
+      eligibleSubjects: subjectNamesForLoad(token.eligibleSubjects, catalogue),
       staffId: token.staffId,
       staffName: names.get(token.staffId) || token.staffId,
       studentId: token.allocatedTo,
       studentName: token.allocatedTo ? (studentNames.get(token.allocatedTo) || token.allocatedTo) : '',
-      assignedSubject: token.assignedSubject,
+      assignedSubject: subjectNamesForLoad(token.assignedSubject, catalogue)[0] || '',
       interdisciplinary: token.interdisciplinary === true,
     })),
     choiceRows: choiceRowsFrom(input.members, input.workspaces),
     settings: input.settings,
+    subjects: subjectRows,
     summary: {
       staffCount: supervisors.length,
       tokenCount: input.tokens.length,

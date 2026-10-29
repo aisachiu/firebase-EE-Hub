@@ -21,7 +21,7 @@ import {
   saveStaffSubjects,
   updateCohortToken,
 } from './allocation';
-import { getAdminRecords, saveAdminRecord } from './admin';
+import { autoApplySubjectColours, getAdminRecords, saveAdminRecord } from './admin';
 import { getStaffHome, getStudentHome } from './journey';
 import { COLLECTIONS } from './schema';
 import { getLiveSheetHeaders, listLiveSheetTabs, resyncLiveChoiceData, saveLiveSheetLink } from './liveSheet';
@@ -538,4 +538,22 @@ test('a live sheet link merges choice rows onto static auxiliary data', async ()
   const unlinked = appFor();
   await seed(unlinked);
   await assert.rejects(resyncLiveChoiceData(unlinked, '2026', { workbook: sheets }), /Link a live Google Sheet/);
+});
+
+test('auto apply colours writes a distinct hex onto every subject', async () => {
+  const app = appFor();
+  await seed(app);
+  await saveAdminRecord(app, 'subjects', { 'Subject ID': 'sehs', Name: 'Sports, Exercise, and Health Science', 'Short Name': 'SEHS', Active: true }, '');
+  await saveAdminRecord(app, 'subjects', { 'Subject ID': 'bio', Name: 'Biology', Active: true }, '');
+  const applied = await autoApplySubjectColours(app);
+  assert.equal(applied.updated, 2);
+  const sehs = await app.store.get(COLLECTIONS.subjects, 'sehs');
+  const bio = await app.store.get(COLLECTIONS.subjects, 'bio');
+  assert.match(String(sehs?.Colour), /^#[0-9a-f]{6}$/);
+  assert.match(String(bio?.Colour), /^#[0-9a-f]{6}$/);
+  assert.notEqual(sehs?.Colour, bio?.Colour);
+  assert.equal(sehs?.['Short Name'], 'SEHS');
+  const denied = appFor(SMITH);
+  await seed(denied);
+  await assert.rejects(autoApplySubjectColours(denied), /Access denied/);
 });
