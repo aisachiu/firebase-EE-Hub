@@ -21,6 +21,7 @@ import {
   saveStaffSubjects,
   updateCohortToken,
 } from './allocation';
+import { spectrumColours } from './allocationPure';
 import { autoApplySubjectColours, getAdminRecords, saveAdminRecord } from './admin';
 import { getStaffHome, getStudentHome } from './journey';
 import { COLLECTIONS } from './schema';
@@ -562,11 +563,15 @@ test('auto apply colours writes a distinct hex onto every subject', async () => 
   await saveAdminRecord(app, 'subjects', { 'Subject ID': 'bio', Name: 'Biology', Active: true }, '');
   const applied = await autoApplySubjectColours(app);
   assert.equal(applied.updated, 2);
+  const colours = spectrumColours(2);
   const sehs = await app.store.get(COLLECTIONS.subjects, 'sehs');
   const bio = await app.store.get(COLLECTIONS.subjects, 'bio');
-  assert.match(String(sehs?.Colour), /^#[0-9a-f]{6}$/);
-  assert.match(String(bio?.Colour), /^#[0-9a-f]{6}$/);
-  assert.notEqual(sehs?.Colour, bio?.Colour);
+  assert.equal(bio?.Colour, colours[0]);
+  assert.equal(sehs?.Colour, colours[1]);
+  const visual = await autoApplySubjectColours(app, ['sehs', 'bio']);
+  assert.equal(visual.updated, 2);
+  assert.equal((await app.store.get(COLLECTIONS.subjects, 'sehs'))?.Colour, colours[0]);
+  assert.equal((await app.store.get(COLLECTIONS.subjects, 'bio'))?.Colour, colours[1]);
   assert.equal(sehs?.['Short Name'], 'SEHS');
   const denied = appFor(SMITH);
   await seed(denied);

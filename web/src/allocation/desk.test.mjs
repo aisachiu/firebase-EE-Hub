@@ -141,7 +141,8 @@ test('allocation desk tags, filter, column order, supervisor cues, and token loa
     assert.doesNotMatch(html, /Resync Live Choice Data/);
     assert.match(html, /class="alloc-drawer"/);
     assert.match(html, /id="alloc-drawer-peek"/);
-    assert.match(html, /Token load/);
+    assert.match(html, />Token Overview</);
+    assert.doesNotMatch(html, />Token load</);
     assert.doesNotMatch(html, /class="alloc-side"/);
 
     const sehs = 'Sports, Exercise, and Health Science (SEHS)';
@@ -152,6 +153,19 @@ test('allocation desk tags, filter, column order, supervisor cues, and token loa
     assert.equal((sehsTable.match(/alloc-subject-block/g) || []).length, 1);
     assert.doesNotMatch(sehsTable, />Sports</);
     assert.doesNotMatch(sehsTable, /<table/);
+    assert.match(table, /class="alloc-meter/);
+    const warned = deskMod.subjectTokenLoadMarkup({
+      subjects: [
+        { subject: 'Biology', pool: 4, upool: 1, alloc: 2, remaining: 2 },
+        { subject: 'Chemistry', pool: 1, upool: 5, alloc: 0, remaining: 2 },
+        { subject: 'Drama', pool: 2, upool: 2, alloc: 1, remaining: 2 },
+      ],
+    });
+    assert.match(warned, /class="alloc-capacity-warn">4</);
+    assert.match(warned, /class="alloc-capacity-warn">5</);
+    assert.equal((warned.match(/alloc-capacity-warn/g) || []).length, 2);
+    const biology = warned.slice(warned.indexOf('Biology'), warned.indexOf('Chemistry'));
+    assert.match(biology, /role="progressbar"[^>]*aria-valuenow="2"[^>]*aria-valuemax="4"/);
 
     state.allocationOpenStudent = 'jane@school.edu';
     state.allocationDesk = desk();
@@ -198,6 +212,29 @@ test('allocation desk tags, filter, column order, supervisor cues, and token loa
     assert.doesNotMatch(settings.slice(settings.indexOf('Research notes'), settings.indexOf('Research notes') + 80), /live-badge/);
     assert.match(settings, /must be exactly Yes or No/);
     assert.match(settings, /Doe, Jane/);
+    assert.match(settings, /data-alloc-data-edit="jane@school.edu"/);
+    assert.match(settings, /class="actions"/);
+    const editor = deskMod.allocationStudentEditorMarkup({
+      studentId: 'jane@school.edu',
+      displayName: 'Doe, Jane',
+      subjectChoices: { choice1: 'History', interdisciplinary: 'Yes' },
+      dynamicData: { 'Y10 GPA': 'Strong', 'Mentor note': 'Bring sources' },
+    }, {
+      detectedChoiceKeys: ['choice1', 'interdisciplinary'],
+      detectedDynamicKeys: ['Y10 GPA', 'Mentor note'],
+      interdisciplinaryKey: 'interdisciplinary',
+      columns: [
+        { key: 'Y10 GPA', source: 'static' },
+        { key: 'Mentor note', source: 'live' },
+      ],
+    });
+    assert.match(editor, /id="alloc-student-editor-title">Edit Doe, Jane</);
+    assert.match(editor, /value="History"/);
+    assert.match(editor, /Y10 GPA/);
+    assert.match(editor, /Mentor note/);
+    assert.match(editor, /class="live-badge">LIVE</);
+    assert.equal((editor.match(/data-alloc-modal-field/g) || []).length, 4);
+    assert.match(editor, /data-key="interdisciplinary"[^>]*>[\s\S]*<option value="Yes" selected>/);
     assert.doesNotMatch(settings, /id="alloc-cohort"/);
     ['alloc-sync', 'alloc-cohortdata', 'alloc-choice-map', 'alloc-fields', 'alloc-data'].forEach(function(id) {
       assert.match(settings, new RegExp('data-toggle-header="' + id + '" aria-expanded="false"'));
@@ -307,6 +344,29 @@ test('allocation desk tags, filter, column order, supervisor cues, and token loa
     const flaggedRow = deskMod.allocationRowMarkup(flagged, supervisors(), [], {});
     assert.match(flaggedRow, /class="support-tag">EAL</);
     assert.match(flaggedRow, /class="support-tag">SEN</);
+    assert.doesNotMatch(flaggedRow, /support-badge/);
+    const needsSupport = student({
+      supportFlags: ['Needs support', 'Needs support'],
+      flags: { needsSupport: true, drafted: false, committed: false, subjectMatch: 'none', hlMatch: 'none' },
+    });
+    const once = deskMod.allocationRowMarkup(needsSupport, supervisors(), [], {});
+    assert.equal((once.match(/class="support-tag"/g) || []).length, 1);
+    assert.match(once, /class="support-tag">Needs support</);
+    assert.doesNotMatch(once, /support-badge/);
+    state.allocationAssignedOpen = { biology: true };
+    const assigned = deskMod.allocationAssignedMarkup({
+      subjects: [{ name: 'Biology', shortName: 'Bio' }],
+      tokenRows: [
+        { status: 'available', eligibleSubjects: ['Biology'], staffId: 'ann@school.edu', staffName: 'Ann', studentId: '', studentName: '' },
+        { status: 'draft', eligibleSubjects: ['Biology'], staffId: 'ben@school.edu', staffName: 'Ben', studentId: 'jane@school.edu', studentName: 'Doe, Jane', assignedSubject: 'Biology' },
+      ],
+    });
+    assert.match(assigned, /class="alloc-token-open"/);
+    assert.match(assigned, /class="alloc-token-taken"/);
+    assert.match(assigned, /Ann/);
+    assert.match(assigned, /Doe, Jane/);
+    assert.match(assigned, /role="progressbar"[^>]*aria-valuenow="1"[^>]*aria-valuemax="2"/);
+    state.allocationAssignedOpen = {};
     state.allocationSupportFlags = ['EAL'];
     state.allocationSubjectFilter = [];
     const flagSource = desk();

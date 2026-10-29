@@ -1,4 +1,4 @@
-import { activeSubjectNamesFrom, canonicalSubjectAssignment, parseSubjectCell, spectrumColours } from './allocationPure';
+import { activeSubjectNamesFrom, canonicalSubjectAssignment, orderSubjectsForColours, parseSubjectCell, spectrumColours } from './allocationPure';
 import { validatePhasePrerequisites } from './phaseRules';
 import { setCohortMilestoneAnchor } from './cohortPathway';
 import { AnchorMode, reanchorMilestones } from './pathwayPlan';
@@ -38,21 +38,19 @@ async function phases(app: App) {
   return app.store.list(COLLECTIONS.phases);
 }
 
-export async function autoApplySubjectColours(app: App) {
+export async function autoApplySubjectColours(app: App, visualOrder?: unknown) {
   const user = await requireAdmin(app, 'AUTO_APPLY_SUBJECT_COLOURS');
   return audited(app, user, 'AUTO_APPLY_SUBJECT_COLOURS', {}, async () => {
-    const records = (await app.store.list(COLLECTIONS.subjects))
-      .filter((record) => text(record.Name))
-      .sort((left, right) => text(left.Name).localeCompare(text(right.Name), 'en', { sensitivity: 'base' }));
-    const colours = spectrumColours(records.length);
-    for (let index = 0; index < records.length; index += 1) {
-      const record = records[index];
+    const ordered = orderSubjectsForColours(await app.store.list(COLLECTIONS.subjects), visualOrder);
+    const colours = spectrumColours(ordered.length);
+    for (let index = 0; index < ordered.length; index += 1) {
+      const record = ordered[index];
       const id = text(record['Subject ID']);
       if (!id) continue;
       record.Colour = colours[index];
       await app.store.set(COLLECTIONS.subjects, id, record);
     }
-    return { updated: records.length };
+    return { updated: ordered.length };
   });
 }
 

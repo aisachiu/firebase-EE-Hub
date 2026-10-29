@@ -45,6 +45,7 @@ import {
   supportFlagTags,
   strictInterdisciplinaryValue,
   quotaCapacity,
+  orderSubjectsForColours,
   spectrumColours,
   subjectNamesForLoad,
   subjectTokenLoad,
@@ -554,6 +555,14 @@ test('a subject name that contains commas stays one requested subject and one to
   assert.deepEqual(rejoined.subjects.map((item) => item.subject), [plain]);
   assert.equal(rejoined.subjects[0].remaining, 1);
   assert.equal(rejoined.subjects[0].pool, 1);
+  const colourOrder = orderSubjectsForColours([
+    { 'Subject ID': 'art', Name: 'Art', Department: 'Arts' },
+    { 'Subject ID': 'bio', Name: 'Biology', Department: 'Science' },
+    { 'Subject ID': 'chem', Name: 'Chemistry', Department: 'Science' },
+    { 'Subject ID': 'blank', Name: '' },
+  ], ['chem', 'bio', 'missing', 'chem']);
+  assert.deepEqual(colourOrder.map((row) => row['Subject ID']), ['chem', 'bio', 'art']);
+  assert.deepEqual(orderSubjectsForColours(colourOrder, []).map((row) => row.Name), ['Art', 'Biology', 'Chemistry']);
   const colours = spectrumColours(6);
   assert.equal(colours.length, 6);
   assert.equal(new Set(colours).size, 6);

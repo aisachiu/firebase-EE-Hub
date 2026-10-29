@@ -27,7 +27,7 @@ import {
 } from '../shared/tables.js';
 
 export function listingDialogKind(kind) {
-  return kind === 'admin-record' || kind === 'notice-rule' || kind === 'cohort-token' || kind === 'assignment-anchor' || kind === 'pathway-anchor';
+  return kind === 'admin-record' || kind === 'notice-rule' || kind === 'cohort-token' || kind === 'assignment-anchor' || kind === 'pathway-anchor' || kind === 'allocation-data';
 }
 
 export function adminDialogKind() {
@@ -154,8 +154,12 @@ export function renderAdminData(data, options) {
   const autoColours = document.getElementById('auto-subject-colours');
   if (autoColours) autoColours.addEventListener('click', function() {
     if (!window.confirm('Replace the colour on every subject with colours spaced evenly across the spectrum?')) return;
+    const order = sorted.map(function(item) {
+      const id = item.record && item.record['Subject ID'];
+      return id ? String(id) : '';
+    }).filter(Boolean);
     autoColours.disabled = true;
-    runMutation('autoApplySubjectColours', [], { key: 'subjects:colours' }).then(function(result) {
+    runMutation('autoApplySubjectColours', [order], { key: 'subjects:colours' }).then(function(result) {
       state.status = 'Applied colours to ' + (result && result.updated ? result.updated : 0) + ' subjects.';
       refreshAdminSectionSilently();
     }).catch(function(error) {
