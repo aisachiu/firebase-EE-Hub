@@ -38,6 +38,8 @@ export interface ColumnFlag {
   colorScale: boolean;
   /** Render this field in the desk's expanded student row, for long notes. */
   expanded: boolean;
+  /** `live` columns come from the linked Google Sheet. COHORTDATA columns are `static`. */
+  source?: 'live' | 'static';
 }
 
 export interface LiveColumnMappings {
@@ -59,7 +61,7 @@ export const ALLOCATION_LIVE_SHEET_KEYS = [
 export const LIVE_SHEET_GROUPS = [
   { id: 'core', title: 'Core Data Fields', note: 'Map Student Number or Student Email. Live rows merge onto the roster with that primary key.' },
   { id: 'subjectChoice', title: 'Subject Choice Mapping', note: 'The live sheet is the source of truth for these choices. Other choice keys from a static import stay in place.' },
-  { id: 'dashboard', title: 'Dashboard Fields', note: 'These columns update on the allocation desk. Other imported columns stay as auxiliary data.' },
+  { id: 'dashboard', title: 'Dashboard Fields', note: 'HL match and the support flag are optional. Every other column on this sheet is ingested as a live dashboard field. Toggle those columns under Dashboard Fields.' },
 ] as const;
 
 export const LIVE_SHEET_FIELDS = [
@@ -977,6 +979,7 @@ export function settingsForLiveLink(
   spreadsheetId: string,
   sheetName: string,
   mappings: LiveColumnMappings,
+  headers: string[] = [],
 ): AllocationSettings {
   const next: AllocationSettings = {
     ...current,
@@ -995,16 +998,76 @@ export function settingsForLiveLink(
   if (text(next.columnMappings.subjectChoice.primary)) choiceKeys.add(next.primaryChoiceKey || 'choice1');
   if (text(next.columnMappings.subjectChoice.secondary)) choiceKeys.add(next.secondaryChoiceKey || 'choice2');
   if (text(next.columnMappings.subjectChoice.interdisciplinary)) choiceKeys.add(next.interdisciplinaryKey || 'interdisciplinary');
-  const dynamicKeys = new Set(next.detectedDynamicKeys);
-  if (text(next.columnMappings.dashboard.hl) && next.hlColumn) dynamicKeys.add(next.hlColumn);
-  if (text(next.columnMappings.dashboard.support) && next.supportColumn) dynamicKeys.add(next.supportColumn);
-  return mergeDetected(next, [...choiceKeys].sort(), [...dynamicKeys].sort());
+  next.detectedChoiceKeys = [...choiceKeys].sort();
+  return ingestLiveHeaders(next, headers);
+}
+
+/** Headers used as the merge key or as subject choices. They are not dashboard columns. */
+export function reservedLiveHeaders(mappings: LiveColumnMappings): Set<string> {
+  return new Set([
+    mappings.core.studentNumber,
+    mappings.core.studentEmail,
+    mappings.subjectChoice.primary,
+    mappings.subjectChoice.secondary,
+    mappings.subjectChoice.interdisciplinary,
+  ].map((header) => text(header)).filter(Boolean));
+}
+
+/** Every live-sheet header that should be stored as a dashboard field. No predefined allow-list. */
+export function liveDashboardHeaders(headers: string[], mappings: LiveColumnMappings): string[] {
+  const reserved = reservedLiveHeaders(mappings);
+  const seen = new Set<string>();
+  const keys: string[] = [];
+  headers.forEach((header) => {
+    const name = text(header);
+    if (!name || reserved.has(name) || seen.has(name)) return;
+    seen.add(name);
+    keys.push(name);
+  });
+  return keys;
+}
+
+/** Register every non-reserved live header as a dashboard field and tag it `source: 'live'`. */
+export function ingestLiveHeaders(settings: AllocationSettings, headers: string[]): AllocationSettings {
+  const liveKeys = liveDashboardHeaders(headers, settings.columnMappings);
+  const dynamicKeys = new Set(settings.detectedDynamicKeys);
+  liveKeys.forEach((key) => dynamicKeys.add(key));
+  explicitLiveDashboardKeys(settings).forEach((key) => dynamicKeys.add(key));
+  const merged = mergeDetected(settings, settings.detectedChoiceKeys, [...dynamicKeys].sort());
+  return tagLiveColumnSources(merged, liveKeys);
+}
+
+function explicitLiveDashboardKeys(settings: AllocationSettings): string[] {
+  const keys: string[] = [];
+  const mappings = settings.columnMappings;
+  if (text(mappings.dashboard.hl)) keys.push(settings.hlColumn || mappings.dashboard.hl);
+  if (text(mappings.dashboard.support)) keys.push(settings.supportColumn || mappings.dashboard.support);
+  return keys.map((key) => text(key)).filter(Boolean);
+}
+
+function tagLiveColumnSources(settings: AllocationSettings, headerKeys: string[]): AllocationSettings {
+  const live = new Set<string>();
+  settings.columns.forEach((column) => {
+    if (column.source === 'live' && column.key) live.add(column.key);
+  });
+  headerKeys.forEach((key) => {
+    const name = text(key);
+    if (name) live.add(name);
+  });
+  explicitLiveDashboardKeys(settings).forEach((key) => live.add(key));
+  return {
+    ...settings,
+    columns: settings.columns.map((column) => ({
+      ...column,
+      source: live.has(column.key) ? 'live' as const : 'static' as const,
+    })),
+  };
 }
 
 export function mergeDetected(settings: AllocationSettings, choiceKeys: string[], dynamicKeys: string[]): AllocationSettings {
   const columns = dynamicKeys.map((key) => {
     const prior = settings.columns.find((column) => column.key === key);
-    if (prior) return { ...prior, colorScale: prior.colorScale === true, expanded: prior.expanded === true };
+    if (prior) return { ...prior, colorScale: prior.colorScale === true, expanded: prior.expanded === true, source: prior.source === 'live' ? 'live' as const : 'static' as const };
     return {
       key,
       showOnCard: true,
@@ -1012,6 +1075,7 @@ export function mergeDetected(settings: AllocationSettings, choiceKeys: string[]
       sortable: true,
       colorScale: false,
       expanded: false,
+      source: 'static' as const,
     };
   });
   const next: AllocationSettings = {
@@ -1035,6 +1099,8 @@ export interface LiveParsedRow {
   interdisciplinary: string | number | boolean | '';
   hl: string | number | boolean | '';
   support: string | number | boolean | '';
+  /** Header-keyed values for every live column that is not a merge key or subject choice. */
+  fields: Record<string, string | number | boolean | ''>;
 }
 
 export interface LiveRosterEntry {
@@ -1054,6 +1120,7 @@ export function gridHeaderNames(grid: Grid): string[] {
 
 export function parseLiveSheet(grid: Grid, mappings: LiveColumnMappings): { rows: LiveParsedRow[]; warnings: string[] } {
   const headers = headerRow(grid);
+  const dashboardKeys = liveDashboardHeaders(headers, mappings);
   const columns = {
     studentNumber: mappedColumn(headers, mappings.core.studentNumber),
     studentEmail: mappedColumn(headers, mappings.core.studentEmail),
@@ -1076,6 +1143,7 @@ export function parseLiveSheet(grid: Grid, mappings: LiveColumnMappings): { rows
       interdisciplinary: cellAt(row, columns.interdisciplinary),
       hl: cellAt(row, columns.hl),
       support: cellAt(row, columns.support),
+      fields: dashboardFields(row, headers, dashboardKeys),
     });
   });
   return { rows, warnings };
@@ -1133,6 +1201,7 @@ export function mergeLiveChoiceRow(
   if (text(mappings.subjectChoice.primary)) assignLiveValue(subjectChoices, settings.primaryChoiceKey || 'choice1', row.primary);
   if (text(mappings.subjectChoice.secondary)) assignLiveValue(subjectChoices, settings.secondaryChoiceKey || 'choice2', row.secondary);
   if (text(mappings.subjectChoice.interdisciplinary)) assignLiveValue(subjectChoices, settings.interdisciplinaryKey || 'interdisciplinary', row.interdisciplinary);
+  Object.keys(row.fields || {}).forEach((key) => assignLiveValue(dynamicData, key, row.fields[key]));
   if (text(mappings.dashboard.hl)) assignLiveValue(dynamicData, settings.hlColumn || mappings.dashboard.hl, row.hl);
   if (text(mappings.dashboard.support)) assignLiveValue(dynamicData, settings.supportColumn || mappings.dashboard.support, row.support);
   return {
@@ -1218,11 +1287,9 @@ function liveOwnedChoiceKeys(settings: AllocationSettings): string[] {
 }
 
 function liveOwnedDynamicKeys(settings: AllocationSettings): string[] {
-  const keys: string[] = [];
-  const mappings = settings.columnMappings;
-  if (text(mappings.dashboard.hl)) keys.push(settings.hlColumn || mappings.dashboard.hl);
-  if (text(mappings.dashboard.support)) keys.push(settings.supportColumn || mappings.dashboard.support);
-  return keys;
+  const keys = settings.columns.filter((column) => column.source === 'live').map((column) => column.key);
+  explicitLiveDashboardKeys(settings).forEach((key) => keys.push(key));
+  return [...new Set(keys.map((key) => text(key)).filter(Boolean))];
 }
 
 function mappedColumn(headers: string[], name: string): number {
@@ -1404,8 +1471,11 @@ export function applySavedConfig(current: AllocationSettings, incoming: Doc): Al
   const dynamicKeys = new Set(current.detectedDynamicKeys);
   const columns = Array.isArray(incoming.columns) ? incoming.columns : [];
   const nextColumns = current.detectedDynamicKeys.length
-    ? current.detectedDynamicKeys.map((key) => flagFrom(key, columns.find((column) => text(column?.key) === key) || current.columns.find((column) => column.key === key)))
-    : columns.map((column) => flagFrom(text(column?.key), column)).filter((column) => column.key);
+    ? current.detectedDynamicKeys.map((key) => {
+      const prior = current.columns.find((column) => column.key === key);
+      return flagFrom(key, columns.find((column) => text(column?.key) === key) || prior, prior);
+    })
+    : columns.map((column) => flagFrom(text(column?.key), column, current.columns.find((item) => item.key === text(column?.key)))).filter((column) => column.key);
   return {
     ...current,
     primaryChoiceKey: allowedKey(incoming.primaryChoiceKey, choiceKeys),
@@ -1939,7 +2009,11 @@ function columnFlags(value: unknown, keys: string[]): ColumnFlag[] {
   return keys.map((key) => flagFrom(key, rows.find((row) => text(row?.key) === key)));
 }
 
-function flagFrom(key: string, row: Doc | undefined): ColumnFlag {
+function flagFrom(key: string, row: Doc | undefined, prior?: ColumnFlag): ColumnFlag {
+  const raw = text(row?.source);
+  const source: 'live' | 'static' = raw === 'live' || raw === 'static'
+    ? raw
+    : (prior?.source === 'live' ? 'live' : 'static');
   return {
     key,
     showOnCard: row ? row.showOnCard === true : false,
@@ -1947,7 +2021,19 @@ function flagFrom(key: string, row: Doc | undefined): ColumnFlag {
     sortable: row ? row.sortable === true : false,
     colorScale: row ? row.colorScale === true : false,
     expanded: row ? row.expanded === true : false,
+    source,
   };
+}
+
+function dashboardFields(row: unknown[], headers: string[], keys: string[]): Record<string, string | number | boolean | ''> {
+  const fields: Record<string, string | number | boolean | ''> = {};
+  if (!Array.isArray(row)) return fields;
+  keys.forEach((key) => {
+    const index = headers.findIndex((header) => header === key);
+    if (index < 0) return;
+    fields[key] = plainCell(row[index]);
+  });
+  return fields;
 }
 
 function allowedKey(value: unknown, allowed: Set<string>): string {

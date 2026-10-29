@@ -686,10 +686,11 @@ export function allocationSettingsMarkup(desk) {
         <div class="alloc-map"><label for="alloc-hl">HL match column</label><select id="alloc-hl">${allocationKeyOptions(columns, settings.hlColumn, true)}</select></div>
         <div class="alloc-map"><label for="alloc-flag">Support flag column</label><select id="alloc-flag">${allocationKeyOptions(columns, settings.supportColumn, true)}</select></div>
         <div class="toolbar"><button type="button" class="button" id="alloc-save-config">Save configuration</button></div>`, collapsed)}
-      ${collapsibleHeader('alloc-fields', 'Dashboard Fields', `<p class="muted">These columns were detected in the latest COHORTDATA import. New columns start visible and sortable. Color scale stays off until you turn it on. It paints numbers, and words such as Weak or Strong, from light blue to deep blue across the students in the current view. It does not use red and green. Uncheck Sortable to leave a column on the desk without a sort button. Check Expanded to show a long note in the row that opens from the student name.</p>
+      ${collapsibleHeader('alloc-fields', 'Dashboard Fields', `<p class="muted">These columns were detected in the latest COHORTDATA import and on the linked live sheet. Columns that stay in sync with the live sheet are marked LIVE. New columns start visible and sortable. Color scale stays off until you turn it on. It paints numbers, and words such as Weak or Strong, from light blue to deep blue across the students in the current view. It does not use red and green. Uncheck Sortable to leave a column on the desk without a sort button. Check Expanded to show a long note in the row that opens from the student name.</p>
         ${columns.length ? `<div class="table-wrap"><table><thead><tr>${sortableHeader('alloc-columns', 'column', 'Imported column')}${flagLabels.map(function(flag) { return `<th>${escapeHtml(flag[1])}</th>`; }).join('')}</tr></thead><tbody>${sortedRows('alloc-columns', columns, function(key) { return key; }).map(function(key) {
           const column = flags[key] || {};
-          return `<tr><td><code>${escapeHtml(key)}</code></td>${flagLabels.map(function(flag) {
+          const liveBadge = column.source === 'live' ? ' <span class="live-badge">LIVE</span>' : '';
+          return `<tr><td><code>${escapeHtml(key)}</code>${liveBadge}</td>${flagLabels.map(function(flag) {
             return `<td><input type="checkbox" data-alloc-col="${escapeHtml(key)}" data-flag="${flag[0]}" ${column[flag[0]] ? 'checked' : ''} aria-label="${escapeHtml(flag[1] + ' ' + key)}"></td>`;
           }).join('')}</tr>`;
         }).join('')}</tbody></table></div>` : '<div class="empty">Ingest student data to detect columns.</div>'}
@@ -1240,6 +1241,19 @@ function paintAllocationExport(exported, message) {
   showSuccess(message);
 }
 
+function allocationColumnDraft(key) {
+  const prior = ((state.allocationDesk && state.allocationDesk.settings && state.allocationDesk.settings.columns) || []).find(function(column) { return column.key === key; });
+  return {
+    key: key,
+    showOnCard: false,
+    filterable: false,
+    sortable: false,
+    colorScale: false,
+    expanded: false,
+    source: prior && prior.source === 'live' ? 'live' : 'static',
+  };
+}
+
 export function captureAllocationColumns() {
   const boxes = document.querySelectorAll('[data-alloc-col]');
   if (!boxes.length || !state.allocationDesk || !state.allocationDesk.settings) return;
@@ -1247,7 +1261,7 @@ export function captureAllocationColumns() {
   boxes.forEach(function(box) {
     const key = box.getAttribute('data-alloc-col');
     const flag = box.getAttribute('data-flag');
-    if (!columns[key]) columns[key] = { key: key, showOnCard: false, filterable: false, sortable: false, colorScale: false, expanded: false };
+    if (!columns[key]) columns[key] = allocationColumnDraft(key);
     columns[key][flag] = box.checked;
   });
   state.allocationDesk.settings.columns = Object.keys(columns).map(function(key) { return columns[key]; });
@@ -1279,7 +1293,7 @@ export function allocationLiveSheetMarkup(desk) {
   }).join('')}<p class="notice" id="alloc-live-problems"${problems.length ? '' : ' hidden'}>${escapeHtml(problems.join(' '))}</p><div class="toolbar"><button type="button" class="button" id="alloc-live-save" ${saveBlocked ? 'disabled' : ''}>Save live link</button></div></div>` : `<p class="muted" id="alloc-live-problems">${tabs.length ? 'Choose a sheet tab to map its columns.' : (linked ? 'Load the workbook to change the linked tab or columns.' : 'Load the workbook to choose a tab.')}</p>`;
   return `<div class="alloc-live">
       <h3>Live choice sheet</h3>
-      <p class="muted">Link a Google Sheet that stays the source of truth for subject choices. Static ingest still fills auxiliary columns. Student Number or Student Email is the merge key, and Primary choice has to be mapped before the link can be saved.</p>
+      <p class="muted">Link a Google Sheet that stays the source of truth for subject choices. Every other column on that sheet is ingested as a live dashboard field. Static ingest still fills auxiliary columns and leaves live columns in place. Student Number or Student Email is the merge key, and Primary choice has to be mapped before the link can be saved.</p>
       ${linked ? `<p class="muted">Linked spreadsheet <code>${escapeHtml(settings.spreadsheetId || '')}</code>${tab ? ` · tab <strong>${escapeHtml(settings.sheetName || settings.liveSheetTab || tab)}</strong>` : ''}${settings.lastLiveSync ? ` · last sync ${escapeHtml(allocationWhen(settings.lastLiveSync))}` : ''}.</p>` : ''}
       <label class="field" for="alloc-live-url">Live Google Sheet URL</label>
       <input id="alloc-live-url" value="${escapeHtml(url)}" placeholder="https://docs.google.com/spreadsheets/d/..." ${driveBlocked ? 'disabled' : ''}>
@@ -1533,7 +1547,7 @@ export function saveAllocationSettings() {
   document.querySelectorAll('[data-alloc-col]').forEach(function(box) {
     const key = box.getAttribute('data-alloc-col');
     const flag = box.getAttribute('data-flag');
-    if (!columns[key]) columns[key] = { key: key, showOnCard: false, filterable: false, sortable: false, colorScale: false, expanded: false };
+    if (!columns[key]) columns[key] = allocationColumnDraft(key);
     columns[key][flag] = box.checked;
   });
   const config = {

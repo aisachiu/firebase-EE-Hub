@@ -166,8 +166,11 @@ test('allocation desk tags, filter, column order, supervisor cues, and token loa
       driveReady: true,
       settings: {
         detectedChoiceKeys: ['choice1', 'interdisciplinary'],
-        detectedDynamicKeys: ['Research notes'],
-        columns: [{ key: 'Research notes', showOnCard: true, expanded: false }],
+        detectedDynamicKeys: ['Research notes', 'Mentor note'],
+        columns: [
+          { key: 'Research notes', showOnCard: true, expanded: false, source: 'static' },
+          { key: 'Mentor note', showOnCard: true, expanded: false, source: 'live' },
+        ],
         interdisciplinaryKey: 'interdisciplinary',
         primaryChoiceKey: 'choice1',
       },
@@ -181,6 +184,10 @@ test('allocation desk tags, filter, column order, supervisor cues, and token loa
     assert.match(settings, /Dashboard Fields/);
     assert.match(settings, /Data Management/);
     assert.match(settings, /data-flag="expanded"/);
+    assert.match(settings, /Mentor note/);
+    assert.match(settings, /class="live-badge">LIVE</);
+    assert.equal((settings.match(/class="live-badge"/g) || []).length, 1);
+    assert.doesNotMatch(settings.slice(settings.indexOf('Research notes'), settings.indexOf('Research notes') + 80), /live-badge/);
     assert.match(settings, /must be exactly Yes or No/);
     assert.match(settings, /Doe, Jane/);
     assert.doesNotMatch(settings, /id="alloc-cohort"/);

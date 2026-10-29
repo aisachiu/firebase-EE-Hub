@@ -115,6 +115,9 @@ a.icon-button svg { display: block; }
 .scale span { font-weight: 700; }
 .scale small { color: var(--muted); line-height: 1.2; }
 .notice { margin: 8px 0; padding: 8px 10px; border-left: 3px solid var(--gold); background: #fff5f1; color: #663020; }
+#feedback-region { position: sticky; top: var(--topbar-height, 40px); z-index: 45; }
+#feedback-region:not(:empty) { background: var(--paper); padding: 8px clamp(12px, 2.5vw, 32px) 0; box-shadow: 0 2px 8px rgba(0, 30, 50, .08); }
+#feedback-region .notice { margin: 0 0 8px; }
 .notice-list { margin: 0 0 14px; }
 .notice-list h2 { margin-bottom: 8px; font-size: 16px; }
 .notice-list ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; max-width: 720px; }
@@ -393,7 +396,7 @@ body.student-drawers.journey-open.notes-open { padding-right: calc(clamp(300px, 
 .tabs { display: flex; gap: 2px; align-self: stretch; min-width: 0; overflow-x: auto; }
 .tabs button { border: 0; border-bottom: 3px solid transparent; padding: 8px 12px; color: #d5e4ef; background: transparent; font-weight: 700; white-space: nowrap; }
 .tabs button[aria-current="page"] { color: white; border-bottom-color: var(--gold); }
-.topbar { position: sticky; top: 0; z-index: 30; min-height: 40px; padding: 0 12px; }
+.topbar { position: sticky; top: 0; z-index: 46; min-height: 40px; padding: 0 12px; }
 main { max-width: 1180px; margin: 0 auto; padding: 10px; container-type: inline-size; }
 main.plan-wide { max-width: none; padding-inline: clamp(12px, 2vw, 28px); }
 @container (max-width: 760px) {
@@ -843,6 +846,7 @@ main.staff-list { max-width: 1480px; }
 .alloc-live h3 { margin: 12px 0 6px; font-size: 14px; }
 .alloc-live-summary { margin: 8px 0 0; padding-left: 18px; }
 .support-badge { padding: 1px 6px; border-radius: 3px; background: var(--coral); color: white; font-size: 10px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; }
+.live-badge { margin-left: 6px; padding: 1px 6px; border-radius: 3px; background: var(--ink); color: white; font-size: 10px; font-weight: 700; letter-spacing: .04em; vertical-align: 1px; }
 .info-badge { padding: 1px 6px; border-radius: 3px; background: var(--green-soft); color: #0d7a5f; font-size: 10px; font-weight: 700; }
 .quota-layout { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 16px; align-items: start; }
 .quota-table input[data-quota] { width: 72px; padding: 6px 8px; }

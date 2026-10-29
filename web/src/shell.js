@@ -259,6 +259,13 @@ export function renderShell() {
   syncHistory();
   ensureHeaderCohorts();
   paintRequestIndicator();
+  syncTopbarHeight();
+}
+
+function syncTopbarHeight() {
+  const bar = document.querySelector('.topbar');
+  if (!bar) return;
+  document.documentElement.style.setProperty('--topbar-height', bar.offsetHeight + 'px');
 }
 
 function headerContextMarkup() {
@@ -322,3 +329,4 @@ export function tabLabel(tab) {
 }
 
 setShellRenderer(renderShell);
+if (typeof window !== 'undefined') window.addEventListener('resize', syncTopbarHeight);
