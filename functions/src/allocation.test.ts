@@ -14,6 +14,7 @@ import {
   getStaffQuotaSheet,
   previewAllocationIngest,
   previewStaffQuotaTokens,
+  reopenAllocation,
   listCohortTokens,
   saveAllocationChoices,
   saveAllocationConfig,
@@ -186,6 +187,8 @@ test('draft, publish, release, and publish again update the live roster', async 
   assert.equal((await app.store.getMember('2026', JANE))?.subject, 'History');
   assert.equal((await app.store.listTokens('2026')).every((token) => token.status === 'committed'), true);
 
+  await assert.rejects(draftAllocation(app, '2026', JANE, '', ''), /Unpublish/);
+  await reopenAllocation(app, '2026', JANE);
   await draftAllocation(app, '2026', JANE, '', '');
   const cleared = await commitAllocations(app, '2026');
   assert.equal(cleared.cleared, 1);
@@ -238,6 +241,8 @@ test('publishing writes the allocated subject onto the student profile and the l
   const janeHome = await getStudentHome({ store: app.store, email: JANE, timeZone: 'Asia/Hong_Kong' });
   assert.equal(janeHome.subject, 'History');
 
+  await assert.rejects(draftAllocation(app, '2026', JANE, '', ''), /Unpublish/);
+  await reopenAllocation(app, '2026', JANE);
   await draftAllocation(app, '2026', JANE, '', '');
   const cleared = await commitAllocations(app, '2026');
   assert.equal(cleared.cleared, 1);
@@ -340,6 +345,7 @@ test('staff quotas top up a cohort without replacing tokens already there', asyn
   await deleteCohortToken(app, '2026', extra!.id);
   assert.equal(await app.store.getToken('2026', extra!.id), null);
   await commitAllocations(app, '2026');
+  await assert.rejects(updateCohortToken(app, '2026', drafted!.id, ['English']), /published/);
   await assert.rejects(deleteCohortToken(app, '2026', drafted!.id), /published/);
 });
 

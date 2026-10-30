@@ -136,7 +136,7 @@ export async function draftAllocation(app: App, cohortId: unknown, studentId: un
   });
 }
 
-export async function batchDraftAllocations(app: App, cohortId: unknown, staffId: unknown, studentIds: unknown, subjects: unknown) {
+export async function batchDraftAllocations(app: App, cohortId: unknown, staffId: unknown, studentIds: unknown, subjects: unknown, overrideSubject?: unknown) {
   const user = await requireAdmin(app, 'BATCH_DRAFT_ALLOCATIONS');
   const cohort = await requireCohort(app, text(cohortId));
   const supervisor = normalizeEmail(staffId);
@@ -175,6 +175,7 @@ export async function batchDraftAllocations(app: App, cohortId: unknown, staffId
       tokens,
       supervisorByStudent: Object.fromEntries(active.map((id) => [id, normalizeEmail(byStudent.get(id)?.supervisorId)])),
       pendingClearByStudent: Object.fromEntries(active.map((id) => [id, !!workspaceByStudent.get(id)?.pendingClear])),
+      overrideSubject: overrideSubject === true,
     });
     const now = nowIso();
     const ops: AllocationOp[] = plan.tokenWrites.map((token) => ({
@@ -214,15 +215,63 @@ export async function reopenAllocation(app: App, cohortId: unknown, studentId: u
   });
 }
 
-export async function commitAllocations(app: App, cohortId: unknown) {
+export async function reopenAllocations(app: App, cohortId: unknown, studentIds: unknown) {
+  const user = await requireAdmin(app, 'REOPEN_ALLOCATION');
+  const cohort = await requireCohort(app, text(cohortId));
+  const ids = Array.isArray(studentIds) ? studentIds.map((id) => normalizeEmail(id)).filter(Boolean) : [];
+  if (!ids.length) throw new HubError('Select at least one student.');
+  if (ids.length > 1000) throw new HubError('Select no more than 1,000 students at a time.');
+  return audited(app, user, 'REOPEN_ALLOCATION', { cohortId: cohort.id, students: ids.length }, async () => {
+    const members = await app.store.listMembers(cohort.id);
+    const active = new Set(members.filter((member) => isEeActive(member.eeActive)).map((member) => normalizeEmail(member.StudentId)));
+    let tokens = tokensFrom(await app.store.listTokens(cohort.id), cohort.id);
+    const reopened: string[] = [];
+    const skipped: { studentId: string; reason: string }[] = [];
+    const writes: TokenRecord[] = [];
+    ids.forEach((email) => {
+      if (!active.has(email)) {
+        skipped.push({ studentId: email, reason: 'This student is not active for allocation.' });
+        return;
+      }
+      const plan = planReopen(tokens, email);
+      if (plan.error || !plan.token) {
+        skipped.push({ studentId: email, reason: plan.error || 'This student has no allocation to reopen.' });
+        return;
+      }
+      const current = tokens.find((token) => token.id === plan.token!.id);
+      if (current && current.status === 'draft') {
+        skipped.push({ studentId: email, reason: 'This allocation is already a draft.' });
+        return;
+      }
+      writes.push(plan.token);
+      tokens = tokens.map((token) => (token.id === plan.token!.id ? plan.token! : token));
+      reopened.push(email);
+    });
+    if (writes.length) {
+      const now = nowIso();
+      await app.store.applyAllocationOps(writes.map((token) => ({
+        kind: 'token' as const,
+        cohortId: cohort.id,
+        id: token.id,
+        data: { ...token, updatedAt: now },
+      })));
+    }
+    return { reopened, skipped };
+  });
+}
+
+export async function commitAllocations(app: App, cohortId: unknown, studentIds?: unknown) {
   const user = await requireAdmin(app, 'COMMIT_ALLOCATIONS');
   const cohort = await requireCohort(app, text(cohortId));
-  return audited(app, user, 'COMMIT_ALLOCATIONS', { cohortId: cohort.id }, async () => {
+  const limit = Array.isArray(studentIds) ? studentIds.map((id) => normalizeEmail(id)).filter(Boolean) : undefined;
+  if (Array.isArray(studentIds) && !(limit && limit.length)) throw new HubError('Select at least one student.');
+  if (limit && limit.length > 1000) throw new HubError('Select no more than 1,000 students at a time.');
+  return audited(app, user, 'COMMIT_ALLOCATIONS', { cohortId: cohort.id, students: limit ? limit.length : 'all' }, async () => {
     const members = await app.store.listMembers(cohort.id);
     const byStudent = new Map(members.map((member) => [normalizeEmail(member.StudentId), member]));
     const tokens = tokensFrom(await app.store.listTokens(cohort.id), cohort.id);
     const workspaces = (await app.store.listWorkspace(cohort.id)).map((doc) => workspaceFromDoc(doc, text(doc.id || doc.studentId)));
-    const plan = planCommit(tokens, workspaces);
+    const plan = planCommit(tokens, workspaces, limit);
     if (plan.warnings.length) throw new HubError(plan.warnings[0]);
     const missing = plan.assignments.concat(plan.clears.map((studentId) => ({ studentId, staffId: '', subject: '', tokenId: '' }))).filter((row) => !byStudent.has(row.studentId));
     if (missing.length) throw new HubError(`${missing[0].studentId} is not on the cohort roster.`);
@@ -585,6 +634,7 @@ export async function updateCohortToken(app: App, cohortId: unknown, tokenId: un
   return audited(app, user, 'UPDATE_COHORT_TOKEN', { cohortId: cohort.id, tokenId: id }, async () => {
     const existing = tokenFromDoc({ ...(await app.store.getToken(cohort.id, id) || {}), cohortId: cohort.id });
     if (!existing) throw new HubError('Token not found.');
+    if (existing.status === 'committed') throw new HubError('This token is published. Unpublish it on the allocation dashboard before editing it.');
     await app.store.setToken(cohort.id, existing.id, { ...existing, eligibleSubjects });
     return { id: existing.id, eligibleSubjects };
   });

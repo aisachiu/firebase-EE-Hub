@@ -71,6 +71,9 @@ test('allocation desk tags, filter, column order, supervisor cues, and token loa
     state.allocationInterdisciplinary = {};
     state.allocationInterdisciplinarySubject = {};
     state.allocationCustomFilters = {};
+    state.allocationQuery = '';
+    state.allocationCustomQueries = {};
+    state.allocationCustomOpen = '';
     state.allocationDrawerSortColumn = 'subject';
     state.allocationDrawerSortDirection = 1;
     state.allocationDataSelected = [];
@@ -92,10 +95,9 @@ test('allocation desk tags, filter, column order, supervisor cues, and token loa
     const row = deskMod.allocationRowMarkup(student({}), supervisors(), [], {});
     const cells = row.split('</td>');
     assert.match(cells[2], /data-subject="Psychology"/);
-    assert.match(cells[3], /<select/);
-    assert.match(cells[3], /Dr Psy/);
-    assert.match(cells[3], /Mx Art/);
-    assert.match(cells[3], /Pat Open/);
+    assert.match(cells[3], /Unassigned/);
+    assert.doesNotMatch(cells[3], /data-alloc-supervisor/);
+    assert.doesNotMatch(cells[3], /<select/);
     assert.doesNotMatch(row, /class="supervisor-cue"/);
     assert.match(deskMod.allocationRowMarkup(desk().students[1], supervisors(), [], {}), /class="id-tag"[^>]*>ID</);
 
@@ -111,10 +113,11 @@ test('allocation desk tags, filter, column order, supervisor cues, and token loa
     const chosenRow = deskMod.allocationRowMarkup(student({
       token: { staffId: 'psy@school.edu', assignedSubject: 'Psychology' },
     }), supervisors(), [], {});
-    const select = chosenRow.slice(chosenRow.indexOf('<select'), chosenRow.indexOf('</select>'));
-    assert.match(select, /Dr Psy/);
-    assert.match(select, /Mx Art/);
-    assert.match(select, /Pat Open/);
+    assert.match(chosenRow, /class="alloc-supervisor-name"[^>]*>Dr Psy/);
+    assert.match(chosenRow, />Psychology</);
+    assert.doesNotMatch(chosenRow, /data-alloc-supervisor/);
+    assert.doesNotMatch(chosenRow, /Mx Art/);
+    assert.doesNotMatch(chosenRow, /<select/);
 
     const source = desk();
     state.allocationSubjectFilter = ['Psychology'];
@@ -141,7 +144,20 @@ test('allocation desk tags, filter, column order, supervisor cues, and token loa
     assert.match(html, /data-alloc-allocated-filter="Psychology"/);
     assert.match(html, /title="Psychology">Psy</);
     assert.match(html, /data-alloc-teacher-filter="psy@school.edu"/);
+    assert.ok(html.indexOf('data-table-header="alloc-filters"') < html.indexOf('id="alloc-student-search"'));
+    assert.ok(html.indexOf('id="alloc-student-search"') < html.indexOf('id="alloc-batch-assign"'));
     assert.ok(html.indexOf('id="alloc-batch-assign"') < html.indexOf('<table'));
+    assert.match(html, /data-alloc-status="published"/);
+    assert.match(html, /id="alloc-batch-publish"/);
+    assert.match(html, /id="alloc-batch-unpublish"/);
+    assert.doesNotMatch(html, /id="alloc-publish"/);
+    assert.match(html, /Active Students<\/span> <strong>2<\/strong>/);
+    assert.match(html, /Unassigned \(students\)<\/span> <strong>2<\/strong>/);
+    assert.match(html, /Remaining Tokens<\/span> <strong>4<\/strong>/);
+    assert.match(html, /class="alloc-mark on status"/);
+    assert.match(html, /class="alloc-mark off subject"/);
+    assert.match(html, /class="alloc-mark on hl"/);
+    assert.match(html, /class="alloc-mark warn hl"/);
     assert.match(html, /data-alloc-load="assigned"/);
     assert.match(html, /aria-label="Star key"/);
     assert.doesNotMatch(html, /id="alloc-cohort"/);
@@ -329,6 +345,10 @@ test('allocation desk tags, filter, column order, supervisor cues, and token loa
     const linkedHtml = deskMod.allocationDashboardMarkup(linkedDesk);
     assert.match(linkedHtml, /id="alloc-resync-live"/);
     assert.match(linkedHtml, /Resync Live Choice Data/);
+    const syncSlot = linkedHtml.slice(linkedHtml.indexOf('alloc-sync-slot'), linkedHtml.indexOf('data-table-header="alloc-filters"'));
+    assert.match(syncSlot, /Resync Live Choice Data/);
+    assert.ok(linkedHtml.indexOf('Active Students') < linkedHtml.indexOf('alloc-sync-slot'));
+    assert.ok(syncSlot.indexOf('id="alloc-resync-live"') < syncSlot.indexOf('class="alloc-sync-meta"') || !/alloc-sync-meta/.test(syncSlot));
     assert.doesNotMatch(linkedHtml.slice(linkedHtml.indexOf('id="alloc-resync-live"'), linkedHtml.indexOf('id="alloc-resync-live"') + 120), /disabled/);
     state.allocationLiveBusy = 'resync';
     const busyHtml = deskMod.allocationDashboardMarkup(linkedDesk);
@@ -343,6 +363,9 @@ test('allocation desk tags, filter, column order, supervisor cues, and token loa
     const cooled = deskMod.allocationDashboardMarkup(linkedDesk);
     assert.doesNotMatch(cooled.slice(cooled.indexOf('id="alloc-resync-live"'), cooled.indexOf('id="alloc-resync-live"') + 160), /disabled/);
     assert.match(cooled, /Last synced \d+ seconds ago/);
+    const cooledSlot = cooled.slice(cooled.indexOf('alloc-sync-slot'), cooled.indexOf('data-table-header="alloc-filters"'));
+    assert.ok(cooledSlot.indexOf('id="alloc-resync-live"') < cooledSlot.indexOf('id="alloc-resync-age"'));
+    assert.match(cooledSlot, /class="alloc-sync-meta"/);
     delete linkedDesk.settings.lastSyncedAt;
 
     const board = deskMod.cohortTokensMarkup({
@@ -410,10 +433,40 @@ test('allocation desk tags, filter, column order, supervisor cues, and token loa
     customSource.students[1].dynamicData = { 'Y10 GPA': 'Strong' };
     state.allocationAllocatedFilter = [];
     state.allocationTeacherFilter = [];
+    state.allocationCustomFilters = {};
+    customSource.students[0].dynamicData = { 'Y10 GPA': '10' };
+    customSource.students[1].dynamicData = { 'Y10 GPA': '2' };
+    const numericMarkup = deskMod.allocationCustomFilterMarkup(customSource);
+    assert.ok(numericMarkup.indexOf('data-alloc-custom-value="2"') < numericMarkup.indexOf('data-alloc-custom-value="10"'));
+    customSource.students[0].dynamicData = { 'Y10 GPA': 'Weak' };
+    customSource.students[1].dynamicData = { 'Y10 GPA': 'Strong' };
+    const customMarkup = deskMod.allocationCustomFilterMarkup(customSource);
+    assert.match(customMarkup, /data-alloc-custom-filter="Y10 GPA"/);
+    assert.match(customMarkup, /data-alloc-custom-query="Y10 GPA"/);
+    assert.ok(customMarkup.indexOf('data-alloc-custom-value="Strong"') < customMarkup.indexOf('data-alloc-custom-value="Weak"'));
     state.allocationCustomFilters = { 'Y10 GPA': 'Weak' };
-    assert.match(deskMod.allocationCustomFilterMarkup(customSource), /data-alloc-custom-filter="Y10 GPA"/);
     assert.match(deskMod.allocationDashboardMarkup(customSource), /data-alloc-custom-filter="Y10 GPA"/);
     assert.deepEqual(deskMod.visibleAllocationStudents(customSource).map((item) => item.studentId), ['jane@school.edu']);
+    state.allocationCustomFilters = { 'Y10 GPA': ['Weak', 'Strong'] };
+    assert.deepEqual(deskMod.visibleAllocationStudents(customSource).map((item) => item.studentId), ['jane@school.edu', 'mark@school.edu']);
+    state.allocationCustomFilters = {};
+    state.allocationQuery = 'lee, mark';
+    assert.deepEqual(deskMod.visibleAllocationStudents(customSource).map((item) => item.studentId), ['mark@school.edu']);
+    state.allocationQuery = 'JANE@school';
+    assert.deepEqual(deskMod.visibleAllocationStudents(customSource).map((item) => item.studentId), ['jane@school.edu']);
+    state.allocationQuery = '';
+    customSource.students[0].flags = { needsSupport: false, drafted: false, committed: true, subjectMatch: 'match', hlMatch: 'none' };
+    customSource.students[0].token = { staffId: 'psy@school.edu', staffName: 'Dr Psy', assignedSubject: 'Psychology', status: 'committed' };
+    state.allocationStatus = 'published';
+    assert.deepEqual(deskMod.visibleAllocationStudents(customSource).map((item) => item.studentId), ['jane@school.edu']);
+    const publishedRow = deskMod.allocationRowMarkup(customSource.students[0], supervisors(), [], {});
+    assert.match(publishedRow, /class="is-published"/);
+    assert.match(publishedRow, /title="Published"/);
+    assert.match(publishedRow, /disabled/);
+    assert.doesNotMatch(publishedRow, /Return to draft/);
+    state.allocationStatus = 'unallocated';
+    assert.deepEqual(deskMod.visibleAllocationStudents(customSource).map((item) => item.studentId), ['mark@school.edu']);
+    state.allocationStatus = 'all';
     state.allocationCustomFilters = {};
     state.allocationAllocatedFilter = [];
     state.allocationTeacherFilter = ['art@school.edu'];

@@ -130,6 +130,28 @@ export function paintAllocation() {
   if (document.scrollingElement && page) document.scrollingElement.scrollTop = page;
 }
 
+export function allocationQueryMatches(student, query) {
+  const needle = String(query || '').trim().toLowerCase();
+  if (!needle) return true;
+  const name = String((student && student.displayName) || '').toLowerCase();
+  const id = String((student && student.studentId) || '').toLowerCase();
+  return name.indexOf(needle) >= 0 || id.indexOf(needle) >= 0;
+}
+
+function refocusAllocationControl(attr, key, caret) {
+  const next = attr === 'id'
+    ? document.getElementById(key)
+    : Array.from(document.querySelectorAll('[' + attr + ']')).find(function(node) {
+      return node.getAttribute(attr) === key;
+    });
+  if (!next || !next.focus) return;
+  next.focus();
+  if (typeof caret === 'number' && next.setSelectionRange) {
+    const at = Math.min(caret, String(next.value || '').length);
+    next.setSelectionRange(at, at);
+  }
+}
+
 function allocationInteractionHeld() {
   if (typeof document === 'undefined') return false;
   const active = document.activeElement;
@@ -217,8 +239,7 @@ export function allocationDashboardMarkup(desk) {
   const sort = adminSortState('alloc-desk');
   const supervisors = desk.supervisors || [];
   const openSupervisors = supervisors.filter(function(person) { return person.available > 0; });
-  const publish = desk.publish || { drafts: 0, clears: 0, blocked: 0 };
-  const summary = desk.summary || { staffCount: 0, tokenCount: 0, activeStudents: 0, buffer: 0 };
+  const counts = allocationDashboardCounts(desk);
   const extents = {};
   columns.forEach(function(column) {
     if (!column.colorScale) return;
@@ -234,6 +255,8 @@ export function allocationDashboardMarkup(desk) {
           return `<option value="${escapeHtml(person.staffId)}">${escapeHtml(allocationSupervisorLabel(person))}</option>`;
         }).join('')}</select>
         <button type="button" class="button" id="alloc-batch-assign">Assign</button>
+        <button type="button" class="button" id="alloc-batch-publish">Publish</button>
+        <button type="button" class="button secondary" id="alloc-batch-unpublish" title="Send published allocations back to draft">Unpublish</button>
         <span class="muted">${state.allocationSelected.length} selected</span>
       </div>`;
   const sortOption = function(key, label) {
@@ -243,18 +266,33 @@ export function allocationDashboardMarkup(desk) {
     if (column.sortable === false) return `<th scope="col">${escapeHtml(column.key)}</th>`;
     return sortableHeader('alloc-desk', 'field:' + column.key, column.key);
   }).join('');
+  const bufferText = counts.buffer >= 0 ? '+' + counts.buffer : String(counts.buffer);
+  const metric = function(label, value) {
+    return `<p><span>${escapeHtml(label)}</span> <strong>${escapeHtml(String(value))}</strong></p>`;
+  };
+  const syncSlot = liveLinked ? `<div class="alloc-sync-slot">
+        <button type="button" class="button secondary" id="alloc-resync-live" ${resyncDisabled ? 'disabled' : ''} aria-busy="${liveSyncing ? 'true' : 'false'}">Resync Live Choice Data</button>
+        ${liveSyncing ? '<p class="alloc-sync-meta" id="alloc-resync-status">Resyncing live choice data…</p>' : ''}
+        ${syncAge.label ? `<p class="alloc-sync-meta" id="alloc-resync-age">${escapeHtml(syncAge.label)}</p>` : ''}
+        ${syncedAt ? `<p class="alloc-sync-meta">Last live sync ${escapeHtml(allocationWhen(syncedAt))}</p>` : ''}
+      </div>` : '';
   return `<div class="alloc-layout"><div>
-      <div class="toolbar">
-        <p class="muted">${summary.activeStudents} active students · ${summary.tokenCount} tokens · ${summary.buffer >= 0 ? '+' + summary.buffer + ' buffer' : 'short by ' + (-summary.buffer)}</p>
-        ${liveLinked ? `<button type="button" class="button secondary" id="alloc-resync-live" ${resyncDisabled ? 'disabled' : ''} aria-busy="${liveSyncing ? 'true' : 'false'}">Resync Live Choice Data</button>` : ''}
+      <div class="alloc-dashboard-head">
+        <div class="alloc-metrics-line">
+          ${metric('Active Students', counts.activeStudents)}
+          ${metric('Tokens', counts.tokenCount)}
+          ${metric('Buffer', bufferText)}
+          ${metric('Published', counts.published)}
+          ${metric('Drafted', counts.drafted)}
+          ${metric('Unassigned (students)', counts.unassigned)}
+          ${metric('Remaining Tokens', counts.remaining)}
+        </div>
+        ${syncSlot}
       </div>
-      ${liveSyncing ? '<p class="load-status" id="alloc-resync-status">Resyncing live choice data…</p>' : ''}
-      ${liveLinked && syncAge.label ? `<p class="muted" id="alloc-resync-age">${escapeHtml(syncAge.label)}</p>` : ''}
-      ${liveLinked && syncedAt ? `<p class="muted">Last live sync ${escapeHtml(allocationWhen(syncedAt))}</p>` : ''}
       ${desk.warnings && desk.warnings.length ? `<p class="notice">${escapeHtml(desk.warnings[0])}</p>` : ''}
       ${allocationSection('alloc-filters', 'Filters', `<div class="alloc-filters">
         <div><span class="alloc-kicker">Status</span><div class="view-toggle" role="group" aria-label="Status">
-          ${[['all', 'All'], ['unallocated', 'Unallocated'], ['draft', 'Drafted']].map(function(item) {
+          ${[['all', 'All'], ['unallocated', 'Unallocated'], ['draft', 'Drafted'], ['published', 'Published']].map(function(item) {
             return `<button type="button" data-alloc-status="${item[0]}" aria-pressed="${state.allocationStatus === item[0] ? 'true' : 'false'}">${item[1]}</button>`;
           }).join('')}
         </div></div>
@@ -269,6 +307,7 @@ export function allocationDashboardMarkup(desk) {
         <div><button type="button" class="button secondary" id="alloc-clear-filters">Clear filters</button></div>
       </div>
       `)}
+      <div class="alloc-search"><label for="alloc-student-search">Search students</label><input id="alloc-student-search" type="search" value="${escapeHtml(state.allocationQuery || '')}" placeholder="Name or student email" autocomplete="off" aria-label="Search students by name or email"></div>
       ${batchAction}
       ${allocationLegendMarkup()}
       ${scaleOn ? '<p class="muted alloc-scale-note">Blue shading runs from low to high among the students in this view.</p>' : ''}
@@ -283,15 +322,13 @@ export function allocationDashboardMarkup(desk) {
         <tbody>${students.length ? students.map(function(student) { return allocationRowMarkup(student, supervisors, columns, extents); }).join('') : `<tr><td class="empty" colspan="${4 + columns.length}">No students in this view.</td></tr>`}</tbody>
       </table></div>
     </div></div>
-    ${allocationDrawerMarkup(desk, supervisors, publish)}`;
+    ${allocationDrawerMarkup(desk, supervisors)}`;
 }
 
 export function allocationRowMarkup(student, supervisors, columns, extents) {
   const subject = selectedAllocationSubject(student);
-  const current = student.token ? student.token.staffId : '';
-  const options = supervisors.filter(function(person) { return person.available > 0 || person.staffId === current; });
   const requested = allocationRequestedSubjects(student);
-  const statusClass = student.flags.committed ? 'committed' : student.flags.drafted ? 'draft' : '';
+  const locked = allocationIsPublished(student);
   const fields = (columns || []).map(function(column) {
     const value = student.dynamicData ? student.dynamicData[column.key] : '';
     const shown = value === undefined || value === null || value === '' ? '' : String(value);
@@ -309,22 +346,59 @@ export function allocationRowMarkup(student, supervisors, columns, extents) {
   const interdisciplinaryOn = allocationInterdisciplinaryOn(student);
   const interdisciplinarySubject = allocationInterdisciplinarySubject(student);
   const interdisciplinaryOptions = allocationInterdisciplinarySubjectOptions(student, state.allocationDesk);
-  const interdisciplinarySelect = interdisciplinaryOn ? `<label class="alloc-inter-subject">Second subject<select data-alloc-inter-subject="${escapeHtml(student.studentId)}" aria-label="Interdisciplinary subject for ${escapeHtml(student.displayName)}"><option value="">Choose subject...</option>${interdisciplinaryOptions.map(function(name) {
+  const interdisciplinarySelect = interdisciplinaryOn ? `<label class="alloc-inter-subject">Second subject<select data-alloc-inter-subject="${escapeHtml(student.studentId)}" aria-label="Interdisciplinary subject for ${escapeHtml(student.displayName)}" ${locked ? 'disabled' : ''}><option value="">Choose subject...</option>${interdisciplinaryOptions.map(function(name) {
     return `<option value="${escapeHtml(name)}" ${sameSubjectName(name, interdisciplinarySubject) ? 'selected' : ''}>${escapeHtml(name)}</option>`;
   }).join('')}</select></label>` : '';
-  return `<tr>
+  const supervisorName = allocationAssignedSupervisorName(student, supervisors);
+  const assignedSubject = student.token && student.token.assignedSubject ? `<div class="muted">${escapeHtml(student.token.assignedSubject)}</div>` : '';
+  const statusTitle = locked ? 'Published' : student.token ? 'Drafted' : 'Unallocated';
+  return `<tr${locked ? ' class="is-published"' : ''}>
     <td class="alloc-check"><input type="checkbox" data-alloc-pick="${escapeHtml(student.studentId)}" ${state.allocationSelected.indexOf(student.studentId) >= 0 ? 'checked' : ''} aria-label="Select ${escapeHtml(student.displayName)}"></td>
     <td>
       <div class="alloc-name"><button type="button" class="link-button alloc-student-name" data-alloc-expand="${escapeHtml(student.studentId)}" aria-expanded="${open ? 'true' : 'false'}">${escapeHtml(student.displayName)}</button>${supportTags}${student.choices && student.choices.interdisciplinary ? '<span class="id-tag" title="Requested an interdisciplinary EE">ID</span>' : ''}${student.pendingClear ? '<span class="info-badge">Clears on publish</span>' : ''}</div>
-      <div class="alloc-marks">${allocationMark(student.token ? 'Drafted' : 'Unallocated', student.token ? 'on' : 'off')}${allocationMark(student.flags.subjectMatch === 'match' ? 'Subject match' : 'No subject match', student.flags.subjectMatch === 'match' ? 'on' : 'off')}${allocationMark(student.flags.hlMatch === 'miss' ? 'Not an HL match' : student.flags.hlMatch === 'match' ? 'HL match' : 'No HL match', student.flags.hlMatch === 'match' ? 'on' : student.flags.hlMatch === 'miss' ? 'warn' : 'off')}</div>
-      ${student.flags.committed ? '<button type="button" class="link-button" data-alloc-reopen="' + escapeHtml(student.studentId) + '">Return to draft</button>' : ''}
+      <div class="alloc-marks">${allocationMark(statusTitle, student.token ? 'on' : 'off', 'status')}${allocationMark(student.flags.subjectMatch === 'match' ? 'Subject match' : 'No subject match', student.flags.subjectMatch === 'match' ? 'on' : 'off', 'subject')}${allocationMark(student.flags.hlMatch === 'miss' ? 'Not an HL match' : student.flags.hlMatch === 'match' ? 'HL match' : 'No HL match', student.flags.hlMatch === 'match' ? 'on' : student.flags.hlMatch === 'miss' ? 'warn' : 'off', 'hl')}</div>
     </td>
     <td>${subjectTags || '<span class="muted">No subject choices</span>'}</td>
-    <td><select class="alloc-select ${statusClass}" data-alloc-supervisor="${escapeHtml(student.studentId)}" aria-label="Supervisor for ${escapeHtml(student.displayName)}"><option value="">${student.token ? 'Unassigned...' : 'Select...'}</option>${options.map(function(person) {
-      return `<option value="${escapeHtml(person.staffId)}" ${person.staffId === current ? 'selected' : ''}>${escapeHtml(allocationSupervisorLabel(person))}</option>`;
-    }).join('')}</select>${allocationSupervisorCues(student, supervisors)}<label class="check-option alloc-ee-flag"><input type="checkbox" data-alloc-ee-inter="${escapeHtml(student.studentId)}" ${interdisciplinaryOn ? 'checked' : ''}> Interdisciplinary EE</label>${interdisciplinarySelect}</td>
+    <td><div class="alloc-supervisor-name${supervisorName ? '' : ' muted'}">${escapeHtml(supervisorName || 'Unassigned')}</div>${assignedSubject}<label class="check-option alloc-ee-flag"><input type="checkbox" data-alloc-ee-inter="${escapeHtml(student.studentId)}" ${interdisciplinaryOn ? 'checked' : ''} ${locked ? 'disabled' : ''}> Interdisciplinary EE</label>${interdisciplinarySelect}</td>
     ${fields}
   </tr>${open ? allocationExpandedMarkup(student, 4 + (columns || []).length) : ''}`;
+}
+
+export function allocationIsPublished(student) {
+  if (!student) return false;
+  if (student.flags && student.flags.committed) return true;
+  return !!(student.token && student.token.status === 'committed');
+}
+
+export function allocationAssignedSupervisorName(student, supervisors) {
+  if (!student || !student.token) return '';
+  if (student.token.staffName) return student.token.staffName;
+  const person = (supervisors || []).find(function(item) { return item.staffId === student.token.staffId; });
+  return person ? (person.displayName || person.staffId) : student.token.staffId;
+}
+
+export function allocationDashboardCounts(desk) {
+  const students = (desk && desk.students) || [];
+  const summary = (desk && desk.summary) || {};
+  const people = (desk && desk.supervisors) || [];
+  const slots = (desk && desk.tokenSlots) || [];
+  const published = students.filter(function(student) { return allocationIsPublished(student); }).length;
+  const drafted = students.filter(function(student) { return student.flags && student.flags.drafted && !allocationIsPublished(student); }).length;
+  const unassigned = students.filter(function(student) { return !student.token; }).length;
+  const fromStaff = people.reduce(function(sum, person) { return sum + Number(person.available || 0); }, 0);
+  const fromSlots = slots.filter(function(slot) { return slot.status === 'available'; }).length;
+  const tokenCount = summary.tokenCount === undefined
+    ? (people.length ? people.reduce(function(sum, person) { return sum + Number(person.total || 0); }, 0) : slots.length)
+    : summary.tokenCount;
+  return {
+    activeStudents: summary.activeStudents === undefined ? students.length : summary.activeStudents,
+    tokenCount: tokenCount,
+    buffer: summary.buffer === undefined ? tokenCount - students.length : summary.buffer,
+    published: published,
+    drafted: drafted,
+    unassigned: unassigned,
+    remaining: people.length ? fromStaff : fromSlots,
+  };
 }
 
 /** One tag per value parsed from the mapped Support Flag column. */
@@ -340,10 +414,10 @@ export function allocationSupportMarkup(student) {
 }
 
 export function allocationLegendMarkup() {
-  const item = function(title, mode, label) {
-    return `<span class="alloc-legend-item">${allocationMark(title, mode)}<span>${escapeHtml(label)}</span></span>`;
+  const item = function(title, mode, label, kind) {
+    return `<span class="alloc-legend-item">${allocationMark(title, mode, kind)}<span>${escapeHtml(label)}</span></span>`;
   };
-  return `<div class="alloc-legend" aria-label="Star key">${item('Drafted', 'on', 'Drafted')}${item('Unallocated', 'off', 'Unallocated')}${item('Subject match', 'on', 'Subject match')}${item('No subject match', 'off', 'No subject match')}${item('HL match', 'on', 'HL match')}${item('Not an HL match', 'warn', 'Not an HL match')}</div>`;
+  return `<div class="alloc-legend" aria-label="Star key">${item('Drafted', 'on', 'Drafted', 'status')}${item('Unallocated', 'off', 'Unallocated', 'status')}${item('Subject match', 'on', 'Subject match', 'subject')}${item('No subject match', 'off', 'No subject match', 'subject')}${item('HL match', 'on', 'HL match', 'hl')}${item('Not an HL match', 'warn', 'Not an HL match', 'hl')}</div>`;
 }
 
 export function allocationExpandedMarkup(student, colspan) {
@@ -412,25 +486,48 @@ export function allocationInterdisciplinarySubjectOptions(student, desk) {
   return names.sort(function(left, right) { return left.localeCompare(right, undefined, { sensitivity: 'base' }); });
 }
 
+export function allocationCustomSelections(filters, key) {
+  const value = filters ? filters[key] : undefined;
+  if (Array.isArray(value)) return value.map(function(item) { return String(item); }).filter(Boolean);
+  if (value === undefined || value === null || value === '') return [];
+  return [String(value)];
+}
+
+export function allocationCustomValues(desk, key) {
+  const values = new Map();
+  ((desk && desk.students) || []).forEach(function(student) {
+    const raw = student.dynamicData && student.dynamicData[key];
+    if (raw === undefined || raw === null || raw === '') return;
+    const value = String(raw);
+    if (!values.has(value)) values.set(value, value);
+  });
+  return Array.from(values.values()).sort(function(left, right) {
+    return left.localeCompare(right, undefined, { sensitivity: 'base', numeric: true });
+  });
+}
+
 export function allocationCustomFilterMarkup(desk) {
   const columns = ((desk && desk.settings && desk.settings.columns) || []).filter(function(column) {
     return column.filterable === true;
   });
-  return columns.map(function(column) {
-    const values = new Map();
-    (desk.students || []).forEach(function(student) {
-      const raw = student.dynamicData && student.dynamicData[column.key];
-      if (raw === undefined || raw === null || raw === '') return;
-      const value = String(raw);
-      if (!values.has(value)) values.set(value, value);
+  return columns.map(function(column, index) {
+    const selected = allocationCustomSelections(state.allocationCustomFilters, column.key);
+    const query = String((state.allocationCustomQueries || {})[column.key] || '');
+    const needle = query.trim().toLowerCase();
+    const options = allocationCustomValues(desk, column.key).filter(function(value) {
+      return !needle || value.toLowerCase().indexOf(needle) >= 0;
     });
-    const selected = (state.allocationCustomFilters || {})[column.key] || '';
-    const options = Array.from(values.values()).sort(function(left, right) {
-      return left.localeCompare(right, undefined, { sensitivity: 'base', numeric: true });
-    }).map(function(value) {
-      return `<option value="${escapeHtml(value)}" ${value === selected ? 'selected' : ''}>${escapeHtml(value)}</option>`;
+    const inputId = 'alloc-custom-query-' + index;
+    const listId = 'alloc-custom-list-' + index;
+    const open = state.allocationCustomOpen === column.key;
+    const chips = selected.map(function(value) {
+      return `<button type="button" class="alloc-combo-chip" data-alloc-custom-filter="${escapeHtml(column.key)}" data-alloc-custom-value="${escapeHtml(value)}" aria-label="Remove ${escapeHtml(value)}">${escapeHtml(value)} ×</button>`;
     }).join('');
-    return `<div><label for="alloc-custom-filter-${escapeHtml(column.key)}">${escapeHtml(column.key)}</label><select id="alloc-custom-filter-${escapeHtml(column.key)}" data-alloc-custom-filter="${escapeHtml(column.key)}"><option value="">All</option>${options}</select></div>`;
+    const choices = options.map(function(value) {
+      const on = selected.indexOf(value) >= 0;
+      return `<button type="button" role="option" aria-selected="${on ? 'true' : 'false'}" data-alloc-custom-filter="${escapeHtml(column.key)}" data-alloc-custom-value="${escapeHtml(value)}">${escapeHtml(value)}</button>`;
+    }).join('');
+    return `<div class="alloc-custom-filter" data-alloc-custom-filter="${escapeHtml(column.key)}"><label for="${inputId}">${escapeHtml(column.key)}</label><div class="alloc-combo">${chips ? `<div class="alloc-combo-selected">${chips}</div>` : ''}<input id="${inputId}" type="search" data-alloc-custom-query="${escapeHtml(column.key)}" value="${escapeHtml(query)}" placeholder="Search values" autocomplete="off" aria-controls="${listId}" aria-expanded="${open ? 'true' : 'false'}"><div class="alloc-combo-list" id="${listId}" role="listbox" aria-multiselectable="true" aria-label="${escapeHtml(column.key)} values"${open ? '' : ' hidden'}>${choices || '<p class="muted">No matching values</p>'}</div></div></div>`;
   }).join('');
 }
 
@@ -613,6 +710,14 @@ function applyPendingDesk() {
 }
 
 function saveAllocationDraft(studentId, staffId, subject, interdisciplinary, message) {
+  const student = ((state.allocationDesk && state.allocationDesk.students) || []).find(function(item) {
+    return item.studentId === studentId;
+  });
+  if (allocationIsPublished(student)) {
+    showError(new Error('This allocation is published. Unpublish it before changing the token.'));
+    paintAllocation();
+    return;
+  }
   const interdisciplinarySubject = interdisciplinary
     ? (state.allocationInterdisciplinarySubject[studentId] || '')
     : '';
@@ -964,19 +1069,13 @@ export function allocationLoadMarkup(person) {
   return `<div class="alloc-load"><p><strong>${escapeHtml(person.displayName)}</strong> <span class="muted">${person.used}/${person.total} slots</span></p><p class="muted">Eligible: ${eligible || 'None'}</p>${allocationMeterMarkup(person.used, person.total)}</div>`;
 }
 
-export function allocationDrawerMarkup(desk, supervisors, publish) {
+export function allocationDrawerMarkup(desk, supervisors) {
   const open = state.allocationDrawerOpen === true;
-  const summary = publish || { drafts: 0, clears: 0, blocked: 0 };
   return `<aside id="alloc-drawer" class="alloc-drawer${open ? ' open' : ''}" aria-label="Token Overview">
     <button type="button" class="alloc-drawer-peek" id="alloc-drawer-peek" aria-expanded="${open ? 'true' : 'false'}" aria-controls="alloc-drawer-panel">Token Overview</button>
     <div class="alloc-drawer-panel" id="alloc-drawer-panel"${open ? '' : ' inert'} aria-hidden="${open ? 'false' : 'true'}">
       <div class="alloc-drawer-bar"><strong>Token Overview</strong><button type="button" id="alloc-drawer-close">Close</button></div>
       <div class="alloc-drawer-scroll">${allocationLoadPanel(desk, supervisors)}</div>
-      <footer>
-        <p class="muted">Allocations stay in draft until they are published to the hub.</p>
-        <button type="button" class="button" id="alloc-publish" ${summary.blocked || (!summary.drafts && !summary.clears) ? 'disabled' : ''}>Publish allocations to hub</button>
-        <p class="muted">${summary.drafts} draft${summary.drafts === 1 ? '' : 's'}${summary.clears ? ' · ' + summary.clears + ' to clear' : ''}</p>
-      </footer>
     </div>
   </aside>`;
 }
@@ -1182,6 +1281,9 @@ export function bindAllocation(target, desk) {
     state.allocationSubjects = {};
     state.allocationSubjectFilter = [];
     state.allocationCustomFilters = {};
+    state.allocationQuery = '';
+    state.allocationCustomQueries = {};
+    state.allocationCustomOpen = '';
     state.tokenEditId = '';
     loadAllocation();
   });
@@ -1213,6 +1315,11 @@ export function bindAllocation(target, desk) {
     select.addEventListener('change', function() {
       const studentId = select.getAttribute('data-alloc-inter-subject');
       const student = (desk.students || []).find(function(item) { return item.studentId === studentId; });
+      if (allocationIsPublished(student)) {
+        showError(new Error('This allocation is published. Unpublish it before changing the token.'));
+        paintAllocation();
+        return;
+      }
       state.allocationInterdisciplinarySubject[studentId] = select.value;
       if (student && student.token && allocationInterdisciplinaryOn(student)) {
         saveAllocationDraft(studentId, student.token.staffId, selectedAllocationSubject(student), true, 'Interdisciplinary subject saved.');
@@ -1246,15 +1353,61 @@ export function bindAllocation(target, desk) {
       paintAllocation();
     });
   });
-  target.querySelectorAll('[data-alloc-custom-filter]').forEach(function(select) {
-    select.addEventListener('change', function() {
-      const key = select.getAttribute('data-alloc-custom-filter');
+  target.querySelectorAll('[data-alloc-custom-value]').forEach(function(button) {
+    button.addEventListener('mousedown', function(event) { event.preventDefault(); });
+  });
+  target.querySelectorAll('[data-alloc-custom-query]').forEach(function(input) {
+    input.addEventListener('focus', function() {
+      const key = input.getAttribute('data-alloc-custom-query');
+      if (state.allocationCustomOpen === key) return;
+      state.allocationCustomOpen = key;
+      const caret = input.selectionStart;
+      paintAllocation();
+      refocusAllocationControl('data-alloc-custom-query', key, caret);
+    });
+    input.addEventListener('input', function() {
+      const key = input.getAttribute('data-alloc-custom-query');
+      const caret = input.selectionStart;
+      state.allocationCustomOpen = key;
+      state.allocationCustomQueries = Object.assign({}, state.allocationCustomQueries || {}, { [key]: input.value });
+      paintAllocation();
+      refocusAllocationControl('data-alloc-custom-query', key, caret);
+    });
+    input.addEventListener('blur', function() {
+      const key = input.getAttribute('data-alloc-custom-query');
+      window.setTimeout(function() {
+        const active = document.activeElement;
+        const inside = active && active.getAttribute && (active.getAttribute('data-alloc-custom-query') === key || active.getAttribute('data-alloc-custom-filter') === key);
+        if (inside || state.allocationCustomOpen !== key) return;
+        state.allocationCustomOpen = '';
+        paintAllocation();
+      }, 0);
+    });
+  });
+  target.querySelectorAll('[data-alloc-custom-value]').forEach(function(button) {
+    button.addEventListener('click', function() {
+      const key = button.getAttribute('data-alloc-custom-filter');
+      const value = button.getAttribute('data-alloc-custom-value') || '';
       const filters = Object.assign({}, state.allocationCustomFilters || {});
-      if (select.value) filters[key] = select.value;
+      const current = allocationCustomSelections(filters, key);
+      const index = current.indexOf(value);
+      const next = current.slice();
+      if (index >= 0) next.splice(index, 1);
+      else next.push(value);
+      if (next.length) filters[key] = next;
       else delete filters[key];
       state.allocationCustomFilters = filters;
+      state.allocationCustomOpen = key;
       paintAllocation();
+      refocusAllocationControl('data-alloc-custom-query', key, null);
     });
+  });
+  const studentSearch = document.getElementById('alloc-student-search');
+  if (studentSearch) studentSearch.addEventListener('input', function() {
+    const caret = studentSearch.selectionStart;
+    state.allocationQuery = studentSearch.value;
+    paintAllocation();
+    refocusAllocationControl('id', 'alloc-student-search', caret);
   });
   const clearFilters = document.getElementById('alloc-clear-filters');
   if (clearFilters) clearFilters.addEventListener('click', function() {
@@ -1265,6 +1418,9 @@ export function bindAllocation(target, desk) {
     state.allocationAllocatedFilter = [];
     state.allocationTeacherFilter = [];
     state.allocationCustomFilters = {};
+    state.allocationQuery = '';
+    state.allocationCustomQueries = {};
+    state.allocationCustomOpen = '';
     paintAllocation();
   });
   const drawerPeek = document.getElementById('alloc-drawer-peek');
@@ -1335,25 +1491,20 @@ export function bindAllocation(target, desk) {
   });
   const batch = document.getElementById('alloc-batch-assign');
   if (batch) batch.addEventListener('click', assignAllocationBatch);
-  target.querySelectorAll('[data-alloc-supervisor]').forEach(function(select) {
-    select.addEventListener('change', function() {
-      const studentId = select.getAttribute('data-alloc-supervisor');
-      const student = (desk.students || []).find(function(item) { return item.studentId === studentId; });
-      const subject = student ? selectedAllocationSubject(student) : '';
-      if (select.value && !supervisorAcceptsSubject(desk, select.value, subject)) {
-        showError(new Error(subject + ' does not match the supervisor\'s EE subjects.'));
-        paintAllocation();
-        return;
-      }
-      saveAllocationDraft(studentId, select.value, subject, allocationInterdisciplinaryOn(student), select.value ? 'Draft saved.' : 'Assignment cleared.');
-    });
-  });
+  const publishSelected = document.getElementById('alloc-batch-publish');
+  if (publishSelected) publishSelected.addEventListener('click', publishSelectedAllocations);
+  const unpublishSelected = document.getElementById('alloc-batch-unpublish');
+  if (unpublishSelected) unpublishSelected.addEventListener('click', unpublishSelectedAllocations);
   target.querySelectorAll('[data-alloc-subject]').forEach(function(button) {
     button.addEventListener('click', function() {
       const studentId = button.getAttribute('data-alloc-subject');
       const subject = button.getAttribute('data-subject');
       const student = (desk.students || []).find(function(item) { return item.studentId === studentId; });
       const previous = student ? selectedAllocationSubject(student) : '';
+      if (allocationIsPublished(student) && !sameSubjectName(previous, subject)) {
+        showError(new Error('This allocation is published. Unpublish it before changing the token.'));
+        return;
+      }
       state.allocationSubjects[studentId] = subject;
       if (sameSubjectName(previous, subject)) {
         paintAllocation();
@@ -1370,6 +1521,11 @@ export function bindAllocation(target, desk) {
     box.addEventListener('change', function() {
       const studentId = box.getAttribute('data-alloc-ee-inter');
       const student = (desk.students || []).find(function(item) { return item.studentId === studentId; });
+      if (allocationIsPublished(student)) {
+        showError(new Error('This allocation is published. Unpublish it before changing the token.'));
+        paintAllocation();
+        return;
+      }
       state.allocationInterdisciplinary[studentId] = box.checked;
       if (box.checked) {
         state.allocationInterdisciplinarySubject[studentId] = allocationInterdisciplinarySubject(student);
@@ -1396,6 +1552,10 @@ export function bindAllocation(target, desk) {
       const studentId = button.getAttribute('data-alloc-cue-student');
       const staffId = button.getAttribute('data-alloc-supervisor-cue');
       const student = (desk.students || []).find(function(item) { return item.studentId === studentId; });
+      if (allocationIsPublished(student)) {
+        showError(new Error('This allocation is published. Unpublish it before changing the token.'));
+        return;
+      }
       const subject = state.allocationSubjects[studentId] || (student ? selectedAllocationSubject(student) : '');
       if (!supervisorAcceptsSubject(desk, staffId, subject)) {
         showError(new Error(subject + ' does not match the supervisor\'s EE subjects.'));
@@ -1404,16 +1564,6 @@ export function bindAllocation(target, desk) {
       saveAllocationDraft(studentId, staffId, subject, allocationInterdisciplinaryOn(student), 'Draft saved.');
     });
   });
-  target.querySelectorAll('[data-alloc-reopen]').forEach(function(button) {
-    button.addEventListener('click', function() {
-      callServer('reopenAllocation', state.cohortId, button.getAttribute('data-alloc-reopen')).then(function() {
-        showSuccess('Returned to draft.');
-        loadAllocation();
-      }).catch(showError);
-    });
-  });
-  const publish = document.getElementById('alloc-publish');
-  if (publish) publish.addEventListener('click', publishAllocations);
   const sheetUrl = document.getElementById('alloc-sheet-url');
   if (sheetUrl) sheetUrl.addEventListener('input', function(event) {
     state.allocationSheetUrl = event.target.value;
@@ -1479,7 +1629,7 @@ export function cohortTokensMarkup(board) {
       <p>Number of students <strong>${summary.studentCount}</strong></p>
     </div>`)}
     <div class="toolbar"><button type="button" class="button secondary" id="alloc-open-quotas">Edit EE quotas</button><span class="muted">${tokens.length} token${tokens.length === 1 ? '' : 's'} · cohort ${escapeHtml(board.cohortId || state.cohortId)}</span></div>
-    <p class="muted">These slots already belong to ${escapeHtml(board.cohortId)}. Adding tokens does not remove the ones here. A published token has to go back to draft on the dashboard before it can be deleted.</p>
+    <p class="muted">These slots already belong to ${escapeHtml(board.cohortId)}. Adding tokens does not remove the ones here. A published token stays locked until it is unpublished on the allocation dashboard.</p>
     ${allocationSection('token-add', 'Add tokens', `<div class="alloc-batch">
         <label for="token-staff">Staff</label>
         <select id="token-staff"><option value="">Choose staff</option>${(board.staff || []).map(function(person) {
@@ -1500,7 +1650,7 @@ export function cohortTokensMarkup(board) {
         <td>${escapeHtml(token.status)}</td>
         <td>${token.allocatedTo ? `<strong>${escapeHtml(token.studentName || token.allocatedTo)}</strong><div class="muted">${escapeHtml(token.allocatedTo)}</div>` : '—'}${token.interdisciplinary ? ' <span class="id-tag" title="Interdisciplinary EE">ID</span>' : ''}</td>
         <td>${escapeHtml(token.assignedSubject || '—')}</td>
-        <td><div class="actions"><button type="button" class="link-button" data-token-edit="${escapeHtml(token.id)}">Edit</button>${token.status === 'committed' ? '' : `<button type="button" class="link-button" data-token-delete="${escapeHtml(token.id)}">Delete</button>`}</div></td>
+        <td><div class="actions">${token.status === 'committed' ? '<span class="muted">Locked</span>' : `<button type="button" class="link-button" data-token-edit="${escapeHtml(token.id)}">Edit</button><button type="button" class="link-button" data-token-delete="${escapeHtml(token.id)}">Delete</button>`}</div></td>
       </tr>`;
     }).join('')}</tbody></table></div>` : '<div class="empty">This cohort has no tokens yet. Add them here, or generate them from EE quotas.</div>'}`;
 }
@@ -1615,21 +1765,51 @@ export function assignAllocationBatch() {
   if (!state.allocationSelected.length) { showError(new Error('Select at least one student.')); return; }
   const subjects = {};
   state.allocationSelected.forEach(function(id) { subjects[id] = state.allocationSubjects[id] || ''; });
-  callServer('batchDraftAllocations', state.cohortId, staffId, state.allocationSelected.slice(), subjects).then(function(result) {
+  callServer('batchDraftAllocations', state.cohortId, staffId, state.allocationSelected.slice(), subjects, true).then(function(result) {
     const skipped = (result.skipped || []).length;
-    showSuccess(result.assigned.length + ' drafted' + (skipped ? '. ' + skipped + ' left unchanged.' : '.'));
+    const locked = (result.skipped || []).filter(function(item) { return /published/i.test(item.reason || ''); }).length;
+    let message = result.assigned.length + ' drafted' + (skipped ? '. ' + skipped + ' left unchanged.' : '.');
+    if (locked) message += ' Unpublish a published allocation before changing its token.';
+    showSuccess(message);
     state.allocationSelected = [];
     loadAllocation();
   }).catch(showError);
 }
 
-export function publishAllocations() {
-  const publish = state.allocationDesk && state.allocationDesk.publish ? state.allocationDesk.publish : { drafts: 0, clears: 0 };
-  let message = 'You are about to publish ' + publish.drafts + ' draft allocation' + (publish.drafts === 1 ? '' : 's') + ' to the live Hub.';
-  if (publish.clears) message += ' ' + publish.clears + ' released supervisor' + (publish.clears === 1 ? '' : 's') + ' will be cleared.';
+function selectedAllocationRows() {
+  const selected = state.allocationSelected || [];
+  return ((state.allocationDesk && state.allocationDesk.students) || []).filter(function(student) {
+    return selected.indexOf(student.studentId) >= 0;
+  });
+}
+
+export function publishSelectedAllocations() {
+  if (!state.allocationSelected.length) { showError(new Error('Select at least one student.')); return; }
+  const students = selectedAllocationRows();
+  const drafts = students.filter(function(student) { return student.flags && student.flags.drafted; });
+  const clears = students.filter(function(student) { return student.pendingClear && !(student.flags && student.flags.drafted); });
+  if (!drafts.length && !clears.length) { showError(new Error('Select a drafted allocation to publish.')); return; }
+  let message = 'Publish ' + drafts.length + ' selected draft allocation' + (drafts.length === 1 ? '' : 's') + ' to the live Hub.';
+  if (clears.length) message += ' ' + clears.length + ' released supervisor' + (clears.length === 1 ? '' : 's') + ' will be cleared.';
   if (!window.confirm(message + ' Proceed?')) return;
-  callServer('commitAllocations', state.cohortId).then(function(result) {
+  const ids = drafts.map(function(student) { return student.studentId; }).concat(clears.map(function(student) { return student.studentId; }));
+  callServer('commitAllocations', state.cohortId, ids).then(function(result) {
     showSuccess('Published ' + result.published + ' allocation' + (result.published === 1 ? '' : 's') + (result.cleared ? ' and cleared ' + result.cleared : '') + '.');
+    state.allocationSelected = [];
+    loadAllocation();
+  }).catch(showError);
+}
+
+export function unpublishSelectedAllocations() {
+  if (!state.allocationSelected.length) { showError(new Error('Select at least one student.')); return; }
+  const published = selectedAllocationRows().filter(function(student) { return allocationIsPublished(student); });
+  if (!published.length) { showError(new Error('Select a published allocation to send back to draft.')); return; }
+  const count = published.length;
+  if (!window.confirm('Send ' + count + ' published allocation' + (count === 1 ? '' : 's') + ' back to draft? Their tokens can be edited again.')) return;
+  callServer('reopenAllocations', state.cohortId, published.map(function(student) { return student.studentId; })).then(function(result) {
+    const reopened = (result && result.reopened ? result.reopened : []).length;
+    showSuccess('Sent ' + reopened + ' allocation' + (reopened === 1 ? '' : 's') + ' back to draft.');
+    state.allocationSelected = [];
     loadAllocation();
   }).catch(showError);
 }
@@ -2063,8 +2243,10 @@ export function visibleAllocationStudents(desk) {
     return column.filterable === true;
   }).map(function(column) { return column.key; }));
   const rows = (desk.students || []).filter(function(student) {
+    if (!allocationQueryMatches(student, state.allocationQuery)) return false;
     if (state.allocationStatus === 'unallocated' && student.token) return false;
-    if (state.allocationStatus === 'draft' && !student.flags.drafted) return false;
+    if (state.allocationStatus === 'draft' && !(student.flags && student.flags.drafted)) return false;
+    if (state.allocationStatus === 'published' && !allocationIsPublished(student)) return false;
     if (state.allocationSupport === 'flagged' && !student.flags.needsSupport) return false;
     const flags = state.allocationSupportFlags || [];
     if (flags.length) {
@@ -2085,9 +2267,11 @@ export function visibleAllocationStudents(desk) {
     if (teachers.length && teachers.indexOf(student.token ? student.token.staffId : '') < 0) return false;
     for (const key of Object.keys(customFilters)) {
       if (!filterableKeys.has(key)) continue;
-      const expected = customFilters[key];
-      const value = student.dynamicData ? student.dynamicData[key] : '';
-      if (expected && String(value === undefined || value === null ? '' : value) !== expected) return false;
+      const wanted = allocationCustomSelections(customFilters, key);
+      if (!wanted.length) continue;
+      const raw = student.dynamicData ? student.dynamicData[key] : '';
+      const value = String(raw === undefined || raw === null ? '' : raw);
+      if (!wanted.some(function(item) { return item === value; })) return false;
     }
     return true;
   });
@@ -2122,11 +2306,10 @@ export function allocationSupervisorLabel(person) {
   return person.displayName + (subjects ? ' · ' + subjects : '') + ' (' + slots + ')';
 }
 
-export function allocationMark(title, mode) {
-  const path = mode === 'warn'
-    ? '<path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/>'
-    : '<path d="M12 17.27 18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/>';
-  return `<span class="alloc-mark ${mode}" title="${escapeHtml(title)}"><svg viewBox="0 0 24 24" aria-hidden="true">${path}</svg></span>`;
+export function allocationMark(title, mode, kind) {
+  const tone = kind === 'subject' || kind === 'hl' ? kind : 'status';
+  const path = '<path d="M12 17.27 18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/>';
+  return `<span class="alloc-mark ${mode} ${tone}" title="${escapeHtml(title)}"><svg viewBox="0 0 24 24" aria-hidden="true">${path}</svg></span>`;
 }
 
 export function allocationKeyOptions(keys, current, allowEmpty) {
