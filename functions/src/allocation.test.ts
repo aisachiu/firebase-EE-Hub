@@ -414,12 +414,17 @@ test('choice edits enforce Yes or No and an interdisciplinary token publishes on
 
   await app.store.set(COLLECTIONS.studentUsers, JANE, { StudentId: JANE, DisplayName: 'Jane Doe', subject: '' });
   await assert.rejects(draftAllocation(app, '2026', JANE, SMITH, 'Biology', true), /does not match/);
-  await draftAllocation(app, '2026', JANE, SMITH, 'History', true);
+  await draftAllocation(app, '2026', JANE, SMITH, 'History', true, 'Theatre');
   const drafted = (await app.store.listTokens('2026')).find((token) => token.allocatedTo === JANE);
   assert.equal(drafted?.interdisciplinary, true);
+  assert.equal(drafted?.interdisciplinarySubject, 'Theatre');
   await commitAllocations(app, '2026');
   assert.equal((await app.store.getMember('2026', JANE))?.interdisciplinary, true);
+  assert.equal((await app.store.getMember('2026', JANE))?.Interdisciplinary, true);
+  assert.equal((await app.store.getMember('2026', JANE))?.InterdisciplinarySubject, 'Theatre');
+  assert.equal((await app.store.get(COLLECTIONS.studentUsers, JANE))?.Interdisciplinary, true);
   assert.equal((await app.store.get(COLLECTIONS.studentUsers, JANE))?.interdisciplinary, true);
+  assert.equal((await app.store.get(COLLECTIONS.studentUsers, JANE))?.InterdisciplinarySubject, 'Theatre');
   const board = await listCohortTokens(app, '2026');
   const held = board.tokens.find((token) => token.allocatedTo === JANE);
   assert.equal(held?.studentName, 'Doe, Jane');

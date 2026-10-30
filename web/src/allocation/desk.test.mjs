@@ -69,6 +69,10 @@ test('allocation desk tags, filter, column order, supervisor cues, and token loa
     state.allocationOpenStudent = '';
     state.allocationAssignedOpen = {};
     state.allocationInterdisciplinary = {};
+    state.allocationInterdisciplinarySubject = {};
+    state.allocationCustomFilters = {};
+    state.allocationDrawerSortColumn = 'subject';
+    state.allocationDrawerSortDirection = 1;
     state.allocationDataSelected = [];
     state.adminHeaderOpen = {};
     state.adminTableSort = { 'alloc-desk': { key: 'name', dir: 1 } };
@@ -124,10 +128,12 @@ test('allocation desk tags, filter, column order, supervisor cues, and token loa
     const load = pure.subjectTokenLoad([{ status: 'available', eligibleSubjects: 'Mathematics, Analysis and approaches' }]);
     const table = deskMod.subjectTokenLoadMarkup(load);
     assert.match(table, /Mathematics, Analysis and approaches/);
-    assert.match(table, /Pool \| UPool \| Alloc \| Rem/);
+    assert.match(table, />Pool/);
+    assert.match(table, />UPool/);
+    assert.match(table, />Alloc/);
+    assert.match(table, />Rem/);
     assert.match(table, /Total requested \(Pool\)/);
     assert.match(table, /class="alloc-subject-block"/);
-    assert.match(table, /class="alloc-subject-figures"/);
     assert.equal((table.match(/alloc-subject-block/g) || []).length, 1);
     assert.doesNotMatch(table, /<table/);
     assert.doesNotMatch(table, />Mathematics</);
@@ -135,6 +141,7 @@ test('allocation desk tags, filter, column order, supervisor cues, and token loa
     assert.match(html, /data-alloc-allocated-filter="Psychology"/);
     assert.match(html, /title="Psychology">Psy</);
     assert.match(html, /data-alloc-teacher-filter="psy@school.edu"/);
+    assert.ok(html.indexOf('id="alloc-batch-assign"') < html.indexOf('<table'));
     assert.match(html, /data-alloc-load="assigned"/);
     assert.match(html, /aria-label="Star key"/);
     assert.doesNotMatch(html, /id="alloc-cohort"/);
@@ -166,6 +173,18 @@ test('allocation desk tags, filter, column order, supervisor cues, and token loa
     assert.equal((warned.match(/alloc-capacity-warn/g) || []).length, 2);
     const biology = warned.slice(warned.indexOf('Biology'), warned.indexOf('Chemistry'));
     assert.match(biology, /role="progressbar"[^>]*aria-valuenow="2"[^>]*aria-valuemax="4"/);
+    state.allocationDrawerSortColumn = 'pool';
+    state.allocationDrawerSortDirection = -1;
+    const sortedByPool = deskMod.subjectTokenLoadMarkup({
+      subjects: [
+        { subject: 'Biology', pool: 4, upool: 1, alloc: 2, remaining: 2 },
+        { subject: 'Chemistry', pool: 1, upool: 5, alloc: 0, remaining: 2 },
+      ],
+    });
+    assert.ok(sortedByPool.indexOf('Biology') < sortedByPool.indexOf('Chemistry'));
+    assert.match(sortedByPool, /data-alloc-drawer-sort="pool" aria-sort="descending">Pool ▼/);
+    state.allocationDrawerSortColumn = 'subject';
+    state.allocationDrawerSortDirection = 1;
 
     state.allocationOpenStudent = 'jane@school.edu';
     state.allocationDesk = desk();
@@ -174,11 +193,19 @@ test('allocation desk tags, filter, column order, supervisor cues, and token loa
     const expanded = deskMod.allocationRowMarkup(expandedStudent, supervisors(), [], {});
     assert.match(expanded, /data-alloc-expand="jane@school.edu"/);
     assert.match(expanded, /<dt>Choice 1<\/dt>/);
+    assert.ok(expanded.indexOf('<dt>StudentId</dt>') < expanded.indexOf('<dt>Choice 1</dt>'));
     assert.match(expanded, /<dt>Choice 2<\/dt>/);
     assert.match(expanded, /<dt>Interdisciplinary<\/dt>/);
     assert.match(expanded, /Research notes/);
     assert.match(expanded, /A long paragraph/);
     assert.match(expanded, /Interdisciplinary EE/);
+    state.allocationInterdisciplinary['jane@school.edu'] = true;
+    const interRow = deskMod.allocationRowMarkup(student({
+      choices: { primary: 'Psychology', secondary: 'Theater', interdisciplinary: true },
+    }), supervisors(), [], {});
+    assert.match(interRow, /data-alloc-inter-subject="jane@school.edu"/);
+    assert.match(interRow, /<option value="Theater" selected>Theater<\/option>/);
+    delete state.allocationInterdisciplinary['jane@school.edu'];
     state.allocationOpenStudent = 'mark@school.edu';
     const onlyMark = deskMod.allocationRowMarkup(expandedStudent, supervisors(), [], {});
     assert.doesNotMatch(onlyMark, /alloc-expanded/);
@@ -377,6 +404,17 @@ test('allocation desk tags, filter, column order, supervisor cues, and token loa
     state.allocationAllocatedFilter = ['Theater'];
     flagSource.students[1].token = { staffId: 'art@school.edu', staffName: 'Mx Art', assignedSubject: 'Theater', eligibleSubjects: ['Theater'] };
     assert.deepEqual(deskMod.visibleAllocationStudents(flagSource).map((item) => item.studentId), ['mark@school.edu']);
+    const customSource = desk();
+    customSource.settings.columns = [{ key: 'Y10 GPA', filterable: true }];
+    customSource.students[0].dynamicData = { 'Y10 GPA': 'Weak' };
+    customSource.students[1].dynamicData = { 'Y10 GPA': 'Strong' };
+    state.allocationAllocatedFilter = [];
+    state.allocationTeacherFilter = [];
+    state.allocationCustomFilters = { 'Y10 GPA': 'Weak' };
+    assert.match(deskMod.allocationCustomFilterMarkup(customSource), /data-alloc-custom-filter="Y10 GPA"/);
+    assert.match(deskMod.allocationDashboardMarkup(customSource), /data-alloc-custom-filter="Y10 GPA"/);
+    assert.deepEqual(deskMod.visibleAllocationStudents(customSource).map((item) => item.studentId), ['jane@school.edu']);
+    state.allocationCustomFilters = {};
     state.allocationAllocatedFilter = [];
     state.allocationTeacherFilter = ['art@school.edu'];
     assert.deepEqual(deskMod.visibleAllocationStudents(flagSource).map((item) => item.studentId), ['mark@school.edu']);

@@ -67,6 +67,7 @@ export function pendingSettled(student, edit) {
   if (!student || !student.token || student.token.status !== 'draft') return false;
   if (emailOf(student.token.staffId) !== staffId) return false;
   if ((student.token.interdisciplinary === true) !== (edit.interdisciplinary === true)) return false;
+  if (String(student.token.interdisciplinarySubject || '').toLowerCase() !== String(edit.interdisciplinarySubject || '').toLowerCase()) return false;
   return String(student.token.assignedSubject || '').toLowerCase() === String(edit.subject || '').toLowerCase();
 }
 
@@ -130,6 +131,7 @@ export function overlayPendingEdits(desk, pending) {
         eligibleSubjects: person && person.eligibleSubjects ? person.eligibleSubjects.slice() : (prior && prior.eligibleSubjects ? prior.eligibleSubjects.slice() : []),
         assignedSubject: edit.subject || '',
         interdisciplinary: edit.interdisciplinary === true,
+        interdisciplinarySubject: edit.interdisciplinarySubject || '',
         status: 'draft',
       },
       flags: Object.assign({}, student.flags, { drafted: true, committed: false }),
