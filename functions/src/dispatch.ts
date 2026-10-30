@@ -86,6 +86,7 @@ import {
   previewAllocationIngest,
   previewStaffQuotaTokens,
   reopenAllocation,
+  reopenAllocations,
   saveAllocationChoices,
   saveAllocationConfig,
   assignStaffSubjects,
@@ -184,9 +185,10 @@ export async function dispatch(app: App, method: string, args: unknown[]): Promi
     case 'sendNotificationTest': return sendNotificationTest(app, args[0], args[1]);
     case 'getAllocationDesk': return getAllocationDesk(app, args[0]);
     case 'draftAllocation': return draftAllocation(app, args[0], args[1], args[2], args[3], args[4]);
-    case 'batchDraftAllocations': return batchDraftAllocations(app, args[0], args[1], args[2], args[3]);
+    case 'batchDraftAllocations': return batchDraftAllocations(app, args[0], args[1], args[2], args[3], args[4]);
     case 'reopenAllocation': return reopenAllocation(app, args[0], args[1]);
-    case 'commitAllocations': return commitAllocations(app, args[0]);
+    case 'reopenAllocations': return reopenAllocations(app, args[0], args[1]);
+    case 'commitAllocations': return commitAllocations(app, args[0], args[1]);
     case 'saveAllocationChoices': return saveAllocationChoices(app, args[0], args[1]);
     case 'saveAllocationConfig': return saveAllocationConfig(app, args[0], args[1]);
     case 'previewAllocationIngest': return previewAllocationIngest(app, args[0], args[1], args[2]);

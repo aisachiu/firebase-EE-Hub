@@ -774,6 +774,22 @@ main.staff-list { max-width: 1480px; }
 .alloc-config { display: grid; grid-template-columns: minmax(240px, 320px) minmax(0, 1fr); gap: 16px; align-items: start; }
 .alloc-panel { background: white; border: 1px solid var(--line); padding: 14px; }
 .alloc-panel h2 { margin-bottom: 12px; padding-bottom: 8px; border-bottom: 2px solid var(--line); font-size: 16px; }
+.alloc-dashboard-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin: 0 0 12px; }
+.alloc-metrics-line { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 0; min-width: 0; }
+.alloc-metrics-line p { margin: 0; color: var(--muted); font-size: 13px; }
+.alloc-metrics-line strong { color: var(--ink); }
+.alloc-sync-slot { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; margin-left: auto; flex: none; }
+.alloc-sync-meta { margin: 0; color: var(--muted); font-size: 10px; line-height: 1.25; text-align: right; }
+.alloc-search { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; }
+.alloc-search input { width: min(100%, 320px); padding: 7px 9px; color: var(--ink); background: white; border: 1px solid var(--line); border-radius: 3px; }
+.alloc-combo { display: grid; gap: 4px; }
+.alloc-combo input { width: 100%; padding: 7px 9px; color: var(--ink); background: white; border: 1px solid var(--line); border-radius: 3px; }
+.alloc-combo-list { display: grid; gap: 2px; max-height: 140px; overflow: auto; padding: 4px; border: 1px solid var(--line); background: white; }
+.alloc-combo-list[hidden] { display: none; }
+.alloc-combo-list button { padding: 3px 6px; border: 0; background: transparent; color: inherit; text-align: left; font-size: 13px; }
+.alloc-combo-list button[aria-selected="true"] { background: #e7f1f8; font-weight: 700; }
+.alloc-combo-selected { display: flex; flex-wrap: wrap; gap: 4px; }
+.alloc-combo-chip { border: 1px solid var(--ink); border-radius: 999px; padding: 1px 8px; background: #e7f1f8; color: var(--ink); font-size: 12px; font-weight: 700; }
 .alloc-filters { display: grid; grid-template-columns: minmax(220px, 1.4fr) minmax(140px, .8fr) minmax(180px, 1fr); gap: 12px; margin-bottom: 12px; padding: 12px; background: white; border: 1px solid var(--line); }
 .alloc-subject-filter { grid-column: 1 / -1; }
 .alloc-subject-picks { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
@@ -796,11 +812,18 @@ main.staff-list { max-width: 1480px; }
 .alloc-batch select { width: auto; min-width: 220px; }
 .alloc-name { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; font-weight: 700; }
 .alloc-marks { display: flex; gap: 6px; margin-top: 4px; }
-.alloc-mark { display: inline-flex; color: var(--gold); }
-.alloc-mark.off { color: #ced4da; }
-.alloc-mark.warn { color: var(--coral); }
+.alloc-mark { display: inline-flex; color: #004C80; }
+.alloc-mark.status { color: #004C80; }
+.alloc-mark.subject { color: #0b7a4b; }
+.alloc-mark.hl { color: #b86e00; }
+.alloc-mark.status.off { color: #7f9bb3; }
+.alloc-mark.subject.off { color: #7eaa96; }
+.alloc-mark.hl.off { color: #c4a36a; }
+.alloc-mark.hl.warn { color: var(--coral); }
 .alloc-mark svg { width: 14px; height: 14px; fill: currentColor; }
 .alloc-mark.off svg { fill: none; stroke: currentColor; stroke-width: 1.6; }
+.alloc-supervisor-name { font-weight: 700; }
+.alloc-desk tr.is-published td { background: #e7f6f1; }
 .alloc-meta { margin-top: 4px; color: var(--muted); font-size: 12px; }
 .alloc-select.draft { border-color: var(--gold); }
 .alloc-select.committed { border-color: var(--green); }
@@ -905,6 +928,9 @@ th .sort-button:hover, .alloc-head .sort-button:hover, .sort-button:hover { colo
 .form-panel.resource-modal { width: min(1100px, 100%); }
 @container (max-width: 860px) {
   .alloc-layout, .alloc-config, .alloc-filters, .alloc-ingest-layout, .quota-layout { grid-template-columns: 1fr; }
+  .alloc-dashboard-head { flex-direction: column; }
+  .alloc-sync-slot { align-items: flex-start; margin-left: 0; }
+  .alloc-sync-meta { text-align: left; }
   .alloc-side { position: static; max-height: 70vh; }
 }
 @container (max-width: 860px) {

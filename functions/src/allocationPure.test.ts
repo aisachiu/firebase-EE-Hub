@@ -35,6 +35,7 @@ import {
   planCommit,
   publishedAllocationSubject,
   planDraft,
+  planReopen,
   planTokenTopUp,
   preserveEeActive,
   activeSubjectNamesFrom,
@@ -195,15 +196,30 @@ test('drafting claims a matching slot, and clearing a published token waits for 
   const cleared = planDraft({
     studentId: MARK, staffId: '', subject: '', tokens, memberSupervisorId: DAVIS, pendingClear: false,
   });
-  assert.equal(cleared.tokens[0].status, 'available');
-  assert.equal(cleared.pendingClear, true);
+  assert.equal(cleared.changed, false);
+  assert.equal(cleared.code, 'locked');
+  assert.match(cleared.error, /Unpublish/);
 
   const switched = planDraft({
     studentId: MARK, staffId: SMITH, subject: 'Geography', tokens, memberSupervisorId: DAVIS, pendingClear: false,
   });
-  assert.equal(switched.pendingClear, false);
-  assert.equal(switched.tokens.find((item) => item.id === 'd1')?.status, 'available');
-  assert.equal(switched.tokens.find((item) => item.staffId === SMITH)?.allocatedTo, MARK);
+  assert.equal(switched.code, 'locked');
+  assert.equal(switched.changed, false);
+
+  const reopened = planReopen(tokens, MARK);
+  assert.equal(reopened.token?.status, 'draft');
+  const unlocked = tokens.map((item) => (item.id === reopened.token?.id ? reopened.token : item));
+  const released = planDraft({
+    studentId: MARK, staffId: '', subject: '', tokens: unlocked, memberSupervisorId: DAVIS, pendingClear: false,
+  });
+  assert.equal(released.tokens[0].status, 'available');
+  assert.equal(released.pendingClear, true);
+  const moved = planDraft({
+    studentId: MARK, staffId: SMITH, subject: 'Geography', tokens: unlocked, memberSupervisorId: DAVIS, pendingClear: false,
+  });
+  assert.equal(moved.pendingClear, false);
+  assert.equal(moved.tokens.find((item) => item.id === 'd1')?.status, 'available');
+  assert.equal(moved.tokens.find((item) => item.staffId === SMITH)?.allocatedTo, MARK);
 });
 
 test('a batch stops when the supervisor runs out of slots', () => {
@@ -258,6 +274,9 @@ test('publish writes drafts and clears a released supervisor', () => {
   assert.deepEqual(plan.assignments.map((row) => row.studentId), [JANE]);
   assert.deepEqual(plan.clears, [MARK]);
   assert.equal(plan.warnings.length, 0);
+  const subset = planCommit(tokens, workspaces, [MARK]);
+  assert.deepEqual(subset.assignments, []);
+  assert.deepEqual(subset.clears, [MARK]);
   assert.equal(publishedAllocationSubject('History', { choice1: 'Biology' }, 'choice1'), 'History');
   assert.equal(publishedAllocationSubject('', { choice1: 'Biology' }, 'choice1'), 'Biology');
   assert.equal(publishedAllocationSubject('  ', { choice1: 'Biology' }, ''), '');
@@ -574,6 +593,38 @@ test('a subject name that contains commas stays one requested subject and one to
   assert.equal(strictInterdisciplinaryValue('Yes'), 'Yes');
   assert.equal(strictInterdisciplinaryValue('yes'), null);
   assert.equal(strictInterdisciplinaryValue('No'), 'No');
+});
+
+test('a batch override assigns the teacher token when the requested subject does not match', () => {
+  const tokens = [
+    token({ id: 'held', staffId: DAVIS, status: 'committed', allocatedTo: JANE, assignedSubject: 'Art', eligibleSubjects: ['Art'] }),
+    token({ id: 'open', staffId: SMITH, status: 'available', eligibleSubjects: ['History'] }),
+    token({ id: 'open2', staffId: SMITH, status: 'available', eligibleSubjects: ['History'] }),
+  ];
+  const refused = planBatchDraft({
+    studentIds: [MARK],
+    staffId: SMITH,
+    subjects: { [MARK]: 'Biology' },
+    tokens,
+    supervisorByStudent: {},
+    pendingClearByStudent: {},
+  });
+  assert.deepEqual(refused.assigned, []);
+  assert.match(refused.skipped[0].reason, /does not match/);
+  const overridden = planBatchDraft({
+    studentIds: [JANE, MARK],
+    staffId: SMITH,
+    subjects: { [JANE]: 'History', [MARK]: 'Biology' },
+    tokens,
+    supervisorByStudent: {},
+    pendingClearByStudent: {},
+    overrideSubject: true,
+  });
+  assert.deepEqual(overridden.assigned, [MARK]);
+  assert.match(overridden.skipped[0].reason, /published/);
+  assert.equal(overridden.tokenWrites[0].allocatedTo, MARK);
+  assert.equal(overridden.tokenWrites[0].assignedSubject, 'History');
+  assert.equal(overridden.tokenWrites[0].status, 'draft');
 });
 
 test('a draft is refused when the EE subject does not match the supervisor token', () => {

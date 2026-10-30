@@ -298,6 +298,9 @@ function bindHeaderContext() {
     state.allocationTeacherFilter = [];
     state.allocationSupportFlags = [];
     state.allocationCustomFilters = {};
+    state.allocationQuery = '';
+    state.allocationCustomQueries = {};
+    state.allocationCustomOpen = '';
     state.allocationOpenStudent = '';
     state.allocationAssignedOpen = {};
     state.allocationDataSelected = [];
