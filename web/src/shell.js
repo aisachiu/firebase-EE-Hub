@@ -297,10 +297,12 @@ function bindHeaderContext() {
     state.allocationAllocatedFilter = [];
     state.allocationTeacherFilter = [];
     state.allocationSupportFlags = [];
+    state.allocationCustomFilters = {};
     state.allocationOpenStudent = '';
     state.allocationAssignedOpen = {};
     state.allocationDataSelected = [];
     state.allocationInterdisciplinary = {};
+    state.allocationInterdisciplinarySubject = {};
     state.tokenEditId = '';
     state.memberProvisionFilter = 'all';
     state.staffSupervisor = '';

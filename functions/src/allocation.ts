@@ -98,7 +98,7 @@ export async function getAllocationDesk(app: App, cohortId: unknown): Promise<Al
   return { ...desk, driveReady: drive.ready, driveActor: drive.actorEmail, driveError: drive.ready ? '' : drive.error };
 }
 
-export async function draftAllocation(app: App, cohortId: unknown, studentId: unknown, staffId: unknown, subject: unknown, interdisciplinary?: unknown) {
+export async function draftAllocation(app: App, cohortId: unknown, studentId: unknown, staffId: unknown, subject: unknown, interdisciplinary?: unknown, interdisciplinarySubject?: unknown) {
   const user = await requireAdmin(app, 'DRAFT_ALLOCATION');
   const cohort = await requireCohort(app, text(cohortId));
   const email = normalizeEmail(studentId);
@@ -114,6 +114,7 @@ export async function draftAllocation(app: App, cohortId: unknown, studentId: un
       memberSupervisorId: normalizeEmail(member.supervisorId),
       pendingClear: workspace.pendingClear,
       interdisciplinary: interdisciplinary === true || text(interdisciplinary) === 'Yes',
+      interdisciplinarySubject: text(interdisciplinarySubject),
     });
     if (plan.error) throw new HubError(plan.error);
     if (!plan.changed) return { changed: false, studentId: email };
@@ -235,25 +236,48 @@ export async function commitAllocations(app: App, cohortId: unknown) {
     const now = nowIso();
     const ops: AllocationOp[] = [];
     const tokenById = new Map(tokens.map((token) => [token.id, token]));
-    const writeStudentSubject = (studentId: string, subject: string, interdisciplinary: boolean) => {
+    const writeStudentSubject = (studentId: string, subject: string, interdisciplinary: boolean, interdisciplinarySubject: string) => {
       if (!profileByStudent.get(studentId)) return;
-      ops.push({ kind: 'student', id: studentId, data: { subject, interdisciplinary } });
+      ops.push({
+        kind: 'student',
+        id: studentId,
+        data: { subject, interdisciplinary, interdisciplinarySubject, Interdisciplinary: interdisciplinary, InterdisciplinarySubject: interdisciplinarySubject },
+      });
     };
     plan.assignments.forEach((row) => {
       const workspace = workspaceByStudent.get(row.studentId);
       const subject = publishedAllocationSubject(row.subject, workspace?.subjectChoices, settings.primaryChoiceKey);
       const token = tokenById.get(row.tokenId);
       const interdisciplinary = token?.interdisciplinary === true;
-      const member = { ...byStudent.get(row.studentId)!, supervisorId: row.staffId, subject, interdisciplinary };
+      const interdisciplinarySubject = interdisciplinary
+        ? token?.interdisciplinarySubject || text(workspace?.subjectChoices[settings.secondaryChoiceKey])
+        : '';
+      const member = {
+        ...byStudent.get(row.studentId)!,
+        supervisorId: row.staffId,
+        subject,
+        interdisciplinary,
+        interdisciplinarySubject,
+        Interdisciplinary: interdisciplinary,
+        InterdisciplinarySubject: interdisciplinarySubject,
+      };
       ops.push({ kind: 'member', cohortId: cohort.id, id: row.studentId, data: member });
-      writeStudentSubject(row.studentId, subject, interdisciplinary);
-      if (token) ops.push({ kind: 'token', cohortId: cohort.id, id: token.id, data: { ...token, assignedSubject: subject, interdisciplinary, status: 'committed' } });
+      writeStudentSubject(row.studentId, subject, interdisciplinary, interdisciplinarySubject);
+      if (token) ops.push({ kind: 'token', cohortId: cohort.id, id: token.id, data: { ...token, assignedSubject: subject, interdisciplinary, interdisciplinarySubject, status: 'committed' } });
       if (workspace?.pendingClear) ops.push({ kind: 'workspace', cohortId: cohort.id, id: row.studentId, data: { ...workspace, pendingClear: false, updatedAt: now } });
     });
     plan.clears.forEach((studentId) => {
-      const member = { ...byStudent.get(studentId)!, supervisorId: '', subject: '', interdisciplinary: false };
+      const member = {
+        ...byStudent.get(studentId)!,
+        supervisorId: '',
+        subject: '',
+        interdisciplinary: false,
+        interdisciplinarySubject: '',
+        Interdisciplinary: false,
+        InterdisciplinarySubject: '',
+      };
       ops.push({ kind: 'member', cohortId: cohort.id, id: studentId, data: member });
-      writeStudentSubject(studentId, '', false);
+      writeStudentSubject(studentId, '', false, '');
       const workspace = workspaceByStudent.get(studentId);
       if (workspace) ops.push({ kind: 'workspace', cohortId: cohort.id, id: studentId, data: { ...workspace, pendingClear: false, updatedAt: now } });
     });
@@ -540,6 +564,7 @@ export async function addCohortTokens(app: App, cohortId: unknown, staffId: unkn
         allocatedTo: '',
         assignedSubject: '',
         interdisciplinary: false,
+        interdisciplinarySubject: '',
         status: 'available',
         createdAt: now,
       };

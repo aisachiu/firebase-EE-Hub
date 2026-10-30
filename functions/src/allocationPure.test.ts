@@ -73,6 +73,7 @@ function token(partial: Partial<TokenRecord> & Pick<TokenRecord, 'id' | 'staffId
     allocatedTo: '',
     assignedSubject: '',
     interdisciplinary: false,
+    interdisciplinarySubject: '',
     createdAt: '2026-10-18T00:00:00.000Z',
     ...partial,
   };
@@ -595,9 +596,23 @@ test('a draft is refused when the EE subject does not match the supervisor token
     memberSupervisorId: '',
     pendingClear: false,
     interdisciplinary: true,
+    interdisciplinarySubject: 'Eng Lit',
   });
   assert.equal(marked.tokens[0].interdisciplinary, true);
+  assert.equal(marked.tokens[0].interdisciplinarySubject, 'Eng Lit');
   assert.equal(marked.tokens[0].assignedSubject, 'History');
+  const cleared = planDraft({
+    studentId: JANE,
+    staffId: SMITH,
+    subject: 'History',
+    tokens: marked.tokens,
+    memberSupervisorId: '',
+    pendingClear: false,
+    interdisciplinary: false,
+    interdisciplinarySubject: 'Eng Lit',
+  });
+  assert.equal(cleared.tokens[0].interdisciplinary, false);
+  assert.equal(cleared.tokens[0].interdisciplinarySubject, '');
   const saved = applySavedConfig(mergeDetected(emptySettings(), ['choice1'], ['Notes']), {
     primaryChoiceKey: 'choice1',
     columns: [{ key: 'Notes', showOnCard: false, filterable: false, sortable: false, expanded: true }],
