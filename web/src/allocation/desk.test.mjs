@@ -158,9 +158,45 @@ test('allocation desk tags, filter, column order, supervisor cues, and token loa
     assert.match(html, /Unassigned \(students\)<\/span> <strong>2<\/strong>/);
     assert.match(html, /Remaining Tokens<\/span> <strong>4<\/strong>/);
     assert.match(html, /class="alloc-mark on status"/);
-    assert.match(html, /class="alloc-mark off subject"/);
-    assert.match(html, /class="alloc-mark on hl"/);
-    assert.match(html, /class="alloc-mark warn hl"/);
+    assert.match(html, /class="alloc-mark on subject" title="First choice match"/);
+    assert.match(html, /class="alloc-mark off subject" title="Second choice"/);
+    assert.match(html, /class="alloc-mark warn subject" title="Not first or second choice"/);
+    assert.match(html, /class="alloc-mark on hl" title="HL subject"/);
+    assert.match(html, /class="alloc-mark off hl" title="SL subject"/);
+    assert.match(html, /class="alloc-mark warn hl" title="Not one of the six subjects"/);
+    assert.match(html, />First choice match</);
+    assert.match(html, />Second choice</);
+    assert.match(html, />Not 1st or 2nd</);
+    assert.match(html, />HL subject</);
+    assert.match(html, />SL subject</);
+    assert.match(html, />Not in 6 subjects</);
+    assert.doesNotMatch(html, /Subject match/);
+    assert.doesNotMatch(html, /HL match/);
+    const choiceRow = (partial) => deskMod.allocationRowMarkup(student(partial), supervisors(), [], {});
+    const firstChoice = choiceRow({
+      choices: { primary: 'History', secondary: 'Eng Lit', interdisciplinary: false },
+      token: { assignedSubject: 'History', staffId: 'psy@school.edu', status: 'draft' },
+      dynamicData: { HL: 'History, Biology', 'SL subjects': 'Mathematics' },
+    });
+    assert.match(firstChoice, /class="alloc-mark on subject" title="First choice match"/);
+    assert.match(firstChoice, /class="alloc-mark on hl" title="HL subject"/);
+    const secondChoice = choiceRow({
+      choices: { primary: 'History', secondary: 'Eng Lit', interdisciplinary: false },
+      token: { assignedSubject: 'Eng Lit', staffId: 'art@school.edu', status: 'draft' },
+      dynamicData: { HL: 'Biology', 'SL subjects': 'Eng Lit, Mathematics' },
+    });
+    assert.match(secondChoice, /class="alloc-mark off subject" title="Second choice"/);
+    assert.match(secondChoice, /class="alloc-mark off hl" title="SL subject"/);
+    const outside = choiceRow({
+      choices: { primary: 'History', secondary: 'Eng Lit', interdisciplinary: false },
+      token: { assignedSubject: 'Geography', staffId: 'open@school.edu', status: 'draft' },
+      dynamicData: { HL: 'Biology, Chemistry', 'SL subjects': 'Mathematics, Eng Lit' },
+    });
+    assert.match(outside, /class="alloc-mark warn subject" title="Not first or second choice"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 3h2v12h-2z"/);
+    assert.match(outside, /class="alloc-mark warn hl" title="Not one of the six subjects"/);
+    const unallocated = choiceRow({ choices: { primary: 'History', secondary: 'Eng Lit', interdisciplinary: false } });
+    assert.match(unallocated, /class="alloc-mark idle subject" title="No allocation"/);
+    assert.match(unallocated, /class="alloc-mark idle hl" title="No allocation"/);
     assert.match(html, /data-alloc-load="assigned"/);
     assert.match(html, /aria-label="Star key"/);
     assert.doesNotMatch(html, /id="alloc-cohort"/);
