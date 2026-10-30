@@ -1,4 +1,4 @@
-import { coalesceKnownSubjects, colorScaleFill, columnMappingsFrom, columnScaleExtent, LIVE_SHEET_FIELDS, LIVE_SHEET_GROUPS, liveLinkProblems, liveSheetLinked, liveSyncAge, scaleNumber, subjectTokenLoad, subjectsOverlap } from '../../../functions/src/allocationPure.ts';
+import { choiceMatchFlag, coalesceKnownSubjects, colorScaleFill, columnMappingsFrom, columnScaleExtent, diplomaLevelFlag, LIVE_SHEET_FIELDS, LIVE_SHEET_GROUPS, liveLinkProblems, liveSheetLinked, liveSyncAge, scaleNumber, subjectTokenLoad, subjectsOverlap } from '../../../functions/src/allocationPure.ts';
 import { adminDialogKind, closeAdminDialog, openAdminDialog } from '../admin/records.js';
 import { openStaffQuotas } from '../admin/staff.js';
 import { callServer } from '../shared/api.js';
@@ -357,7 +357,7 @@ export function allocationRowMarkup(student, supervisors, columns, extents) {
     <td class="alloc-check"><input type="checkbox" data-alloc-pick="${escapeHtml(student.studentId)}" ${state.allocationSelected.indexOf(student.studentId) >= 0 ? 'checked' : ''} aria-label="Select ${escapeHtml(student.displayName)}"></td>
     <td>
       <div class="alloc-name"><button type="button" class="link-button alloc-student-name" data-alloc-expand="${escapeHtml(student.studentId)}" aria-expanded="${open ? 'true' : 'false'}">${escapeHtml(student.displayName)}</button>${supportTags}${student.choices && student.choices.interdisciplinary ? '<span class="id-tag" title="Requested an interdisciplinary EE">ID</span>' : ''}${student.pendingClear ? '<span class="info-badge">Clears on publish</span>' : ''}</div>
-      <div class="alloc-marks">${allocationMark(statusTitle, student.token ? 'on' : 'off', 'status')}${allocationMark(student.flags.subjectMatch === 'match' ? 'Subject match' : 'No subject match', student.flags.subjectMatch === 'match' ? 'on' : 'off', 'subject')}${allocationMark(student.flags.hlMatch === 'miss' ? 'Not an HL match' : student.flags.hlMatch === 'match' ? 'HL match' : 'No HL match', student.flags.hlMatch === 'match' ? 'on' : student.flags.hlMatch === 'miss' ? 'warn' : 'off', 'hl')}</div>
+      <div class="alloc-marks">${allocationMark(statusTitle, student.token ? 'on' : 'off', 'status')}${allocationChoiceMark(student)}${allocationLevelMark(student)}</div>
     </td>
     <td>${subjectTags || '<span class="muted">No subject choices</span>'}</td>
     <td><div class="alloc-supervisor-name${supervisorName ? '' : ' muted'}">${escapeHtml(supervisorName || 'Unassigned')}</div>${assignedSubject}${supervisorCues}<label class="check-option alloc-ee-flag"><input type="checkbox" data-alloc-ee-inter="${escapeHtml(student.studentId)}" ${interdisciplinaryOn ? 'checked' : ''} ${locked ? 'disabled' : ''}> Interdisciplinary EE</label>${interdisciplinarySelect}</td>
@@ -418,7 +418,7 @@ export function allocationLegendMarkup() {
   const item = function(title, mode, label, kind) {
     return `<span class="alloc-legend-item">${allocationMark(title, mode, kind)}<span>${escapeHtml(label)}</span></span>`;
   };
-  return `<div class="alloc-legend" aria-label="Star key">${item('Drafted', 'on', 'Drafted', 'status')}${item('Unallocated', 'off', 'Unallocated', 'status')}${item('Subject match', 'on', 'Subject match', 'subject')}${item('No subject match', 'off', 'No subject match', 'subject')}${item('HL match', 'on', 'HL match', 'hl')}${item('Not an HL match', 'warn', 'Not an HL match', 'hl')}</div>`;
+  return `<div class="alloc-legend" aria-label="Star key">${item('Drafted', 'on', 'Drafted', 'status')}${item('Unallocated', 'off', 'Unallocated', 'status')}${item('First choice match', 'on', 'First choice match', 'subject')}${item('Second choice', 'off', 'Second choice', 'subject')}${item('Not first or second choice', 'warn', 'Not 1st or 2nd', 'subject')}${item('HL subject', 'on', 'HL subject', 'hl')}${item('SL subject', 'off', 'SL subject', 'hl')}${item('Not one of the six subjects', 'warn', 'Not in 6 subjects', 'hl')}</div>`;
 }
 
 export function allocationExpandedMarkup(student, colspan) {
@@ -2307,9 +2307,30 @@ export function allocationSupervisorLabel(person) {
   return person.displayName + (subjects ? ' · ' + subjects : '') + ' (' + slots + ')';
 }
 
+function allocationChoiceMark(student) {
+  const assigned = student.token && student.token.assignedSubject ? student.token.assignedSubject : '';
+  const flag = choiceMatchFlag(assigned, student.choices && student.choices.primary, student.choices && student.choices.secondary);
+  if (flag === 'match') return allocationMark('First choice match', 'on', 'subject');
+  if (flag === 'second') return allocationMark('Second choice', 'off', 'subject');
+  if (flag === 'miss') return allocationMark('Not first or second choice', 'warn', 'subject');
+  return allocationMark('No allocation', 'idle', 'subject');
+}
+
+function allocationLevelMark(student) {
+  const assigned = student.token && student.token.assignedSubject ? student.token.assignedSubject : '';
+  const settings = (state.allocationDesk && state.allocationDesk.settings) || {};
+  const flag = diplomaLevelFlag(assigned, student.dynamicData || {}, settings.hlColumn || '');
+  if (flag === 'match') return allocationMark('HL subject', 'on', 'hl');
+  if (flag === 'sl') return allocationMark('SL subject', 'off', 'hl');
+  if (flag === 'miss') return allocationMark('Not one of the six subjects', 'warn', 'hl');
+  return allocationMark(assigned ? 'Subject level not listed' : 'No allocation', 'idle', 'hl');
+}
+
 export function allocationMark(title, mode, kind) {
   const tone = kind === 'subject' || kind === 'hl' ? kind : 'status';
-  const path = '<path d="M12 17.27 18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/>';
+  const star = '<path d="M12 17.27 18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/>';
+  const bang = '<path d="M11 3h2v12h-2z"/><path d="M11 17.5h2V21h-2z"/>';
+  const path = mode === 'warn' ? bang : star;
   return `<span class="alloc-mark ${mode} ${tone}" title="${escapeHtml(title)}"><svg viewBox="0 0 24 24" aria-hidden="true">${path}</svg></span>`;
 }
 

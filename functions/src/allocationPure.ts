@@ -1,7 +1,7 @@
 import { Doc, HubError, normalizeEmail, text, toBoolean } from './util';
 
 export type TokenStatus = 'available' | 'draft' | 'committed';
-export type MatchFlag = 'none' | 'match' | 'miss';
+export type MatchFlag = 'none' | 'match' | 'miss' | 'second' | 'sl';
 
 export interface Grid {
   title: string;
@@ -619,6 +619,119 @@ export function subjectsOverlap(subject: string, eligible: string[]): boolean {
   const needle = normalizeSubject(subject);
   if (!needle) return false;
   return eligible.some((item) => phrasesOverlap(needle, normalizeSubject(item)));
+}
+
+/** Solid when the allocation is the first choice, outline when it is the second, and a warning when it is neither. */
+export function choiceMatchFlag(assigned: unknown, primary: unknown, secondary: unknown): MatchFlag {
+  const subject = text(assigned);
+  if (!subject) return 'none';
+  if (subjectsOverlap(subject, labelsFromChoiceValue(primary, 0))) return 'match';
+  if (subjectsOverlap(subject, labelsFromChoiceValue(secondary, 0))) return 'second';
+  return 'miss';
+}
+
+/**
+ * Solid when the allocation is an HL subject among the student's six, outline when it is an SL subject,
+ * and a warning when the six are known and the allocation is not one of them.
+ * An HL column on its own cannot show the warning: a subject missing from that list may still be an SL subject.
+ */
+export function diplomaLevelFlag(assigned: unknown, dynamicData: Record<string, unknown> | undefined, hlColumn: string): MatchFlag {
+  const subject = text(assigned);
+  if (!subject) return 'none';
+  const levels = diplomaLevels(dynamicData, hlColumn);
+  if (!levels.hl.length && !levels.sl.length && !levels.six.length) return 'none';
+  if (subjectsOverlap(subject, levels.hl)) return 'match';
+  if (subjectsOverlap(subject, levels.sl)) return 'sl';
+  if (levels.six.length && subjectsOverlap(subject, levels.six)) return 'sl';
+  const sixKnown = levels.six.length > 0 || (levels.hl.length > 0 && levels.sl.length > 0);
+  return sixKnown ? 'miss' : 'none';
+}
+
+function diplomaLevels(dynamicData: Record<string, unknown> | undefined, hlColumn: string): { hl: string[]; sl: string[]; six: string[] } {
+  const data = dynamicData || {};
+  const levels = { hl: [] as string[], sl: [] as string[], six: [] as string[] };
+  const seen = new Set<string>();
+  const take = (key: string, fallback: 'hl' | 'sl' | 'six') => {
+    if (!key || seen.has(key) || !Object.prototype.hasOwnProperty.call(data, key)) return;
+    seen.add(key);
+    levelParts(data[key]).forEach((part) => {
+      const peeled = peelSubjectLevel(part);
+      if (!peeled.name) return;
+      const bucket = peeled.level || (fallback === 'six' ? '' : fallback);
+      if (bucket === 'hl') pushLevel(levels.hl, peeled.name);
+      else if (bucket === 'sl') pushLevel(levels.sl, peeled.name);
+      else pushLevel(levels.six, peeled.name);
+    });
+  };
+  const configured = text(hlColumn);
+  if (configured) take(configured, 'hl');
+  Object.keys(data).forEach((key) => {
+    const kind = diplomaColumnKind(key);
+    if (kind) take(key, kind);
+  });
+  return levels;
+}
+
+function levelParts(value: unknown): string[] {
+  if (Array.isArray(value)) return value.flatMap((item) => levelParts(item));
+  const raw = text(value);
+  if (!raw) return [];
+  if (raw.startsWith('[')) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return levelParts(parsed);
+    } catch {
+      // Not JSON. Fall through to the list parser.
+    }
+  }
+  const pieces = raw.split(/[,;\n|]/).map((part) => part.trim()).filter(Boolean);
+  const tagged = pieces.filter((part) => /\b(hl|sl|higher level|standard level)\b/i.test(part));
+  if (tagged.length >= 2) return pieces;
+  if (keepLiteralSubject(raw)) return [raw];
+  return pieces.length ? pieces : [raw];
+}
+
+function diplomaColumnKind(key: string): 'hl' | 'sl' | 'six' | '' {
+  const norm = key.toLowerCase().replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim();
+  if (/^(hl|hl subjects|hl subject|higher level|higher level subjects|higher levels)$/.test(norm)) return 'hl';
+  if (/^(sl|sl subjects|sl subject|standard level|standard level subjects|standard levels)$/.test(norm)) return 'sl';
+  if (/^(subjects|subject list|diploma subjects|ib subjects|six subjects|dp subjects|student subjects|chosen subjects)$/.test(norm)) return 'six';
+  return '';
+}
+
+function peelSubjectLevel(part: string): { name: string; level: 'hl' | 'sl' | '' } {
+  const raw = text(part);
+  const prefix = /^(hl|sl|higher level|standard level)\s*[:\-–]?\s+(.+)$/i.exec(raw);
+  if (prefix) {
+    const level = levelCode(prefix[1]);
+    const name = text(prefix[2]);
+    if (level && name) return { name, level };
+  }
+  const wrapped = /^(.+?)\s*[\(\[]\s*(hl|sl|higher level|standard level)\s*[\)\]]$/i.exec(raw);
+  if (wrapped) {
+    const level = levelCode(wrapped[2]);
+    const name = text(wrapped[1]);
+    if (level && name) return { name, level };
+  }
+  const suffix = /^(.+?)\s+(hl|sl|higher level|standard level)$/i.exec(raw);
+  if (suffix) {
+    const level = levelCode(suffix[2]);
+    const name = text(suffix[1]);
+    if (level && name) return { name, level };
+  }
+  return { name: raw, level: '' };
+}
+
+function levelCode(token: string): 'hl' | 'sl' | '' {
+  const norm = token.toLowerCase().replace(/\s+/g, ' ').trim();
+  if (norm === 'hl' || norm === 'higher level') return 'hl';
+  if (norm === 'sl' || norm === 'standard level') return 'sl';
+  return '';
+}
+
+function pushLevel(list: string[], name: string): void {
+  if (list.some((item) => item.toLowerCase() === name.toLowerCase())) return;
+  list.push(name);
 }
 
 export function splitList(value: unknown): string[] {
@@ -1990,8 +2103,6 @@ export function buildDesk(input: {
       };
       const assignedSubject = subjectNamesForLoad(token?.assignedSubject || '', catalogue)[0] || '';
       const eligible = subjectNamesForLoad(token?.eligibleSubjects || [], catalogue);
-      const allocated = !!token;
-      const hlValue = input.settings.hlColumn ? workspace?.dynamicData[input.settings.hlColumn] : undefined;
       const supportValue = input.settings.supportColumn ? workspace?.dynamicData[input.settings.supportColumn] : undefined;
       const supportFlags = input.settings.supportColumn ? supportFlagTags(supportValue) : [];
       return {
@@ -2019,8 +2130,8 @@ export function buildDesk(input: {
         flags: {
           drafted: token?.status === 'draft',
           committed: token?.status === 'committed',
-          subjectMatch: !allocated ? 'none' : subjectsOverlap(assignedSubject, eligible) ? 'match' : 'miss',
-          hlMatch: !allocated || !input.settings.hlColumn ? 'none' : splitList(hlValue).some((part) => subjectsOverlap(part, eligible)) ? 'match' : 'miss',
+          subjectMatch: choiceMatchFlag(assignedSubject, choices.primary, choices.secondary),
+          hlMatch: diplomaLevelFlag(assignedSubject, workspace?.dynamicData, input.settings.hlColumn),
           needsSupport: supportFlags.length > 0,
         },
       } satisfies DeskStudent;

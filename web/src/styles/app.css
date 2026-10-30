@@ -815,13 +815,16 @@ main.staff-list { max-width: 1480px; }
 .alloc-mark { display: inline-flex; color: #004C80; }
 .alloc-mark.status { color: #004C80; }
 .alloc-mark.subject { color: #0b7a4b; }
-.alloc-mark.hl { color: #b86e00; }
+.alloc-mark.hl { color: #c1121f; }
 .alloc-mark.status.off { color: #7f9bb3; }
-.alloc-mark.subject.off { color: #7eaa96; }
-.alloc-mark.hl.off { color: #c4a36a; }
+.alloc-mark.subject.off { color: #0b7a4b; }
+.alloc-mark.hl.off { color: #c1121f; }
+.alloc-mark.subject.warn,
 .alloc-mark.hl.warn { color: var(--coral); }
+.alloc-mark.idle { color: #8aa0b3; }
 .alloc-mark svg { width: 14px; height: 14px; fill: currentColor; }
-.alloc-mark.off svg { fill: none; stroke: currentColor; stroke-width: 1.6; }
+.alloc-mark.off svg,
+.alloc-mark.idle svg { fill: none; stroke: currentColor; stroke-width: 1.6; }
 .alloc-supervisor-name { font-weight: 700; }
 .alloc-desk tr.is-published td { background: #e7f6f1; }
 .alloc-meta { margin-top: 4px; color: var(--muted); font-size: 12px; }

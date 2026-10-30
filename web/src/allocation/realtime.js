@@ -1,4 +1,4 @@
-import { buildDesk, settingsFromDoc, tokenFromDoc, workspaceFromDoc } from '../../../functions/src/allocationPure.ts';
+import { buildDesk, choiceMatchFlag, diplomaLevelFlag, settingsFromDoc, tokenFromDoc, workspaceFromDoc } from '../../../functions/src/allocationPure.ts';
 import { callServer } from '../shared/api.js';
 import { showError } from '../shared/feedback.js';
 import { isStale, sameScene } from '../shared/scene.js';
@@ -117,7 +117,7 @@ export function overlayPendingEdits(desk, pending) {
       return Object.assign({}, student, {
         token: null,
         pendingClear: !!(student.flags && student.flags.committed) || student.pendingClear,
-        flags: Object.assign({}, student.flags, { drafted: false, committed: false, subjectMatch: 'none' }),
+        flags: Object.assign({}, student.flags, { drafted: false, committed: false, subjectMatch: 'none', hlMatch: 'none' }),
       });
     }
     const person = supervisors.find(function(item) { return emailOf(item.staffId) === emailOf(edit.staffId); });
@@ -134,7 +134,12 @@ export function overlayPendingEdits(desk, pending) {
         interdisciplinarySubject: edit.interdisciplinarySubject || '',
         status: 'draft',
       },
-      flags: Object.assign({}, student.flags, { drafted: true, committed: false }),
+      flags: Object.assign({}, student.flags, {
+        drafted: true,
+        committed: false,
+        subjectMatch: choiceMatchFlag(edit.subject || '', student.choices && student.choices.primary, student.choices && student.choices.secondary),
+        hlMatch: diplomaLevelFlag(edit.subject || '', student.dynamicData || {}, (desk.settings && desk.settings.hlColumn) || ''),
+      }),
     });
   });
   return Object.assign({}, desk, { students: students });

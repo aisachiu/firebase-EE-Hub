@@ -6,11 +6,13 @@ import {
   allocationTab,
   applySavedConfig,
   buildDesk,
+  choiceMatchFlag,
   columnMappingsFrom,
   emptyColumnMappings,
   COLOR_SCALE_STOPS,
   colorScaleFill,
   columnScaleExtent,
+  diplomaLevelFlag,
   emptySettings,
   findAllocationTab,
   isEeActive,
@@ -282,7 +284,7 @@ test('publish writes drafts and clears a released supervisor', () => {
   assert.equal(publishedAllocationSubject('  ', { choice1: 'Biology' }, ''), '');
 });
 
-test('the desk marks subject match, an HL miss, and support flags from the saved columns', () => {
+test('the desk marks first and second choice, HL and SL subjects, and support flags from the saved columns', () => {
   const settings = mergeDetected(emptySettings(), ['choice1', 'choice2', 'interdisciplinary'], ['Y10 GPA', 'HL', 'Academic Flag']);
   settings.hlColumn = 'HL';
   settings.supportColumn = 'Academic Flag';
@@ -306,7 +308,19 @@ test('the desk marks subject match, an HL miss, and support flags from the saved
   assert.equal(desk.students.length, 1);
   assert.equal(desk.students[0].displayName, 'Doe, Jane');
   assert.equal(desk.students[0].flags.subjectMatch, 'match');
-  assert.equal(desk.students[0].flags.hlMatch, 'miss');
+  assert.equal(desk.students[0].flags.hlMatch, 'none');
+  assert.equal(choiceMatchFlag('History', 'History', 'Eng Lit'), 'match');
+  assert.equal(choiceMatchFlag('Eng Lit', 'History', 'Eng Lit'), 'second');
+  assert.equal(choiceMatchFlag('Geography', 'History', 'Eng Lit'), 'miss');
+  assert.equal(choiceMatchFlag('', 'History', 'Eng Lit'), 'none');
+  assert.equal(choiceMatchFlag('Psychology', '["Psychology","Theater"]', ''), 'match');
+  assert.equal(diplomaLevelFlag('History', { HL: 'History, Biology', 'SL subjects': 'Mathematics' }, 'HL'), 'match');
+  assert.equal(diplomaLevelFlag('Mathematics', { HL: 'History, Biology', 'SL subjects': 'Mathematics' }, 'HL'), 'sl');
+  assert.equal(diplomaLevelFlag('Geography', { HL: 'History, Biology', 'SL subjects': 'Mathematics' }, 'HL'), 'miss');
+  assert.equal(diplomaLevelFlag('History', { HL: 'Bio, Chem' }, 'HL'), 'none');
+  assert.equal(diplomaLevelFlag('Biology', { Subjects: 'Biology (HL), History (SL), Mathematics SL' }, ''), 'match');
+  assert.equal(diplomaLevelFlag('History', { Subjects: 'Biology (HL), History (SL), Mathematics SL' }, ''), 'sl');
+  assert.equal(diplomaLevelFlag('Art', { Subjects: 'Biology (HL), History (SL), Mathematics SL' }, ''), 'miss');
   assert.equal(desk.students[0].flags.needsSupport, true);
   assert.equal(desk.students[0].choices.interdisciplinary, true);
   assert.equal(desk.supervisors[0].displayName, 'Mr. Smith');
