@@ -115,8 +115,11 @@ test('allocation desk tags, filter, column order, supervisor cues, and token loa
     }), supervisors(), [], {});
     assert.match(chosenRow, /class="alloc-supervisor-name"[^>]*>Dr Psy/);
     assert.match(chosenRow, />Psychology</);
-    assert.doesNotMatch(chosenRow, /data-alloc-supervisor/);
+    assert.match(chosenRow, /class="supervisor-cue is-chosen"/);
+    assert.match(chosenRow, /data-alloc-supervisor-cue="psy@school.edu"/);
+    assert.doesNotMatch(chosenRow, /data-alloc-supervisor=/);
     assert.doesNotMatch(chosenRow, /Mx Art/);
+    assert.doesNotMatch(chosenRow, /Pat Open/);
     assert.doesNotMatch(chosenRow, /<select/);
 
     const source = desk();
@@ -464,6 +467,7 @@ test('allocation desk tags, filter, column order, supervisor cues, and token loa
     assert.match(publishedRow, /title="Published"/);
     assert.match(publishedRow, /disabled/);
     assert.doesNotMatch(publishedRow, /Return to draft/);
+    assert.doesNotMatch(publishedRow, /class="supervisor-cue/);
     state.allocationStatus = 'unallocated';
     assert.deepEqual(deskMod.visibleAllocationStudents(customSource).map((item) => item.studentId), ['mark@school.edu']);
     state.allocationStatus = 'all';

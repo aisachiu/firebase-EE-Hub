@@ -351,6 +351,7 @@ export function allocationRowMarkup(student, supervisors, columns, extents) {
   }).join('')}</select></label>` : '';
   const supervisorName = allocationAssignedSupervisorName(student, supervisors);
   const assignedSubject = student.token && student.token.assignedSubject ? `<div class="muted">${escapeHtml(student.token.assignedSubject)}</div>` : '';
+  const supervisorCues = locked ? '' : allocationSupervisorCues(student, supervisors);
   const statusTitle = locked ? 'Published' : student.token ? 'Drafted' : 'Unallocated';
   return `<tr${locked ? ' class="is-published"' : ''}>
     <td class="alloc-check"><input type="checkbox" data-alloc-pick="${escapeHtml(student.studentId)}" ${state.allocationSelected.indexOf(student.studentId) >= 0 ? 'checked' : ''} aria-label="Select ${escapeHtml(student.displayName)}"></td>
@@ -359,7 +360,7 @@ export function allocationRowMarkup(student, supervisors, columns, extents) {
       <div class="alloc-marks">${allocationMark(statusTitle, student.token ? 'on' : 'off', 'status')}${allocationMark(student.flags.subjectMatch === 'match' ? 'Subject match' : 'No subject match', student.flags.subjectMatch === 'match' ? 'on' : 'off', 'subject')}${allocationMark(student.flags.hlMatch === 'miss' ? 'Not an HL match' : student.flags.hlMatch === 'match' ? 'HL match' : 'No HL match', student.flags.hlMatch === 'match' ? 'on' : student.flags.hlMatch === 'miss' ? 'warn' : 'off', 'hl')}</div>
     </td>
     <td>${subjectTags || '<span class="muted">No subject choices</span>'}</td>
-    <td><div class="alloc-supervisor-name${supervisorName ? '' : ' muted'}">${escapeHtml(supervisorName || 'Unassigned')}</div>${assignedSubject}<label class="check-option alloc-ee-flag"><input type="checkbox" data-alloc-ee-inter="${escapeHtml(student.studentId)}" ${interdisciplinaryOn ? 'checked' : ''} ${locked ? 'disabled' : ''}> Interdisciplinary EE</label>${interdisciplinarySelect}</td>
+    <td><div class="alloc-supervisor-name${supervisorName ? '' : ' muted'}">${escapeHtml(supervisorName || 'Unassigned')}</div>${assignedSubject}${supervisorCues}<label class="check-option alloc-ee-flag"><input type="checkbox" data-alloc-ee-inter="${escapeHtml(student.studentId)}" ${interdisciplinaryOn ? 'checked' : ''} ${locked ? 'disabled' : ''}> Interdisciplinary EE</label>${interdisciplinarySelect}</td>
     ${fields}
   </tr>${open ? allocationExpandedMarkup(student, 4 + (columns || []).length) : ''}`;
 }
