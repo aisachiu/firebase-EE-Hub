@@ -64,6 +64,22 @@ test('a student /resources opens Journey focused on research support', async () 
   assert.equal(router.pathFromState(appState), '/journey');
 });
 
+test('student tasks replace the assignments admin path', async () => {
+  installWindow();
+  const router = await import('./router.js');
+  const user = { role: 'staff', permissions: { canAdmin: true, isSupervisor: false } };
+  const appState = { user: user, actingAs: 'coordinator', section: '', view: '', studentFocus: '', adminEntity: '', staffPane: '' };
+  router.applyRoute(router.matchPath('/admin/student-tasks'), appState);
+  assert.equal(appState.section, 'admin');
+  assert.equal(appState.adminEntity, 'studentTasks');
+  assert.equal(router.pathFromState(appState), '/admin/student-tasks');
+  assert.equal(router.titleForState(appState), 'Student Tasks · EE Hub');
+  const legacy = { user: user, actingAs: 'coordinator', section: '', view: '', studentFocus: '', adminEntity: '', staffPane: '' };
+  router.applyRoute(router.matchPath('/admin/assignments'), legacy);
+  assert.equal(legacy.adminEntity, 'studentTasks');
+  assert.equal(router.pathFromState(legacy), '/admin/student-tasks');
+});
+
 test('staff keep Resources and do not see the student views in the tab bar', async () => {
   installWindow();
   const router = await import('./router.js');

@@ -54,8 +54,8 @@ function initialDueDate(roster: Placement, template: Doc, explicit: string): str
   return serializeDateOnly(addDays(anchor, -Number(template.offsetDays || 0)));
 }
 
-function newSystemTask(user: HubUser, studentId: string, template: Doc, status: string, dueDate: string): Doc {
-  return stampActors({
+function newSystemTask(user: HubUser, studentId: string, template: Doc, status: string, dueDate: string, cohortId?: unknown): Doc {
+  const record = stampActors({
     TaskId: shortId('ACT_'),
     StudentId: normalizeEmail(studentId),
     CreatorType: 'System',
@@ -67,6 +67,9 @@ function newSystemTask(user: HubUser, studentId: string, template: Doc, status: 
     Status: status || 'Pending',
     LastUpdated: nowIso(),
   }, user.email, true);
+  const cohort = text(cohortId);
+  if (cohort) record.cohortId = cohort;
+  return record;
 }
 
 export async function getStudentActionItems(app: App, studentEmail: string, user: HubUser | null) {
@@ -151,6 +154,7 @@ export async function addStudentTodo(app: App, title: unknown, phaseId: unknown)
       DueDate: '',
       Status: 'Pending',
       LastUpdated: nowIso(),
+      cohortId: text(placement?.cohortId),
     }, user.email, true);
     await appendAction(app, values);
     return { TaskId: values.TaskId };
@@ -174,6 +178,7 @@ export async function addStaffStudentTodo(app: App, title: unknown, phaseId: unk
       DueDate: '',
       Status: 'Pending',
       LastUpdated: nowIso(),
+      cohortId: text(cohortId),
     }, user.email, true);
     await appendAction(app, values);
     return { TaskId: values.TaskId, StudentId: context.email };
@@ -309,6 +314,7 @@ export async function assignMilestonesToStudents(app: App, cohortId: unknown, se
         const taskId = shortId('ACT_');
         await app.store.set(COLLECTIONS.studentActionItems, taskId, {
           TaskId: taskId,
+          cohortId: cohort,
           StudentId: studentId,
           CreatorType: 'System',
           TemplateId: text(template.milestoneId),
@@ -429,7 +435,7 @@ export async function recordMilestoneDecision(app: App, taskId: unknown, action:
     if (!template) throw new HubError('Milestone template not found.');
     if (!item) {
       if (!staffMayUpdateAllMilestones(user, context.roster, context.view)) throw new HubError('You cannot update this milestone.');
-      item = newSystemTask(user, email, template, 'Pending', initialDueDate(context.roster, template, ''));
+      item = newSystemTask(user, email, template, 'Pending', initialDueDate(context.roster, template, ''), text(cohortId));
       await app.store.set(COLLECTIONS.studentActionItems, text(item.TaskId), item);
     }
     const owner = text(template.mOwner).toLowerCase();
@@ -563,7 +569,7 @@ export async function updateMilestoneAssignment(app: App, taskId: unknown, stude
       templateId: text(template.milestoneId),
     }, async () => {
       const tasks = await systemTasksForAliases(app, aliases, text(template.milestoneId));
-      const target = tasks[0] || newSystemTask(editor.user, editor.context.email, template, changes.status, changes.dueDate);
+      const target = tasks[0] || newSystemTask(editor.user, editor.context.email, template, changes.status, changes.dueDate, text(cohortId));
       applyAssignment(target, changes, phaseId, editor.user.email);
       await app.store.set(COLLECTIONS.studentActionItems, text(target.TaskId), target);
       for (const extra of tasks.slice(1)) {
@@ -608,7 +614,7 @@ export async function setStaffMilestoneStatus(app: App, studentEmail: unknown, c
     const tasks = await systemTasksForAliases(app, aliases, text(template.milestoneId));
     const targets = tasks.length
       ? tasks
-      : [newSystemTask(editor.user, editor.context.email, template, nextStatus, initialDueDate(editor.context.roster, template, ''))];
+      : [newSystemTask(editor.user, editor.context.email, template, nextStatus, initialDueDate(editor.context.roster, template, ''), text(cohortId))];
     for (const item of targets) {
       item.Status = nextStatus;
       item.LastUpdated = nowIso();
@@ -681,7 +687,7 @@ export async function massUpdateMilestones(app: App, cohortId: unknown, studentI
     if (template) {
       for (const email of missing) {
         const due = changes.updateDate ? changes.dueDate : initialDueDate(contexts[email].roster, template, '');
-        const created = newSystemTask(user, email, template, changes.updateStatus ? changes.status : 'Pending', due);
+        const created = newSystemTask(user, email, template, changes.updateStatus ? changes.status : 'Pending', due, cohort);
         await app.store.set(COLLECTIONS.studentActionItems, text(created.TaskId), created);
         updated += 1;
       }
@@ -796,6 +802,7 @@ export async function applyTodoTemplate(app: App, templateId: unknown, studentEm
       DueDate: '',
       Status: 'Pending',
       LastUpdated: nowIso(),
+      cohortId: text(cohortId),
     }, user.email, true);
     await appendAction(app, values);
     return { TaskId: values.TaskId, StudentId: context.email, PhaseId: input.phase, Title: input.title, Description: template.description, CreatedBy: user.email };
