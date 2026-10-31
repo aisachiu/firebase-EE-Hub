@@ -71,18 +71,27 @@ export function paintStudentPage(home) {
   if (main) main.innerHTML = loadingLine('Loading your EE...');
 }
 
-/** Students change route. Staff preview switches the in-page view and does not write a student view event. */
+const SECTION_PAGE = { document: 0, 'my-ee': 0, journey: 1, calendar: 2, supervisor: 3, chat: 4 };
+
+/** Students change route. Journey, document, and supervisor open the matching My EE page. */
 export function openStudentSection(section) {
+  const page = Object.prototype.hasOwnProperty.call(SECTION_PAGE, section) ? SECTION_PAGE[section] : null;
   if (state.user && state.user.role !== 'student') {
-    state.staffPreviewView = section;
+    state.staffPreviewView = page === null ? section : String(page);
     if (repaintImpl && state.staffStudentHome) repaintImpl(state.staffStudentHome);
     else if (section === 'journey') setJourneyOpen(true);
     return;
   }
   if (!requestPush()) return;
   state.studentFocus = '';
-  state.section = section;
-  state.view = section;
+  if (page === null) {
+    state.section = section;
+    state.view = section;
+  } else {
+    state.eePage = page;
+    state.section = 'my-ee';
+    state.view = 'my-ee';
+  }
   renderShell();
 }
 
@@ -147,7 +156,7 @@ export function bindStaffStudentChrome() {
     state.staffStudentHome = null;
     state.journeyOpen = false;
     state.notesOpen = false;
-    state.staffPreviewView = 'document';
+    state.staffPreviewView = '0';
     renderShell();
   });
 }
@@ -170,7 +179,8 @@ export function bindUnreadNotices(main, staff) {
       state.staffStudentHome = null;
       state.journeyOpen = false;
       state.studentFocus = '';
-      state.section = staff ? 'tickets' : 'supervisor';
+      state.section = staff ? 'tickets' : 'help';
+      state.view = state.section;
       renderShell();
     });
   });
