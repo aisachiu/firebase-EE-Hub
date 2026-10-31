@@ -9,8 +9,8 @@ export const id = 'research';
 export function render(home, context) {
   const compact = context && context.slot === 'compact';
   const lede = compact
-    ? '<p class="muted">Published guides for your EE. Open a title, or use the Journey tab for the full cards.</p>'
-    : '<p class="lede">Guidance and reference material published for your EE. This is the Resources library.</p>';
+    ? '<p class="muted">Published guides for your EE. Open a title, or use Resources for the full cards.</p>'
+    : '<p class="lede">Guidance and reference material published for your EE. Resources in the header is the full library.</p>';
   return `<div id="research-support"><h2>Research support</h2>${lede}<div data-research-host>${loadingLine('Loading resources...')}</div></div>`;
 }
 

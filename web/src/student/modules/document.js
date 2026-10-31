@@ -3,6 +3,7 @@ import { escapeHtml, formatCount, formatLastEdit, formatWordDelta, safeUrl } fro
 import { isStale } from '../../shared/scene.js';
 import { state } from '../../shared/state.js';
 import { formatActivityWhen } from '../activity.js';
+import { essayEmbedSrc } from '../rotary.js';
 
 export const id = 'document';
 
@@ -35,8 +36,18 @@ export function renderFolderCard(home) {
 
 export function renderEssayCard(home) {
   const url = safeUrl(home && home.links && home.links.doc);
-  const empty = `<div class="empty" id="essay-stats"><p>Your essay Doc has not been created yet.</p><p class="muted">When it is ready, Open essay Doc in the header opens the same Google Doc from Document, Journey, and Supervisor.</p></div>`;
+  const empty = `<div class="empty" id="essay-stats"><p>Your essay Doc has not been created yet.</p><p class="muted">When it is ready, Open essay Doc in the header opens the same Google Doc.</p></div>`;
   return `<article class="doc-dashboard"><div class="doc-head"><h3><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg><span id="essay-doc-title">Extended Essay</span></h3>${url ? `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">Open in Google Docs</a>` : ''}</div>${url ? '<div id="essay-stats"><p class="muted">Reading the Google Doc…</p></div>' : empty}</article>`;
+}
+
+/** Tall in-page editor. About 90vh so the essay fills the window after the student scrolls to it. */
+export function renderEssayEmbed(home, options) {
+  const url = safeUrl(home && home.links && home.links.doc);
+  if (!url) return '';
+  const src = essayEmbedSrc(url);
+  const omitFrame = options && options.omitFrame;
+  const frame = src && !omitFrame ? `<iframe class="gdoc-frame" title="Extended Essay draft" src="${escapeHtml(src)}"></iframe>` : '';
+  return `<section class="gdoc-embed" data-embed-src="${escapeHtml(src)}" aria-label="Essay Google Doc"><div class="gdoc-bar"><span>Working draft</span><a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">Open in Google Docs</a></div>${frame}<p class="gdoc-fallback muted">If the essay does not appear here, the school may be blocking embedding. Open in Google Docs still opens the same file.</p></section>`;
 }
 
 export function essayAnalyticsKey(home) {

@@ -1,22 +1,25 @@
+import { clampEePage, pageFromSearch } from './shared/eePage.js';
 import { state } from './shared/state.js';
 
 const SECTION_SLUGS = {
+  'my-ee': 'my-ee',
   document: 'document',
   journey: 'journey',
   supervisor: 'supervisor',
   doc: 'document',
-  'my-ee': 'document',
   resources: 'resources',
-  help: 'supervisor',
+  help: 'help',
   'my-students': 'students',
   messages: 'tickets',
   notes: 'notes',
 };
 
 const SECTION_TITLES = {
-  document: 'Document',
-  journey: 'Journey',
-  supervisor: 'Supervisor',
+  'my-ee': 'My EE',
+  document: 'My EE',
+  journey: 'My EE',
+  supervisor: 'My EE',
+  help: 'Help',
   resources: 'Resources',
   students: 'My Students',
   tickets: 'Messages',
@@ -55,7 +58,7 @@ export function sectionTabs(user, actingAs) {
   const student = !!(user && user.role === 'student');
   const permissions = (user && user.permissions) || {};
   const tabs = student
-    ? [['document', 'Document'], ['journey', 'Journey'], ['supervisor', 'Supervisor']]
+    ? [['my-ee', 'My EE'], ['resources', 'Resources'], ['help', 'Help']]
     : [['students', 'My Students'], ['resources', 'Resources']];
   if (!student && (actingAs === 'supervisor' || actingAs === 'coordinator') && (permissions.isSupervisor || permissions.canAdmin)) {
     tabs.splice(1, 0, ['tickets', 'Messages']);
@@ -111,16 +114,21 @@ export function pathFromState(appState) {
     if (appState.allocationView === 'settings') return '/allocation/settings';
     return '/allocation';
   }
-  if (section === 'journey' && appState.studentFocus === 'research' && appState.user && appState.user.role === 'student') return '/resources';
   const slugs = Object.keys(SECTION_SLUGS);
   for (let index = 0; index < slugs.length; index += 1) {
     if (SECTION_SLUGS[slugs[index]] === section) return '/' + slugs[index];
   }
-  return appState.user && appState.user.role === 'student' ? '/journey' : '/my-students';
+  return appState.user && appState.user.role === 'student' ? '/my-ee' : '/my-students';
+}
+
+export function searchForState(appState) {
+  if (!appState || !appState.user || appState.user.role !== 'student' || appState.section !== 'my-ee') return '';
+  const page = clampEePage(appState.eePage);
+  return page ? '?page=' + page : '';
 }
 
 export function fallbackSection(appState) {
-  if (appState.user && appState.user.role === 'student') return 'journey';
+  if (appState.user && appState.user.role === 'student') return 'my-ee';
   const tabs = sectionTabs(appState.user, appState.actingAs);
   return tabs.length ? tabs[0][0] : 'students';
 }
@@ -148,12 +156,15 @@ function sectionAllowed(appState, section) {
   return sectionTabs(appState.user, appState.actingAs).some(function(tab) { return tab[0] === section; });
 }
 
+const STUDENT_PAGE = { document: 0, journey: 1, supervisor: 3 };
+
 export function applyRoute(route, appState) {
   const student = !!(appState.user && appState.user.role === 'student');
-  if (route && route.section === 'resources' && student) {
-    appState.section = 'journey';
-    appState.view = 'journey';
-    appState.studentFocus = 'research';
+  if (student && route && Object.prototype.hasOwnProperty.call(STUDENT_PAGE, route.section)) {
+    appState.section = 'my-ee';
+    appState.view = 'my-ee';
+    appState.studentFocus = '';
+    appState.eePage = STUDENT_PAGE[route.section];
     return;
   }
   const allowed = route && sectionAllowed(appState, route.section);
@@ -176,7 +187,12 @@ export function applyRoute(route, appState) {
 }
 
 export function applyLocation() {
-  applyRoute(matchPath(window.location.pathname), state);
+  const route = matchPath(window.location.pathname);
+  applyRoute(route, state);
+  if (state.section !== 'my-ee') return;
+  const fromQuery = pageFromSearch(window.location.search);
+  if (fromQuery !== null) state.eePage = fromQuery;
+  else if (!route || route.section === 'my-ee') state.eePage = 0;
 }
 
 export const PROVISIONING_LEAVE_WARNING = 'Google Workspace provisioning is currently in progress. Leaving this page will stop the process. Are you sure you want to leave?';
@@ -233,7 +249,8 @@ export function syncHistory() {
   const path = pathFromState(state);
   const title = titleForState(state);
   document.title = title;
-  const next = path + window.location.search + window.location.hash;
+  const search = searchForState(state);
+  const next = path + search + window.location.hash;
   const current = window.location.pathname + window.location.search + window.location.hash;
   if (next !== current) {
     const data = { eeHub: path };
@@ -251,7 +268,7 @@ export function installHistory(onNavigate) {
     if (!state.user) return;
     if (!confirmProvisioningLeave()) {
       const path = pathFromState(state);
-      window.history.pushState({ eeHub: path }, '', path + window.location.search + window.location.hash);
+      window.history.pushState({ eeHub: path }, '', path + searchForState(state) + window.location.hash);
       return;
     }
     historyMode = 'pop';
