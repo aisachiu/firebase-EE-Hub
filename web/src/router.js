@@ -30,7 +30,7 @@ const ADMIN_PANELS = {
   students: { adminEntity: 'cohortMembers', title: 'Students in cohorts' },
   pathway: { adminEntity: 'pathway', title: 'Phases & milestones' },
   email: { adminEntity: 'emailNotifications', title: 'Email notifications' },
-  assignments: { adminEntity: 'assignments', title: 'Assignments' },
+  'student-tasks': { adminEntity: 'studentTasks', title: 'Student Tasks' },
   'student-users': { adminEntity: 'studentUsers', title: 'Student users' },
   'staff-users': { adminEntity: 'staffUsers', staffPane: 'records', title: 'Staff users' },
   quotas: { adminEntity: 'staffUsers', staffPane: 'quotas', title: 'EE quotas' },
@@ -39,6 +39,7 @@ const ADMIN_PANELS = {
   resources: { adminEntity: 'resources', title: 'Resources' },
   faqs: { adminEntity: 'faqs', title: 'FAQs' },
   categories: { adminEntity: 'ticketCategories', title: 'Message categories' },
+  assignments: { adminEntity: 'studentTasks', title: 'Student Tasks' },
 };
 
 const ALLOCATION_VIEWS = {
