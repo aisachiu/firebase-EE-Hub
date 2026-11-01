@@ -16,7 +16,7 @@ import { bindSupervisorTodoList, mayManageSupervisorTodos, renderSupervisorDesk,
 export function openStaffStudent(email) {
   callServer('getStaffStudentHome', email, state.cohortId, state.actingAs).then(function(detail) {
     state.staffStudentHome = detail;
-    state.staffPreviewView = 'document';
+    state.staffPreviewView = '0';
     state.staffPane = 'home';
     state.journeyOpen = true;
     state.notesOpen = false;

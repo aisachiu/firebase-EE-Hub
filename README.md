@@ -16,7 +16,7 @@ The browser UI is a Vite app in `web/`. `web/index.html` is the shell. Screens l
 | `web/src/shared/` | API helper, HTML escaping, tables, checks, forms, resources, messages |
 | `web/src/student/` | Document, Journey, and Supervisor views, modules, activity, milestone editing |
 | `web/src/staff/` | My Students, messages, notes |
-| `web/src/admin/` | Cohorts, sheets, students, pathway, email, assignments, users, subjects, forms, resources, FAQs |
+| `web/src/admin/` | Cohorts, sheets, students, pathway, email, student tasks, users, subjects, forms, resources, FAQs |
 | `web/src/allocation/` | Allocation desk, cohort tokens, settings |
 
 One change should stay inside the `web/src/<area>/` folder that owns the screen. Shared widgets (sortable tables, name filters, multi-select, checks) belong in `web/src/shared/`.
@@ -44,7 +44,7 @@ Navigation uses the History API. Refresh, share, and back/forward reopen the sam
 | `/admin/students` | coordinator | Students in cohorts |
 | `/admin/pathway` | coordinator | Phases & milestones |
 | `/admin/email` | coordinator | Email notifications |
-| `/admin/assignments` | coordinator | Assignments |
+| `/admin/student-tasks` | coordinator | Student Tasks. `/admin/assignments` opens this too |
 | `/admin/student-users` | coordinator | Student users |
 | `/admin/staff-users` | coordinator | Staff users |
 | `/admin/quotas` | coordinator | EE quotas |

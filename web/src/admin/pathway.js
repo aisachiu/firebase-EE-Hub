@@ -6,6 +6,7 @@ import { showError } from '../shared/feedback.js';
 import { cssEscape, escapeHtml, hexColour, toBoolean } from '../shared/html.js';
 import { loadingLine } from '../shared/loading.js';
 import { isStale } from '../shared/scene.js';
+import { syncHeaderCohortSelect } from '../shared/staffContext.js';
 import { state } from '../shared/state.js';
 
 export const PATHWAY_COLORS = ['#004C80', '#0E8A6A', '#FF5A36', '#6B4C9A', '#B8860B', '#0E7C86', '#C43D6E', '#3E6B4F'];
@@ -133,7 +134,7 @@ export function ensurePathwayPlan() {
     selectAfterPaint: false,
     resizeBound: false,
     mode: readPlanSetting('ee-hub-plan-mode', 'cohort') === 'template' ? 'template' : 'cohort',
-    cohortId: readPlanSetting('ee-hub-plan-cohort', '') || '',
+    cohortId: '',
     cohorts: [],
     sources: [],
     seeded: false,
@@ -368,7 +369,10 @@ export function pathwayApplyResult(result) {
   plan.cohorts = result && result.cohorts ? result.cohorts : [];
   plan.sources = result && result.sources ? result.sources : [];
   writePlanSetting('ee-hub-plan-mode', plan.mode);
-  if (plan.cohortId) writePlanSetting('ee-hub-plan-cohort', plan.cohortId);
+  if (plan.mode === 'cohort' && plan.cohortId && plan.cohortId !== state.cohortId) {
+    state.cohortId = plan.cohortId;
+    syncHeaderCohortSelect();
+  }
   if (plan.mode === 'cohort' && result && result.anchorDate && parsePlanDate(result.anchorDate)) {
     plan.anchorDate = String(result.anchorDate).slice(0, 10);
   }
@@ -386,6 +390,11 @@ export function pathwayApplyResult(result) {
 export function renderPathwayPlanner(target) {
   const plan = ensurePathwayPlan();
   const busy = Object.keys(plan.saving).length > 0 || Object.keys(plan.timers).length > 0;
+  if (plan.mode !== 'template' && state.cohortId && plan.cohortId !== state.cohortId && !busy) {
+    pathwayInvalidate();
+    plan.cohortId = state.cohortId;
+    plan.loaded = false;
+  }
   if (plan.loaded && busy) {
     plan.pendingScroll = 'preserve';
     paintPathway();
@@ -461,17 +470,11 @@ export function paintPathway() {
 
 export function pathwayScopeMarkup() {
   const plan = state.pathwayPlan;
-  const cohortOptions = (plan.cohorts || []).map(function(cohort) {
-    const status = cohort.status && cohort.status !== 'Active' ? ' · ' + cohort.status : '';
-    const label = cohort.id + (cohort.seeded ? '' : ' · no milestones yet') + status;
-    return `<option value="${escapeHtml(cohort.id)}" ${cohort.id === plan.cohortId ? 'selected' : ''}>${escapeHtml(label)}</option>`;
-  }).join('');
   return `<div class="toolbar plan-scope">
     <div class="plan-span" role="radiogroup" aria-label="What you are editing">
       <button type="button" data-plan-action="mode" data-mode="cohort" aria-pressed="${plan.mode === 'template' ? 'false' : 'true'}">Cohort</button>
       <button type="button" data-plan-action="mode" data-mode="template" aria-pressed="${plan.mode === 'template' ? 'true' : 'false'}">Template</button>
     </div>
-    ${plan.mode === 'template' || !cohortOptions ? '' : `<label for="plan-cohort">Cohort</label><select id="plan-cohort">${cohortOptions}</select>`}
   </div>`;
 }
 
@@ -513,7 +516,7 @@ export function pathwayMarkup() {
     ? 'Hide a phase to leave its milestones out of the list. Set a colour for each phase.'
     : 'Shown phases stay on the calendar. Set a colour for each phase.';
   const calendar = template ? '' : `<section class="plan-anchor plan-block" style="--phase:${anchorMilestone ? pathwayPhaseColor(anchorMilestone.phase) : '#004C80'}">
-      <div class="field"><label for="plan-anchor-date">Anchor date</label><input id="plan-anchor-date" type="date" value="${escapeHtml(plan.anchorDate)}"><p class="muted">Day 0 for this cohort. The anchor milestone falls on this date. Changing it moves this cohort’s calendar only. Each student still has an anchor date under Assignments.</p></div>
+      <div class="field"><label for="plan-anchor-date">Anchor date</label><input id="plan-anchor-date" type="date" value="${escapeHtml(plan.anchorDate)}"><p class="muted">Day 0 for this cohort. The anchor milestone falls on this date. Changing it moves this cohort’s calendar only. Each student still has an anchor date on their cohort record.</p></div>
       <div>${pathwayAnchorCopy(anchorMilestone)}</div>
       <div class="field"><span id="plan-months-label">Months in view</span><div class="plan-span" role="radiogroup" aria-labelledby="plan-months-label">${[2, 3, 4, 5, 6].map(function(count) {
         return `<button type="button" data-plan-action="months" data-months="${count}" aria-pressed="${plan.monthsVisible === count ? 'true' : 'false'}">${count}</button>`;
@@ -741,9 +744,7 @@ export function openEmailNotifications(milestoneId) {
   if (!requestPush()) return;
   state.adminEntity = 'emailNotifications';
   state.noticeMilestoneId = milestoneId || '';
-  if (state.pathwayPlan && state.pathwayPlan.mode !== 'template' && state.pathwayPlan.cohortId) {
-    state.noticeCohortId = state.pathwayPlan.cohortId;
-  }
+  state.noticeCohortId = state.cohortId || '';
   state.noticeEdit = null;
   state.emailDesk = false;
   renderAdmin();
@@ -757,16 +758,6 @@ export function pathwaySetMode(mode) {
   plan.mode = next;
   plan.loaded = false;
   writePlanSetting('ee-hub-plan-mode', next);
-  renderPathwayPlanner(document.getElementById('admin-content'));
-}
-
-export function pathwaySwitchCohort(cohortId) {
-  const plan = ensurePathwayPlan();
-  if (plan.cohortId === cohortId) return;
-  pathwayInvalidate();
-  plan.cohortId = cohortId;
-  plan.loaded = false;
-  writePlanSetting('ee-hub-plan-cohort', cohortId);
   renderPathwayPlanner(document.getElementById('admin-content'));
 }
 
@@ -804,10 +795,6 @@ export function pathwayOnChange(event) {
   if (!input) return;
   if (input.id === 'plan-anchor-date') {
     pathwaySetAnchorDate(input.value);
-    return;
-  }
-  if (input.id === 'plan-cohort') {
-    pathwaySwitchCohort(input.value);
     return;
   }
   if (input.tagName !== 'SELECT' && input.type !== 'date' && input.type !== 'color') return;

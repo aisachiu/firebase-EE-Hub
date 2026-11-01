@@ -42,7 +42,7 @@ export function paintStudentMessages(hub, host, options) {
   const tickets = hub.tickets || [];
   const compact = !!config.compact;
   const head = config.page
-    ? `<div class="page-head"><div><p class="eyebrow">Supervisor</p><h1>Supervisor</h1><p class="lede">Your supervisor and messages.</p></div><div class="page-actions"><button type="button" class="button secondary" id="refresh-messages">Refresh</button><button type="button" class="button" id="new-ticket">New message</button></div></div>`
+    ? `<div class="page-head"><div><p class="eyebrow">Help</p><h1>Help</h1><p class="lede">Answers, and messages with your supervisor or the EE Coordinator.</p></div><div class="page-actions"><button type="button" class="button secondary" id="refresh-messages">Refresh</button><button type="button" class="button" id="new-ticket">New message</button></div></div>`
     : `<div class="module-head"><h2>Messages</h2><div class="page-actions"><button type="button" class="button secondary" id="refresh-messages">Refresh</button><button type="button" class="button" id="new-ticket">New message</button></div></div>`;
   const answers = compact
     ? ''

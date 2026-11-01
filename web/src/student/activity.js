@@ -10,11 +10,13 @@ export function paintStudentActivity(home) {
   const copy = home.staffView ? {
     heading: 'Activity',
     lede: 'Actions ' + (home.displayName || 'this student') + ' took in the EE Hub, plus email reminders sent to them.',
-    empty: 'Nothing here yet. Actions this student takes, and email reminders sent to them, will show up in this list.'
+    empty: 'Nothing here yet. Actions this student takes, and email reminders sent to them, will show up in this list.',
+    lines: true
   } : {
     heading: 'Your activity',
     lede: 'Actions you took in the EE Hub, plus email reminders sent to you.',
-    empty: 'Nothing here yet. Signing in, forms, to-dos, messages, and email reminders sent to you will show up in this list.'
+    empty: 'Nothing here yet. Signing in, forms, to-dos, messages, and email reminders sent to you will show up in this list.',
+    lines: true
   };
   const cached = state.activityFeed;
   if (cached && cached.email === home.email) {
@@ -30,6 +32,11 @@ export function paintStudentActivity(home) {
     state.activityFeed = { email: home.email, feed: feed || {} };
     return feed;
   }), copy);
+}
+
+export function activityKindLabel(kind) {
+  const match = ACTIVITY_KINDS.filter(function(row) { return row[0] === kind; })[0];
+  return match ? match[1] : 'Other';
 }
 
 export var ACTIVITY_PAGE_SIZE = 16;
@@ -77,6 +84,17 @@ export function renderActivityDashboard(feed, options) {
         return `<div><dt>${escapeHtml(detail.label)}</dt><dd>${escapeHtml(detail.value)}</dd></div>`;
       }).join('')
       : '<div><dt>Detail</dt><dd>No extra detail was recorded for this action.</dd></div>';
+    if (options.lines) {
+      return `<article class="activity-line-row ${escapeHtml(entry.outcome || 'done')}" data-activity-item data-kind="${escapeHtml(entry.kind || 'other')}" data-day="${offset}">
+        <button type="button" class="activity-toggle activity-line-hit" aria-expanded="false">
+          <span class="activity-dot" aria-hidden="true"></span>
+          <span class="activity-kind">${escapeHtml(activityKindLabel(entry.kind))}</span>
+          <span class="activity-line-title">${escapeHtml(entry.title || 'Activity')}</span>
+          <time class="activity-when" datetime="${escapeHtml(entry.at || '')}">${escapeHtml(formatActivityWhen(entry.at))}</time>
+        </button>
+        <dl class="activity-detail hidden">${details}${entry.summary ? `<div><dt>Summary</dt><dd>${escapeHtml(entry.summary)}</dd></div>` : ''}</dl>
+      </article>`;
+    }
     return `<article class="activity-item ${escapeHtml(entry.outcome || 'done')}" data-activity-item data-kind="${escapeHtml(entry.kind || 'other')}" data-day="${offset}">
       <button type="button" class="activity-toggle" aria-expanded="false">
         <time class="activity-when" datetime="${escapeHtml(entry.at || '')}">${escapeHtml(formatActivityWhen(entry.at))}</time>

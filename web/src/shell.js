@@ -57,7 +57,7 @@ export function bootHub() {
     }
     state.user = result.user;
     rememberOpeningMessages(result.messages);
-    state.view = state.user.role === 'student' ? 'journey' : 'students';
+    state.view = state.user.role === 'student' ? 'my-ee' : 'students';
     state.section = state.view;
     if (state.user.permissions && state.user.permissions.canAdmin) state.actingAs = 'coordinator';
     else if (state.user.permissions && state.user.permissions.isSupervisor) state.actingAs = 'supervisor';
@@ -106,7 +106,7 @@ function readyChunk(name) {
 function sectionChunk(section, student) {
   if (section === 'admin' || section === 'allocation') return 'coordinator';
   if (section === 'resources') return 'resources';
-  if (section === 'help' || section === 'document' || section === 'journey' || section === 'supervisor') return 'studentViews';
+  if (section === 'help' || section === 'my-ee' || section === 'document' || section === 'journey' || section === 'supervisor') return 'studentViews';
   if (section === 'tickets') return 'tickets';
   if (section === 'notes') return 'notes';
   return student ? 'studentViews' : 'staff';
@@ -117,7 +117,7 @@ function paintSection(mod) {
   if (state.section === 'admin') mod.renderAdmin();
   else if (state.section === 'allocation') mod.renderAllocation();
   else if (state.section === 'resources') mod.renderResources();
-  else if (state.section === 'document' || state.section === 'journey' || state.section === 'supervisor' || state.section === 'help') mod.renderStudentSection();
+  else if (state.section === 'my-ee' || state.section === 'document' || state.section === 'journey' || state.section === 'supervisor' || state.section === 'help') mod.renderStudentSection();
   else if (state.section === 'tickets') mod.renderStaffTickets();
   else if (state.section === 'notes') mod.renderStaffNotes();
   else if (student) mod.renderStudentSection();
@@ -179,6 +179,9 @@ export function renderShell() {
   if (state.section !== 'allocation' && typeof window.eeReleaseAllocationWatch === 'function') {
     window.eeReleaseAllocationWatch();
   }
+  const studentRotary = student && state.section === 'my-ee';
+  const staffRotary = !student && state.section === 'students' && !!state.staffStudentHome;
+  document.body.classList.toggle('ee-rotary', studentRotary || staffRotary);
   document.body.classList.toggle('has-journey', showJourney);
   document.body.classList.toggle('journey-open', showJourney && state.journeyOpen);
   document.body.classList.toggle('has-notes', showNotes);
@@ -334,7 +337,7 @@ function bindHeaderContext() {
 
 export function tabLabel(tab) {
   const helpUnread = state.studentHome ? state.studentHome.unreadTicketCount : (state.messageDesks.student ? state.messageDesks.student.unreadCount : 0);
-  if (tab[0] === 'supervisor' && helpUnread) return 'Supervisor<span class="dot" aria-label="Unread reply"></span>';
+  if (tab[0] === 'help' && helpUnread) return 'Help<span class="dot" aria-label="Unread reply"></span>';
   if (tab[0] === 'tickets' && state.staffTicketUnread) return 'Messages<span class="dot" aria-label="Unread messages"></span>';
   return tab[1];
 }

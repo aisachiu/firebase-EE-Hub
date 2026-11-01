@@ -7,7 +7,7 @@ import { showError, showSuccess } from '../shared/feedback.js';
 import { cssEscape, escapeHtml, safeUrl } from '../shared/html.js';
 import { loadingLine } from '../shared/loading.js';
 import { isStale } from '../shared/scene.js';
-import { syncHeaderCohortSelect } from '../shared/staffContext.js';
+import { adoptGlobalCohort } from '../shared/headerCohorts.js';
 import { state } from '../shared/state.js';
 import {
   bindCollapsibleHeaders,
@@ -320,10 +320,7 @@ export function renderStaffQuotas(target) {
     state.quotaSelected = state.quotaSelected.filter(function(email) {
       return state.quotaRows.some(function(row) { return row.email === email; });
     });
-    if (state.quotaCohorts.length && !state.quotaCohorts.some(function(cohort) { return cohort.id === state.cohortId; })) {
-      state.cohortId = state.quotaCohorts[0].id;
-      syncHeaderCohortSelect();
-    }
+    adoptGlobalCohort(state.quotaCohorts);
     paintStaffQuotas();
   }).catch(showError);
 }
@@ -345,6 +342,12 @@ export function sortedQuotaRows() {
 export function visibleQuotaRows() {
   const query = String(state.quotaQuery || '').trim().toLowerCase();
   return sortedQuotaRows().filter(function(row) { return staffNameMatch(row.displayName, row.email, query); });
+}
+
+export function quotaCohortLabel() {
+  const match = (state.quotaCohorts || []).filter(function(cohort) { return cohort.id === state.cohortId; })[0];
+  if (match) return match.name || match.id;
+  return state.cohortId || '';
 }
 
 export function paintStaffQuotas() {
@@ -403,11 +406,8 @@ export function paintStaffQuotas() {
     }).join('') : `<tr><td colspan="5"><div class="empty">${state.quotaRows.length ? 'No staff match that name.' : 'No staff users yet.'}</div></td></tr>`}</tbody></table></div>
     <aside class="alloc-side"><header><h2>Subject capacity</h2></header><div id="quota-dashboard"></div>
       <footer>
-        <label for="quota-cohort">Cohort</label>
-        <select id="quota-cohort">${state.quotaCohorts.map(function(cohort) {
-          return `<option value="${escapeHtml(cohort.id)}" ${cohort.id === state.cohortId ? 'selected' : ''}>${escapeHtml(cohort.name)}</option>`;
-        }).join('')}</select>
-        ${state.quotaCohorts.length ? '' : '<p class="notice">Create a cohort before generating tokens.</p>'}
+        <p class="muted">Tokens apply to cohort ${escapeHtml(quotaCohortLabel() || '—')}.</p>
+        ${state.cohortId ? '' : '<p class="notice">Create a cohort before generating tokens.</p>'}
         <div class="toolbar"><button type="button" class="button secondary" id="quota-export">Export token sheet</button><button type="button" class="button" id="quota-ingest">Apply tokens to cohort</button></div>
         <p id="quota-export-result" class="muted"></p>
         <button type="button" class="link-button" id="quota-open-tokens">Open cohort allocation tokens</button>
@@ -611,11 +611,6 @@ export function bindQuotaPageActions() {
       save.disabled = false;
       showSuccess('Saved quotas for ' + result.updated + ' staff.');
     }).catch(function(error) { save.disabled = false; showError(error); });
-  });
-  const cohort = document.getElementById('quota-cohort');
-  if (cohort) cohort.addEventListener('change', function(event) {
-    state.cohortId = event.target.value;
-    syncHeaderCohortSelect();
   });
   const exportButton = document.getElementById('quota-export');
   if (exportButton) exportButton.addEventListener('click', exportQuotaSheet);

@@ -4,6 +4,7 @@ import { showError, showSuccess } from '../shared/feedback.js';
 import { cssEscape, escapeHtml, formatActivityWhen } from '../shared/html.js';
 import { loadingLine } from '../shared/loading.js';
 import { isStale } from '../shared/scene.js';
+import { syncHeaderCohortSelect } from '../shared/staffContext.js';
 import { state } from '../shared/state.js';
 import {
   bindCollapsibleHeaders,
@@ -21,10 +22,14 @@ export function renderEmailDesk(target, options) {
   const back = !!(options && options.back);
   if (!target) return;
   target.innerHTML = loadingLine('Loading email notifications...');
-  callServer('listNotificationDesk', state.noticeCohortId || '', state.noticeMilestoneId || '').then(function(desk) {
+  callServer('listNotificationDesk', state.cohortId || '', state.noticeMilestoneId || '').then(function(desk) {
     if (token !== noticeToken) return;
     state.noticeDesk = desk;
-    state.noticeCohortId = desk.cohortId || '';
+    if (desk.cohortId && !state.cohortId) {
+      state.cohortId = desk.cohortId;
+      syncHeaderCohortSelect();
+    }
+    state.noticeCohortId = state.cohortId || desk.cohortId || '';
     state.noticeMilestoneId = desk.milestoneId || '';
     paintEmailDesk(target, back);
   }).catch(function(error) {
@@ -85,7 +90,6 @@ export function paintEmailDesk(target, back) {
     : '';
   target.innerHTML = `<div class="notify-desk">${head}${mailLine}
     ${collapsibleHeader('notice-filters', 'Filters', `<div class="toolbar">
-      <label for="notice-cohort">Cohort</label><select id="notice-cohort">${noticeOptions(desk.cohorts || [], state.noticeCohortId, 'id', 'name')}</select>
       <label for="notice-milestone">Milestone</label><select id="notice-milestone"><option value="">All milestones</option>${noticeOptions(milestones, state.noticeMilestoneId, 'milestoneId', 'title')}${milestoneKnown ? '' : `<option value="${escapeHtml(state.noticeMilestoneId)}" selected>${escapeHtml(state.noticeMilestoneId)}</option>`}</select>
       <button type="button" class="button secondary" id="notice-preview">Preview today</button>${sendToday}
     </div>`)}
@@ -244,14 +248,7 @@ export function openNoticeEditor(target, back) {
 }
 
 export function bindEmailDesk(target, back) {
-  const cohort = document.getElementById('notice-cohort');
   const milestone = document.getElementById('notice-milestone');
-  if (cohort) cohort.addEventListener('change', function() {
-    if (adminDialogKind() === 'notice-rule') closeAdminDialog();
-    state.noticeCohortId = cohort.value;
-    state.noticeEdit = null;
-    renderEmailDesk(target, { back: back });
-  });
   if (milestone) milestone.addEventListener('change', function() {
     if (adminDialogKind() === 'notice-rule') closeAdminDialog();
     state.noticeMilestoneId = milestone.value;
@@ -322,7 +319,7 @@ export function bindEmailDesk(target, back) {
   const preview = document.getElementById('notice-preview');
   if (preview) preview.addEventListener('click', function() {
     preview.disabled = true;
-    callServer('previewNotificationSweep', state.noticeCohortId).then(function(result) {
+    callServer('previewNotificationSweep', state.cohortId || state.noticeCohortId).then(function(result) {
       preview.disabled = false;
       paintNoticePreview(result);
     }).catch(function(error) {
@@ -334,7 +331,7 @@ export function bindEmailDesk(target, back) {
   if (sendToday) sendToday.addEventListener('click', function() {
     if (!window.confirm('Send today’s reminder emails for this cohort?')) return;
     sendToday.disabled = true;
-    callServer('runNotificationSweep', { dryRun: false, cohortId: state.noticeCohortId }).then(function(result) {
+    callServer('runNotificationSweep', { dryRun: false, cohortId: state.cohortId || state.noticeCohortId }).then(function(result) {
       sendToday.disabled = false;
       showSuccess('Sent ' + (result.sent || 0) + '. Failed ' + (result.failed || 0) + '.');
       paintNoticePreview(result);
@@ -364,7 +361,7 @@ export function saveNoticeEditor(target, back, button) {
   }
   const payload = {
     ruleId: edit.id === 'new' ? '' : edit.id,
-    cohortId: state.noticeCohortId,
+    cohortId: state.cohortId || state.noticeCohortId,
     milestoneId: milestone.value,
     when: document.getElementById('notice-when').value,
     days: document.getElementById('notice-days').value,

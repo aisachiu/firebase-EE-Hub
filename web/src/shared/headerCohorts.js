@@ -1,5 +1,6 @@
 import { callServer } from './api.js';
 import { escapeHtml } from './html.js';
+import { syncHeaderCohortSelect } from './staffContext.js';
 import { state } from './state.js';
 
 let headerCohortsRequest = null;
@@ -35,6 +36,19 @@ export function rememberHeaderCohorts(cohorts) {
   if (!Array.isArray(cohorts)) return;
   state.headerCohorts = normalizeCohorts(cohorts);
   paintHeaderCohortSelect();
+}
+
+/** Use the header cohort. When none is selected, adopt the first cohort into that same global state. */
+export function adoptGlobalCohort(cohorts) {
+  const list = normalizeCohorts(cohorts);
+  if (!list.length) return state.cohortId || '';
+  if (!list.some(function(cohort) { return cohort.id === state.cohortId; })) {
+    state.cohortId = list[0].id;
+  }
+  state.headerCohorts = list;
+  paintHeaderCohortSelect();
+  syncHeaderCohortSelect();
+  return state.cohortId;
 }
 
 export function ensureHeaderCohorts() {

@@ -96,6 +96,7 @@ import {
 } from './allocation';
 import { getLiveSheetHeaders, listLiveSheetTabs, resyncLiveChoiceData, saveLiveSheetLink } from './liveSheet';
 import { applySheetIngest, exportSheetCollections, listSheetCollections, previewSheetIngest } from './sheetSync';
+import { deleteStudentTask, listStudentTasks, saveStudentTask } from './studentTasks';
 import { addSupervisorTodo, deleteSupervisorTodo, getSupervisorTodoDesk, setSupervisorTodoStatus } from './supervisorTodos';
 import { HubError, text } from './util';
 
@@ -131,6 +132,9 @@ export async function dispatch(app: App, method: string, args: unknown[]): Promi
     case 'createStudentUsersFromCohort': return createStudentUsersFromCohort(app, args[0], args[1]);
     case 'clearCohortWorkspaceLinks': return clearCohortWorkspaceLinks(app, args[0], args[1]);
     case 'assignMilestonesToStudents': return assignMilestonesToStudents(app, args[0], args[1], args[2]);
+    case 'listStudentTasks': return listStudentTasks(app, args[0]);
+    case 'saveStudentTask': return saveStudentTask(app, args[0], (args[1] || {}) as any, args[2]);
+    case 'deleteStudentTask': return deleteStudentTask(app, args[0], args[1]);
     case 'saveStudentAnchorAndSync': return saveStudentAnchorAndSync(app, args[0], args[1], args[2]);
     case 'setActionItemStatus': return setActionItemStatus(app, args[0], args[1], args[2], args[3], args[4]);
     case 'saveStudentTodo': return saveStudentTodo(app, args[0], args[1], args[2], args[3]);

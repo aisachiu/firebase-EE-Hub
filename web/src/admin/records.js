@@ -138,9 +138,10 @@ export function renderAdminData(data, options) {
     : `${records.length} record${records.length === 1 ? '' : 's'}`;
   const selectionHeader = isCohortMembers ? collapsibleHeader('cohort-member-selection', 'Selection and import', `<div class="toolbar"><button type="button" class="button secondary" id="open-roster-import">Import CSV / paste</button><button type="button" class="button secondary" id="create-selected-users" disabled>Add selected as users</button>${cohortProvisionSelectionActions()}<label><input type="checkbox" id="select-all-members"> Select all</label><span id="selected-count" class="muted">0 selected</span></div>`) : '';
   const categoryNote = entity === 'ticketCategories' ? '<p class="lede">These names are the choices a student sees when they send a message. Who they message sends it to that student\'s supervisor or to the EE Coordinator.</p>' : '';
+  const taskNote = entity === 'studentTasks' ? `<p class="lede">Tasks for cohort ${escapeHtml(state.cohortId || '')}. Add, edit, and delete stay on this cohort.</p>` : '';
   const filterControl = isCohortMembers ? cohortProvisionFilterControl(state.memberProvisionFilter) : '';
   const colourAction = entity === 'subjects' ? '<button type="button" class="button secondary" id="auto-subject-colours">Auto Apply Colours</button>' : '';
-  target.innerHTML = `${staffNav}${categoryNote}<div class="toolbar"><button type="button" class="button" id="new-record">Add ${escapeHtml(addLabel)}</button>${colourAction}${filterControl}<span class="muted">${shownCount}</span></div>
+  target.innerHTML = `${staffNav}${categoryNote}${taskNote}<div class="toolbar"><button type="button" class="button" id="new-record">Add ${escapeHtml(addLabel)}</button>${colourAction}${filterControl}<span class="muted">${shownCount}</span></div>
     ${selectionHeader}
     ${state.status ? `<p class="status">${escapeHtml(state.status)}</p>` : ''}
     ${sorted.length ? `<div class="table-wrap"><table><thead><tr>${isCohortMembers ? '<th scope="col"><span class="sr-only">Select</span></th>' : ''}${columns.map(function(field) { return sortableHeader(tableId, field.name, field.label || field.name); }).join('')}${isCohortMembers ? sortableHeader(tableId, 'workspace', 'Workspace') : ''}<th scope="col">Actions</th></tr></thead><tbody>${sorted.map(function(item) {
@@ -504,35 +505,31 @@ export function fieldMarkup(field, value, editing) {
 
 export function renderCohortImport() {
   const target = document.getElementById('cohort-import');
+  if (!target) return;
   target.innerHTML = '<div class="toolbar"><button type="button" class="button secondary" id="show-cohort-import">Fill from cohort roster</button></div>';
   document.getElementById('show-cohort-import').addEventListener('click', function() {
-    callServer('getCohorts').then(function(cohorts) {
-      if (!cohorts.length) { target.innerHTML = '<p class="notice">No cohorts are available.</p>'; return; }
-      target.innerHTML = `<div class="toolbar"><label for="import-cohort">Cohort</label><select id="import-cohort">${cohorts.map(function(cohort) {
-        return `<option value="${escapeHtml(cohort.id)}">${escapeHtml(cohort.name)}</option>`;
-      }).join('')}<option value=""></option></select><label for="import-student">Student</label><select id="import-student"><option value="">Choose a student</option></select></div>`;
-      const cohortSelect = document.getElementById('import-cohort');
-      const studentSelect = document.getElementById('import-student');
-      function loadMembers() {
-        if (!cohortSelect.value) return;
-        callServer('getCohortMembersForAdmin', cohortSelect.value).then(function(result) {
-          studentSelect.innerHTML = '<option value="">Choose a student</option>' + (result.records || []).map(function(member, index) {
-            return `<option value="${index}" ${member.hasStudentIdConflict ? 'disabled' : ''}>${escapeHtml(member['Display Name'] || member.StudentId)} · StudentId ${escapeHtml(member.StudentId)}${member.hasStudentIdConflict ? ' · Student Number conflict' : ''}</option>`;
-          }).join('');
-          studentSelect.onchange = function() {
-            const member = result.records[Number(studentSelect.value)];
-            if (!member) return;
-            setField('DisplayName', member['Display Name']);
-            setField('Cohort', cohortSelect.value);
-            setField('StudentId', member.StudentId);
-            setField('Student Number', member['Student Number'] || member['Student ID'] || '');
-            setField('Student Email', member['Student Email'] || '');
-            setField('parentEmail', member['Family Email']);
-          };
-        }).catch(showError);
-      }
-      cohortSelect.addEventListener('change', loadMembers);
-      loadMembers();
+    const cohortId = state.cohortId;
+    if (!cohortId) {
+      target.innerHTML = '<p class="notice">Choose a cohort in the header, then fill from that roster.</p>';
+      return;
+    }
+    target.innerHTML = `<div class="toolbar"><span class="muted">Cohort ${escapeHtml(cohortId)}</span><label for="import-student">Student</label><select id="import-student"><option value="">Choose a student</option></select></div>`;
+    const studentSelect = document.getElementById('import-student');
+    callServer('getCohortMembersForAdmin', cohortId).then(function(result) {
+      if (!studentSelect) return;
+      studentSelect.innerHTML = '<option value="">Choose a student</option>' + (result.records || []).map(function(member, index) {
+        return `<option value="${index}" ${member.hasStudentIdConflict ? 'disabled' : ''}>${escapeHtml(member['Display Name'] || member.StudentId)} · StudentId ${escapeHtml(member.StudentId)}${member.hasStudentIdConflict ? ' · Student Number conflict' : ''}</option>`;
+      }).join('');
+      studentSelect.onchange = function() {
+        const member = result.records[Number(studentSelect.value)];
+        if (!member) return;
+        setField('DisplayName', member['Display Name']);
+        setField('Cohort', cohortId);
+        setField('StudentId', member.StudentId);
+        setField('Student Number', member['Student Number'] || member['Student ID'] || '');
+        setField('Student Email', member['Student Email'] || '');
+        setField('parentEmail', member['Family Email']);
+      };
     }).catch(showError);
   });
 }
@@ -563,9 +560,13 @@ export function saveForm(event) {
   const localError = document.getElementById('member-save-error') || document.getElementById('resource-save-error');
   if (localError) { localError.hidden = true; localError.textContent = ''; }
   submit.disabled = true;
-  const request = runMutation(entity === 'cohortMembers' ? 'saveCohortMember' : 'saveAdminRecord', entity === 'cohortMembers'
-    ? [state.cohortId, record, state.originalKey || '']
-    : [entity, record, state.originalKey || ''], { key: 'admin:' + entity + ':' + (state.originalKey || 'new') });
+  const request = runMutation(
+    entity === 'cohortMembers' ? 'saveCohortMember' : (entity === 'studentTasks' ? 'saveStudentTask' : 'saveAdminRecord'),
+    entity === 'cohortMembers' || entity === 'studentTasks'
+      ? [state.cohortId, record, state.originalKey || '']
+      : [entity, record, state.originalKey || ''],
+    { key: 'admin:' + entity + ':' + (state.originalKey || 'new') }
+  );
   request.then(function(result) {
     state.status = result && result.auditWarning ? 'Saved, but the completion audit entry could not be written. Check AUDIT_LOGS.' : 'Saved.';
     memberEditorReturn = null;
@@ -591,9 +592,11 @@ export function removeRecord(record) {
   const key = keyValue(entity, record);
   const noun = entity === 'cohorts' ? 'archive this cohort' : 'delete this record';
   if (!window.confirm(`Are you sure you want to ${noun}?`)) return;
-  const request = runMutation(entity === 'cohortMembers' ? 'deleteCohortMember' : 'deleteAdminRecord', entity === 'cohortMembers'
-    ? [state.cohortId, key]
-    : [entity, key], { key: 'admin:' + entity + ':' + key });
+  const request = runMutation(
+    entity === 'cohortMembers' ? 'deleteCohortMember' : (entity === 'studentTasks' ? 'deleteStudentTask' : 'deleteAdminRecord'),
+    entity === 'cohortMembers' || entity === 'studentTasks' ? [state.cohortId, key] : [entity, key],
+    { key: 'admin:' + entity + ':' + key }
+  );
   request.then(function(result) {
     state.status = result && result.auditWarning ? 'Change saved, but the completion audit entry could not be written.' : 'Change saved.';
     state.editingRecord = null;

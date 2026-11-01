@@ -154,6 +154,7 @@ async function seed() {
     const taskId = `ACT_SEED_${milestone.milestoneId.toUpperCase()}`;
     await store.set(COLLECTIONS.studentActionItems, taskId, {
       TaskId: taskId,
+      cohortId: '2026',
       StudentId: STUDENT,
       CreatorType: 'System',
       TemplateId: milestone.milestoneId,
