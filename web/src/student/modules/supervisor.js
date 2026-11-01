@@ -26,5 +26,5 @@ export function renderBooking(home) {
   const frame = /calendar\.google\.com/i.test(url)
     ? `<iframe class="ee-booking-frame" title="Appointment schedule" src="${escapeHtml(url)}"></iframe>`
     : '';
-  return `<section class="ee-booking"><h2>Book the teacher</h2><p><a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">Open the appointment schedule</a></p>${frame}</section>`;
+  return `<section class="ee-booking"><h2>Book the teacher</h2><p><a class="button" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">Book the teacher</a></p>${frame}</section>`;
 }

@@ -30,6 +30,7 @@ import {
 } from './admin';
 import { getAppBootstrap } from './bootstrap';
 import { getMyEssayAnalytics, getStudentEssayAnalytics } from './docAnalytics';
+import { syncEssayDocComments } from './docComments';
 import { checkCohortDriveFolders, getCohortDriveSettings, getDriveAccount, saveCohortDriveSettings, saveDriveAccount, syncCohortDriveFolders } from './drive';
 import { getFormDesigner, getFormResponse, getStudentForm, listFormMilestones, publishForm, saveFormDraft, saveStudentForm } from './forms';
 import {
@@ -42,6 +43,8 @@ import {
   seedCohortPathway,
 } from './cohortPathway';
 import { getMyActivity, getStaffHome, getStaffStudentHome, getStudentActivity, getStudentHome, recordStudentView } from './journey';
+import { saveReflectionNote } from './reflectionNotes';
+import { getStudentPageSettings, saveStudentPageSettings } from './studentPages';
 import {
   createStaffNote,
   createTicket,
@@ -110,6 +113,7 @@ export async function dispatch(app: App, method: string, args: unknown[]): Promi
     case 'recordStudentView': return recordStudentView(app, args[0]);
     case 'getStudentActivity': return getStudentActivity(app, args[0], args[1]);
     case 'getMyEssayAnalytics': return getMyEssayAnalytics(app);
+    case 'syncEssayDocComments': return syncEssayDocComments(app, args[0], args[1], args[2]);
     case 'getStudentEssayAnalytics': return getStudentEssayAnalytics(app, args[0], args[1], args[2]);
     case 'getContentHub': return getContentHub(app);
     case 'getCohorts': return getCohorts(app);
@@ -217,6 +221,9 @@ export async function dispatch(app: App, method: string, args: unknown[]): Promi
     case 'addSupervisorTodo': return addSupervisorTodo(app, args[0], args[1], args[2]);
     case 'setSupervisorTodoStatus': return setSupervisorTodoStatus(app, args[0], args[1]);
     case 'deleteSupervisorTodo': return deleteSupervisorTodo(app, args[0]);
+    case 'getStudentPageSettings': return getStudentPageSettings(app);
+    case 'saveStudentPageSettings': return saveStudentPageSettings(app, args[0]);
+    case 'saveReflectionNote': return saveReflectionNote(app, args[0], args[1]);
     default: throw new HubError('Unknown EE Hub request.');
   }
 }

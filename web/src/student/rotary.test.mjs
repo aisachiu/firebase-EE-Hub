@@ -4,13 +4,19 @@ import test from 'node:test';
 import { pageFromSearch, stepEePage } from '../shared/eePage.js';
 import { calendarShellHtml, renderMonthHtml } from './modules/calendar.js';
 import {
+  circularOffset,
+  chatPaneOpen,
+  docCommentCardHtml,
   docCommentHref,
   essayEmbedSrc,
   initialMonthWindow,
   milestoneMarks,
+  settleVisiblePage,
+  stepVisiblePage,
   stripOffset,
   studentViewsForPage,
   threadEntries,
+  visibleEePages,
 } from './rotary.js';
 
 const home = {
@@ -32,6 +38,12 @@ const home = {
 test('the rotary wraps and the strip offsets keep 3 and 4 the same width', () => {
   assert.equal(stepEePage(4, 1), 0);
   assert.equal(stepEePage(0, -1), 4);
+  assert.equal(stepVisiblePage(4, 1), 0);
+  assert.equal(stepVisiblePage(1, 1, visibleEePages({ calendar: false })), 3);
+  assert.equal(settleVisiblePage(2, visibleEePages({ calendar: false })), 0);
+  assert.equal(circularOffset(0, 0, 5), 0);
+  assert.equal(circularOffset(4, 0, 5), -1);
+  assert.equal(circularOffset(3, 0, 5), -2);
   assert.equal(stripOffset(1, 'strip'), 0);
   assert.equal(stripOffset(2, 'strip'), -2 / 3);
   assert.equal(stripOffset(3, 'strip'), -5 / 3);
@@ -62,6 +74,10 @@ test('doc comments are distinct cards and deep-link with disco', () => {
   const href = docCommentHref(home.links.doc, 'comment-9');
   assert.equal(href, 'https://docs.google.com/document/d/abc123/edit?disco=comment-9');
   assert.equal(essayEmbedSrc(home.links.doc), 'https://docs.google.com/document/d/abc123/edit?embedded=true');
+  assert.equal(chatPaneOpen(4, false), true);
+  assert.equal(chatPaneOpen(3, false), true);
+  assert.equal(chatPaneOpen(3, true), false);
+  assert.equal(chatPaneOpen(0, false), false);
   const entries = threadEntries({
     tickets: [
       {
@@ -78,11 +94,39 @@ test('doc comments are distinct cards and deep-link with disco', () => {
     ],
   }, {
     links: home.links,
-    docComments: [{ at: '2026-10-01T12:00:00.000Z', author: 'Ms Sharma', quote: 'the river', body: 'Tighten this.', commentId: 'abc' }],
+    docComments: [
+      {
+        at: '2026-10-01T12:00:00.000Z',
+        author: 'Ms Sharma',
+        quote: 'the river',
+        body: 'Tighten this.',
+        commentId: 'abc',
+        replyCount: 2,
+        replies: [
+          { author: 'Jamie Wong', body: 'I cut it.' },
+          { author: 'Ms Sharma', body: 'Better.' },
+        ],
+      },
+      { at: '2026-10-01T13:00:00.000Z', author: 'Jamie Wong', body: 'Is this clear?', commentId: 'stu' },
+    ],
   });
-  assert.deepEqual(entries.map((item) => item.type), ['chat', 'doc', 'chat']);
+  assert.deepEqual(entries.map((item) => item.type), ['chat', 'doc', 'doc', 'chat']);
   assert.equal(entries[1].href, 'https://docs.google.com/document/d/abc123/edit?disco=abc');
+  assert.equal(entries[1].replyCount, 2);
+  assert.equal(entries.filter((item) => item.type === 'doc').length, 2);
   assert.equal(entries.some((item) => item.body === 'Coordinator only.'), false);
+  const card = docCommentCardHtml(entries[1]);
+  assert.match(card, /class="ee-doc-comment"/);
+  assert.doesNotMatch(card, /ee-bubble/);
+  assert.match(card, /Open in Google Docs/);
+  assert.match(card, /disco=abc/);
+  assert.match(card, /the river/);
+  assert.match(card, /I cut it/);
+  assert.match(card, /Better/);
+  assert.equal(card.match(/<article/g).length, 1);
+  const studentCard = docCommentCardHtml(entries[2]);
+  assert.match(studentCard, /Jamie Wong/);
+  assert.match(studentCard, /Is this clear/);
 });
 
 test('a page query is optional and invalid pages settle on the document', () => {
@@ -107,6 +151,10 @@ test('the stage markup is five panes and the embedded doc is 90vh', async () => 
   assert.match(html, /data-ee-pane="calendar"/);
   assert.match(html, /data-ee-pane="meetings"/);
   assert.match(html, /data-ee-pane="chat"/);
+  assert.match(html, /data-ee-carousel/);
+  assert.match(html, /data-ee-prev/);
+  assert.match(html, /data-open-ee-page="4"/);
+  assert.match(html, /Supervisor Chat/);
   assert.match(html, /class="gdoc-frame"/);
   assert.match(html, /Working draft/);
   assert.match(html, /View journey/);
@@ -115,9 +163,76 @@ test('the stage markup is five panes and the embedded doc is 90vh', async () => 
   const css = fs.readFileSync(new URL('../styles/app.css', import.meta.url), 'utf8');
   assert.match(css, /\.gdoc-frame\s*\{[^}]*height:\s*90vh/);
   assert.match(css, /\.ee-stage\.is-mobile\[data-page="0"\] \.gdoc-embed/);
+  assert.match(css, /\.ee-doc-comment/);
+  const calls = [];
+  window.eeCall = function(method, args) {
+    calls.push([method, args]);
+    return Promise.resolve({
+      comments: [{ at: '2026-11-01T00:00:00.000Z', author: 'Priya Shah', body: 'Look here', commentId: 't1', quote: 'river' }],
+    });
+  };
+  document.querySelector = function() { return null; };
+  const communication = await import('./modules/communication.js');
+  const chatHome = Object.assign({}, home, { docComments: [] });
+  await communication.syncChatCommentsIfOpen(chatHome, 0);
+  assert.equal(calls.length, 0);
+  await communication.syncChatCommentsIfOpen(chatHome, 4);
+  assert.deepEqual(calls, [['syncEssayDocComments', []]]);
+  assert.equal(chatHome.docComments[0].commentId, 't1');
+  const staffHome = { staffView: true, email: 'student@vsa.example.edu', cohort: '2026', viewAs: 'supervisor', links: {} };
+  await communication.syncChatCommentsIfOpen(staffHome, 3);
+  assert.deepEqual(calls[1], ['syncEssayDocComments', ['student@vsa.example.edu', '2026', 'supervisor']]);
+  assert.equal(staffHome.docComments[0].author, 'Priya Shah');
   window.matchMedia = function() { return { matches: true }; };
   const phone = views.studentStageHtml(home, 0, false);
   assert.match(phone, /is-mobile/);
   assert.match(phone, /Open in Google Docs/);
   assert.doesNotMatch(phone, /<iframe/);
+  const staff = views.studentStageHtml(Object.assign({ staffView: true }, home), 0, true);
+  assert.match(staff, /ee-staff-bar/);
+  assert.match(staff, /data-ee-carousel/);
+  assert.doesNotMatch(staff, /data-staff-preview/);
+  const hidden = views.studentStageHtml(Object.assign({}, home, { studentPages: { calendar: false, chat: false } }), 2, false);
+  assert.match(hidden, /data-page="0"/);
+  assert.doesNotMatch(hidden, /data-open-ee-page="2"/);
+  assert.doesNotMatch(hidden, /data-open-ee-page="4"/);
+  assert.doesNotMatch(hidden, />Calendar</);
+});
+
+test('reflection notes count words and render a google doc link', async () => {
+  const notes = await import('./modules/meetingNotes.js');
+  assert.deepEqual(notes.noteMetrics('hello world'), { characters: 11, words: 2 });
+  assert.deepEqual(notes.noteMetrics('   '), { characters: 3, words: 0 });
+  const html = notes.render({
+    templates: [],
+    sessionNotes: [],
+    reflectionNotes: [{
+      noteId: 'viva-voce',
+      title: 'Viva Voce',
+      body: 'hello world',
+      complete: true,
+      date: '2026-11-01',
+      docLink: 'https://docs.google.com/document/d/abc123/edit',
+    }],
+  }, { slot: 'secondary' });
+  assert.match(html, /hello world/);
+  assert.match(html, /data-reflection-chars>11</);
+  assert.match(html, /data-reflection-words>2</);
+  assert.match(html, /characters/);
+  assert.match(html, /words/);
+  assert.match(html, /Complete/);
+  assert.match(html, /type="date"/);
+  assert.match(html, /Open extended notes/);
+  assert.match(html, /checked/);
+  const unsafe = notes.render({
+    reflectionNotes: [{ noteId: 'viva-voce', title: 'Viva Voce', body: '', docLink: 'javascript:alert(1)' }],
+  }, { slot: 'secondary' });
+  assert.equal(notes.reflectionDocHref('javascript:alert(1)'), '');
+  assert.doesNotMatch(unsafe, /<a /);
+  const locked = notes.render({
+    staffView: true,
+    reflectionNotes: [{ noteId: 'viva-voce', title: 'Viva Voce', body: 'Seen', complete: false, date: '', docLink: '' }],
+  }, { slot: 'secondary' });
+  assert.match(locked, /readonly/);
+  assert.match(locked, /disabled/);
 });

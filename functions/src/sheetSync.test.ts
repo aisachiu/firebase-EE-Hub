@@ -8,6 +8,7 @@ import {
   buildExportGrids,
   exportSheetCollections,
   listSheetCollections,
+  mergeStaffBooking,
   previewSheetIngest,
   sheetTabTitle,
   SheetWorkbook,
@@ -347,4 +348,17 @@ test('a supervisor cannot export collections', async () => {
     actorEmail: 'drive@vsa.edu',
   }), /Access denied/);
   assert.equal(created, false);
+});
+
+test('a staff sheet without a booking column keeps the stored link', () => {
+  const kept = mergeStaffBooking(
+    { EMAIL: 'supervisor@vsa.edu', bookingLink: 'https://calendly.com/priya/ee' },
+    { EMAIL: 'supervisor@vsa.edu', DisplayName: 'Priya Shah' },
+  );
+  assert.equal(kept.bookingLink, 'https://calendly.com/priya/ee');
+  const cleared = mergeStaffBooking(
+    { bookingLink: 'https://calendly.com/priya/ee' },
+    { bookingLink: '' },
+  );
+  assert.equal(cleared.bookingLink, '');
 });

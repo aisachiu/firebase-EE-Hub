@@ -10,7 +10,6 @@ import {
   nextIncomplete,
   openStudentSection,
   paintStudentPage,
-  setJourneyOpen,
   systemItemFor,
 } from './home.js';
 import { bindFormButtons, openMilestoneEditor } from './milestones.js';
@@ -147,8 +146,8 @@ export function bindJourneyHero(main) {
         openStudentSection('journey');
         return;
       }
-      setJourneyOpen(true);
-      if (home && document.getElementById('journey-body')) paintStudentJourney(home);
+      const stageJourney = document.getElementById('ee-journey');
+      if (stageJourney && home) paintStudentJourney(home, stageJourney);
     });
   });
 }

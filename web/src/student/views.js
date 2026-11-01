@@ -1,6 +1,5 @@
 import { quietServer } from '../shared/api.js';
 import { docChipMarkup, paintDocChips } from '../shared/docChip.js';
-import { clampEePage } from '../shared/eePage.js';
 import { escapeHtml, shortDate } from '../shared/html.js';
 import { loadingLine } from '../shared/loading.js';
 import { advanceScene, sameScene } from '../shared/scene.js';
@@ -20,10 +19,11 @@ import {
   staffStudentBar,
 } from './home.js';
 import { mountCalendar } from './modules/calendar.js';
+import { syncChatCommentsIfOpen } from './modules/communication.js';
 import { renderEssayEmbed } from './modules/document.js';
 import { modules } from './modules/registry.js';
 import { renderBooking } from './modules/supervisor.js';
-import { bindEeStage, dateParts, EE_PAGES, pageTitle, previewPage, studentViewsForPage } from './rotary.js';
+import { bindEeStage, dateParts, pageTitle, previewPage, settleVisiblePage, studentViewsForPage, titleCarouselHtml, visibleEePages } from './rotary.js';
 import { pathwayStage } from './stage.js';
 import { paintStudentJourney } from './journey.js';
 
@@ -47,7 +47,9 @@ export function renderStudentSection() {
 }
 
 export function paintActiveStudentView(home) {
-  const page = clampEePage(state.eePage);
+  const pages = visibleEePages(home && home.studentPages);
+  const page = settleVisiblePage(state.eePage, pages);
+  state.eePage = page;
   const main = document.getElementById('main');
   if (!main) return;
   main.classList.add('student-home', 'ee-stage-main');
@@ -57,24 +59,28 @@ export function paintActiveStudentView(home) {
 }
 
 export function paintStaffPreview(home) {
-  const page = previewPage(state.staffPreviewView);
+  const pages = visibleEePages(home && home.studentPages);
+  const page = settleVisiblePage(previewPage(state.staffPreviewView), pages);
+  state.staffPreviewView = String(page);
   const main = document.getElementById('main');
   if (!main) return;
   main.classList.add('student-home', 'ee-stage-main');
   main.innerHTML = studentStageHtml(home, page, true);
   mountStage(main, home, page, true);
   bindStaffStudentChrome();
-  bindPreviewSwitch(home);
 }
 
 export function studentStageHtml(home, page, staff) {
-  const index = staff ? previewPage(page) : clampEePage(page);
+  const pages = visibleEePages(home && home.studentPages);
+  const index = settleVisiblePage(staff ? previewPage(page) : page, pages);
+  if (!pages.length) {
+    return `${staffChrome(home)}<div class="empty"><p>Student pages are turned off.</p></div>`;
+  }
   const mobile = typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(max-width: 700px)').matches;
-  return `${staffChrome(home, index)}
+  return `${staffChrome(home)}
+    ${titleCarouselHtml(index, pages)}
     <div class="ee-stage${mobile ? ' is-mobile' : ''}" data-ee-stage data-page="${index}">
       <div class="ee-page-chip" data-ee-chip aria-live="polite"><b>${index}</b> ${escapeHtml(pageTitle(index, mobile))}</div>
-      <button type="button" class="ee-edge ee-edge-prev" data-ee-prev aria-label="Previous page">‹</button>
-      <button type="button" class="ee-edge ee-edge-next" data-ee-next aria-label="Next page">›</button>
       <div class="ee-track" data-ee-track>
         <section class="ee-pane ee-pane-doc" data-ee-pane="doc">${documentPane(home, mobile)}</section>
         <section class="ee-pane ee-pane-journey" data-ee-pane="journey" aria-label="Journey and to-dos"><div id="ee-journey"></div></section>
@@ -85,16 +91,9 @@ export function studentStageHtml(home, page, staff) {
     </div>`;
 }
 
-function staffChrome(home, page) {
+function staffChrome(home) {
   if (!home || !home.staffView) return '';
-  return `<div class="ee-staff-bar">${staffStudentBar(home)}<div class="page-actions">${previewSwitcher(page)}${docChipMarkup(home)}</div></div>`;
-}
-
-function previewSwitcher(page) {
-  const buttons = EE_PAGES.map(function(row) {
-    return `<button type="button" data-staff-preview="${row.id}" aria-pressed="${page === row.id ? 'true' : 'false'}">${escapeHtml(row.title)}</button>`;
-  }).join('');
-  return `<div class="view-toggle ee-preview" role="group" aria-label="Student pages">${buttons}</div>`;
+  return `<div class="ee-staff-bar">${staffStudentBar(home)}<div class="page-actions">${docChipMarkup(home)}</div></div>`;
 }
 
 function documentPane(home, omitFrame) {
@@ -166,6 +165,7 @@ function returnedNotice(home) {
 
 function mountStage(main, home, page, staff) {
   const stage = main.querySelector('[data-ee-stage]');
+  if (!stage) return;
   const docHost = main.querySelector('[data-module="document"], .ee-pane-doc');
   if (modules.document && docHost && typeof modules.document.mount === 'function') {
     modules.document.mount(docHost, home, { slot: 'primary', view: 'my-ee' });
@@ -177,46 +177,42 @@ function mountStage(main, home, page, staff) {
   if (chat && modules.communication && typeof modules.communication.mount === 'function') {
     modules.communication.mount(chat, home, { thread: true });
   }
+  const meetings = main.querySelector('[data-ee-pane="meetings"]');
+  if (meetings && modules.meetingNotes && typeof modules.meetingNotes.mount === 'function') {
+    modules.meetingNotes.mount(meetings, home);
+  }
   paintStudentActivity(home);
   if (!staff) bindUnreadNotices(main, false);
   bindEeStage(stage, {
     page: page,
+    pages: visibleEePages(home && home.studentPages),
     onPage: function(next) { publishEePage(next, home, staff); },
   });
+  syncChatCommentsIfOpen(home, page);
 }
 
 function publishEePage(page, home, staff) {
   if (staff) {
     state.staffPreviewView = String(page);
-    return;
-  }
-  state.eePage = page;
-  const path = '/my-ee' + (page ? '?page=' + page : '');
-  const current = window.location.pathname + window.location.search;
-  if (current !== path && window.history && typeof window.history.replaceState === 'function') {
-    window.history.replaceState({ eeHub: '/my-ee' }, '', path);
-  }
-  studentViewsForPage(page).forEach(function(view) {
-    const pending = recordStudentViewOpen(view, home);
-    if (view === 'document' && page === 0 && pending) {
-      pending.then(function(wrote) {
-        if (!wrote) return;
-        state.activityFeed = null;
-        if (document.getElementById('my-activity')) paintStudentActivity(home);
-      });
+  } else {
+    state.eePage = page;
+    const path = '/my-ee' + (page ? '?page=' + page : '');
+    const current = window.location.pathname + window.location.search;
+    if (current !== path && window.history && typeof window.history.replaceState === 'function') {
+      window.history.replaceState({ eeHub: '/my-ee' }, '', path);
     }
-  });
-}
-
-function bindPreviewSwitch(home) {
-  document.querySelectorAll('[data-staff-preview]').forEach(function(button) {
-    button.addEventListener('click', function() {
-      const next = button.getAttribute('data-staff-preview');
-      if (next === null || previewPage(next) === previewPage(state.staffPreviewView)) return;
-      state.staffPreviewView = next;
-      paintStaffPreview(home);
+    studentViewsForPage(page).forEach(function(view) {
+      const pending = recordStudentViewOpen(view, home);
+      if (view === 'document' && page === 0 && pending) {
+        pending.then(function(wrote) {
+          if (!wrote) return;
+          state.activityFeed = null;
+          if (document.getElementById('my-activity')) paintStudentActivity(home);
+        });
+      }
     });
-  });
+  }
+  syncChatCommentsIfOpen(home, page);
 }
 
 /** Students only. Staff previews do not write these events. Returns a promise when a write was started. */

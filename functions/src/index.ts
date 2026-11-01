@@ -2,6 +2,7 @@ import { initializeApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
+import { runDocCommentSweep } from './docComments';
 import { dispatch } from './dispatch';
 import { googleOAuthSecrets } from './googleAuth';
 import { verifiedGoogleEmail } from './identity';
@@ -64,4 +65,21 @@ export const notificationSweep = onSchedule({
     timeZone,
   };
   await runScheduledNotifications(app);
+});
+
+export const docCommentSweep = onSchedule({
+  schedule: 'every 30 minutes',
+  timeZone,
+  region: 'asia-east2',
+  timeoutSeconds: 300,
+  memory: '512MiB',
+  secrets: googleOAuthSecrets,
+}, async () => {
+  const app: App = {
+    store,
+    email: 'doc-comments@ee-hub',
+    timeZone,
+  };
+  const summary = await runDocCommentSweep(app);
+  console.log('docCommentSweep', JSON.stringify(summary));
 });

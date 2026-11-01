@@ -42,6 +42,7 @@ async function seed() {
   await store.set(COLLECTIONS.staffUsers, SUPERVISOR, {
     EMAIL: SUPERVISOR, DisplayName: 'Priya Shah', 'Primary Department': 'English', StaffCode: 'PS',
     isStaff: true, isSupervisor: true, isLead: true, isCoordinator: false, isAdmin: false, EEQuota: 8, EESubjects: ['English'],
+    bookingLink: 'https://calendly.com/priya-shah/ee',
   });
   await store.set(COLLECTIONS.studentUsers, STUDENT, {
     StudentId: STUDENT, DisplayName: 'Jamie Wong', Cohort: '2026', 'Student Number': '20260001', 'Student Email': STUDENT, parentEmail: 'family.wong@vsa.example.edu', subject: 'English',
