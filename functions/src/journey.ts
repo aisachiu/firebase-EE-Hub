@@ -9,7 +9,7 @@ import { publishedFormIds } from './forms';
 import { listAddedSupervisorTodos, supervisorOwnedMilestones } from './supervisorTodos';
 import { loadReflectionNotes } from './reflectionNotes';
 import { readStudentPageFlags } from './studentPages';
-import { dateOnlyValue, text } from './util';
+import { dateOnlyValue, HubError, normalizeEmail, text } from './util';
 
 function sessionNotesFrom(events: { type: string; taskId: string; milestoneId: string; comment: string; at: string; actor: string }[]) {
   return events
@@ -229,9 +229,17 @@ function staffViewLabel(view: string, canUpdate: boolean) {
 
 export async function getStaffStudentHome(app: App, studentEmail: unknown, cohortId: unknown, viewAs: unknown) {
   const user = await requireStaff(app, 'VIEW_STAFF_STUDENT');
-  const context = await staffStudentContext(app, user, text(studentEmail), text(cohortId), 'VIEW_STAFF_STUDENT', viewAs);
-  const phases = await readPhases(app, text(cohortId));
-  const templates = orderTemplates(await readTemplates(app, text(cohortId)), phases);
+  const email = normalizeEmail(studentEmail);
+  if (!email) throw new HubError('Student is not in the selected cohort.');
+  let cohort = text(cohortId);
+  if (!cohort) {
+    const placement = await findPlacement(app, email);
+    if (!placement) throw new HubError('Student is not in the selected cohort.');
+    cohort = placement.cohortId;
+  }
+  const context = await staffStudentContext(app, user, email, cohort, 'VIEW_STAFF_STUDENT', viewAs);
+  const phases = await readPhases(app, cohort);
+  const templates = orderTemplates(await readTemplates(app, cohort), phases);
   const items = await getStudentActionItems(app, context.email, user);
   const events = await readEvents(app, [context.email]);
   const returned = latestReturned(events);
@@ -260,13 +268,13 @@ export async function getStaffStudentHome(app: App, studentEmail: unknown, cohor
     viewLabel: staffViewLabel(context.view, canUpdateAll),
     displayName: roster.displayName,
     email: context.email,
-    cohort: text(cohortId),
+    cohort,
     subject: roster.subject || '',
     supervisorId,
     supervisorName: profiles.names[supervisorId] || '',
     bookingUrl: bookingUrlFrom(profiles.booking[supervisorId] || ''),
     studentPages: await readStudentPageFlags(app),
-    reflectionNotes: await loadReflectionNotes(app, text(cohortId), context.email, templates),
+    reflectionNotes: await loadReflectionNotes(app, cohort, context.email, templates),
     sessionNotes: sessionNotesFrom(events),
     hrm: roster.hrm || '',
     anchor: roster.anchor || '',

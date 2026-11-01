@@ -160,6 +160,14 @@ test('student home binds the supervisor booking link, page flags, and saved refl
   const staffHome = await getStaffStudentHome(appFor(store, COORDINATOR), STUDENT, '2026', 'coordinator');
   assert.equal(staffHome.bookingUrl, 'https://calendly.com/priya/ee');
   assert.equal(staffHome.reflectionNotes.find((note) => note.noteId === 'm4')?.date, '2026-11-01');
+
+  const linked = await getStaffStudentHome(appFor(store, COORDINATOR), STUDENT, '', 'coordinator');
+  assert.equal(linked.email, STUDENT);
+  assert.equal(linked.cohort, '2026');
+  await assert.rejects(
+    getStaffStudentHome(appFor(store, COORDINATOR), 'missing@vsa.example.edu', '', 'coordinator'),
+    /not in the selected cohort/,
+  );
 });
 
 test('admin show and hide flags default to visible and persist on settings/studentUI', async () => {

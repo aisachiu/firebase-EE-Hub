@@ -93,9 +93,21 @@ export function matchPath(pathname) {
     if (!spec) return null;
     return { section: 'admin', adminEntity: spec.adminEntity, staffPane: spec.staffPane || '', panel: panel };
   }
+  const staffStudentPrefix = '/my-students/';
+  if (path.indexOf(staffStudentPrefix) === 0) {
+    const slug = path.slice(staffStudentPrefix.length);
+    if (!slug || slug.indexOf('/') !== -1) return null;
+    return { section: 'students', studentId: studentIdFromSlug(slug) };
+  }
   const section = SECTION_SLUGS[path.slice(1)];
   if (section && path.indexOf('/', 1) === -1) return { section: section };
   return null;
+}
+
+function studentIdFromSlug(slug) {
+  let value = slug;
+  try { value = decodeURIComponent(slug); } catch (error) { /* keep the raw slug */ }
+  return String(value || '').trim().toLowerCase();
 }
 
 export function pathFromState(appState) {
@@ -114,6 +126,10 @@ export function pathFromState(appState) {
     if (appState.allocationView === 'tokens') return '/allocation/tokens';
     if (appState.allocationView === 'settings') return '/allocation/settings';
     return '/allocation';
+  }
+  if (section === 'students') {
+    if (appState.staffStudentId) return '/my-students/' + encodeURIComponent(appState.staffStudentId);
+    return '/my-students';
   }
   const slugs = Object.keys(SECTION_SLUGS);
   for (let index = 0; index < slugs.length; index += 1) {
@@ -159,6 +175,15 @@ function sectionAllowed(appState, section) {
 
 const STUDENT_PAGE = { document: 0, journey: 1, supervisor: 3 };
 
+function rememberStaffStudent(appState, studentId) {
+  const next = studentId || '';
+  if ((appState.staffStudentId || '') !== next) {
+    appState.staffStudentHome = null;
+    appState.notesOpen = false;
+  }
+  appState.staffStudentId = next;
+}
+
 export function applyRoute(route, appState) {
   const student = !!(appState.user && appState.user.role === 'student');
   if (student && route && Object.prototype.hasOwnProperty.call(STUDENT_PAGE, route.section)) {
@@ -174,11 +199,13 @@ export function applyRoute(route, appState) {
     appState.section = section;
     appState.view = section;
     appState.studentFocus = '';
+    rememberStaffStudent(appState, '');
     return;
   }
   appState.section = route.section;
   appState.view = route.section;
   appState.studentFocus = '';
+  rememberStaffStudent(appState, route.section === 'students' ? (route.studentId || '') : '');
   if (route.section === 'admin') {
     appState.adminEntity = route.adminEntity;
     if (route.panel === 'quotas') appState.staffPane = 'quotas';
