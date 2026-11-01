@@ -4,13 +4,17 @@ import test from 'node:test';
 import { pageFromSearch, stepEePage } from '../shared/eePage.js';
 import { calendarShellHtml, renderMonthHtml } from './modules/calendar.js';
 import {
+  circularOffset,
   docCommentHref,
   essayEmbedSrc,
   initialMonthWindow,
   milestoneMarks,
+  settleVisiblePage,
+  stepVisiblePage,
   stripOffset,
   studentViewsForPage,
   threadEntries,
+  visibleEePages,
 } from './rotary.js';
 
 const home = {
@@ -32,6 +36,12 @@ const home = {
 test('the rotary wraps and the strip offsets keep 3 and 4 the same width', () => {
   assert.equal(stepEePage(4, 1), 0);
   assert.equal(stepEePage(0, -1), 4);
+  assert.equal(stepVisiblePage(4, 1), 0);
+  assert.equal(stepVisiblePage(1, 1, visibleEePages({ calendar: false })), 3);
+  assert.equal(settleVisiblePage(2, visibleEePages({ calendar: false })), 0);
+  assert.equal(circularOffset(0, 0, 5), 0);
+  assert.equal(circularOffset(4, 0, 5), -1);
+  assert.equal(circularOffset(3, 0, 5), -2);
   assert.equal(stripOffset(1, 'strip'), 0);
   assert.equal(stripOffset(2, 'strip'), -2 / 3);
   assert.equal(stripOffset(3, 'strip'), -5 / 3);
@@ -107,6 +117,10 @@ test('the stage markup is five panes and the embedded doc is 90vh', async () => 
   assert.match(html, /data-ee-pane="calendar"/);
   assert.match(html, /data-ee-pane="meetings"/);
   assert.match(html, /data-ee-pane="chat"/);
+  assert.match(html, /data-ee-carousel/);
+  assert.match(html, /data-ee-prev/);
+  assert.match(html, /data-open-ee-page="4"/);
+  assert.match(html, /Supervisor Chat/);
   assert.match(html, /class="gdoc-frame"/);
   assert.match(html, /Working draft/);
   assert.match(html, /View journey/);
@@ -120,4 +134,51 @@ test('the stage markup is five panes and the embedded doc is 90vh', async () => 
   assert.match(phone, /is-mobile/);
   assert.match(phone, /Open in Google Docs/);
   assert.doesNotMatch(phone, /<iframe/);
+  const staff = views.studentStageHtml(Object.assign({ staffView: true }, home), 0, true);
+  assert.match(staff, /ee-staff-bar/);
+  assert.match(staff, /data-ee-carousel/);
+  assert.doesNotMatch(staff, /data-staff-preview/);
+  const hidden = views.studentStageHtml(Object.assign({}, home, { studentPages: { calendar: false, chat: false } }), 2, false);
+  assert.match(hidden, /data-page="0"/);
+  assert.doesNotMatch(hidden, /data-open-ee-page="2"/);
+  assert.doesNotMatch(hidden, /data-open-ee-page="4"/);
+  assert.doesNotMatch(hidden, />Calendar</);
+});
+
+test('reflection notes count words and render a google doc link', async () => {
+  const notes = await import('./modules/meetingNotes.js');
+  assert.deepEqual(notes.noteMetrics('hello world'), { characters: 11, words: 2 });
+  assert.deepEqual(notes.noteMetrics('   '), { characters: 3, words: 0 });
+  const html = notes.render({
+    templates: [],
+    sessionNotes: [],
+    reflectionNotes: [{
+      noteId: 'viva-voce',
+      title: 'Viva Voce',
+      body: 'hello world',
+      complete: true,
+      date: '2026-11-01',
+      docLink: 'https://docs.google.com/document/d/abc123/edit',
+    }],
+  }, { slot: 'secondary' });
+  assert.match(html, /hello world/);
+  assert.match(html, /data-reflection-chars>11</);
+  assert.match(html, /data-reflection-words>2</);
+  assert.match(html, /characters/);
+  assert.match(html, /words/);
+  assert.match(html, /Complete/);
+  assert.match(html, /type="date"/);
+  assert.match(html, /Open extended notes/);
+  assert.match(html, /checked/);
+  const unsafe = notes.render({
+    reflectionNotes: [{ noteId: 'viva-voce', title: 'Viva Voce', body: '', docLink: 'javascript:alert(1)' }],
+  }, { slot: 'secondary' });
+  assert.equal(notes.reflectionDocHref('javascript:alert(1)'), '');
+  assert.doesNotMatch(unsafe, /<a /);
+  const locked = notes.render({
+    staffView: true,
+    reflectionNotes: [{ noteId: 'viva-voce', title: 'Viva Voce', body: 'Seen', complete: false, date: '', docLink: '' }],
+  }, { slot: 'secondary' });
+  assert.match(locked, /readonly/);
+  assert.match(locked, /disabled/);
 });

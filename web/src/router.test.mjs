@@ -89,6 +89,12 @@ test('student tasks replace the assignments admin path', async () => {
   router.applyRoute(router.matchPath('/admin/assignments'), legacy);
   assert.equal(legacy.adminEntity, 'studentTasks');
   assert.equal(router.pathFromState(legacy), '/admin/student-tasks');
+  const pages = { user: user, actingAs: 'coordinator', section: '', view: '', studentFocus: '', adminEntity: '', staffPane: '' };
+  router.applyRoute(router.matchPath('/admin/student-pages'), pages);
+  assert.equal(pages.section, 'admin');
+  assert.equal(pages.adminEntity, 'studentPages');
+  assert.equal(router.pathFromState(pages), '/admin/student-pages');
+  assert.equal(router.titleForState(pages), 'Student Pages · EE Hub');
 });
 
 test('staff keep Resources and do not see the student views in the tab bar', async () => {
