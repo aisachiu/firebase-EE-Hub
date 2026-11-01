@@ -318,10 +318,9 @@ body.has-notes.notes-open { padding-left: clamp(300px, 32vw, 400px); }
 .side-drawers .notes-peek:focus-visible { outline: 2px solid var(--gold); outline-offset: -4px; }
 body.student-drawers:not(.journey-open):not(.notes-open) .side-drawers { flex-direction: column; width: 36px; background: var(--ink); box-shadow: -8px 0 24px rgba(0, 30, 50, .12); }
 body.student-drawers:not(.journey-open):not(.notes-open) .side-drawers .journey-panel,
-body.student-drawers:not(.journey-open):not(.notes-open) .side-drawers .notes-panel { width: 36px; height: 50%; flex: 1 1 0; background: transparent; border: 0; box-shadow: none; }
-body.student-drawers:not(.journey-open):not(.notes-open) .side-drawers .notes-panel { box-shadow: inset 0 1px 0 rgba(255, 255, 255, .35); }
+body.student-drawers:not(.journey-open):not(.notes-open) .side-drawers .notes-panel { width: 36px; height: 100%; flex: 1 1 auto; background: transparent; border: 0; box-shadow: none; }
 body.student-drawers.journey-open:not(.notes-open) .side-drawers { width: calc(36px + clamp(300px, 34vw, 420px)); }
-body.student-drawers.notes-open:not(.journey-open) .side-drawers { width: calc(36px + clamp(300px, 32vw, 400px)); }
+body.student-drawers.notes-open:not(.journey-open) .side-drawers { width: clamp(300px, 32vw, 400px); }
 body.student-drawers.journey-open.notes-open .side-drawers { width: calc(clamp(300px, 34vw, 420px) + clamp(300px, 32vw, 400px)); }
 body.student-drawers.notes-open .notes-panel.open { border-right: 0; border-left: 1px solid var(--line); box-shadow: -8px 0 24px rgba(0, 30, 50, .12); }
 body.student-drawers.journey-open.notes-open .notes-panel.open,
@@ -329,9 +328,10 @@ body.student-drawers.notes-open:not(.journey-open) .notes-panel.open { box-shado
 body.student-drawers.notes-open:not(.journey-open) .journey-panel { box-shadow: -8px 0 24px rgba(0, 30, 50, .12); }
 body.student-drawers.has-notes,
 body.student-drawers.has-notes.notes-open { padding-left: 0; }
-body.student-drawers.has-journey { padding-right: 36px; }
+body.student-drawers.has-journey,
+body.student-drawers.has-notes:not(.notes-open) { padding-right: 36px; }
 body.student-drawers.journey-open:not(.notes-open) { padding-right: calc(36px + clamp(300px, 34vw, 420px)); }
-body.student-drawers.notes-open:not(.journey-open) { padding-right: calc(36px + clamp(300px, 32vw, 400px)); }
+body.student-drawers.notes-open:not(.journey-open) { padding-right: clamp(300px, 32vw, 400px); }
 body.student-drawers.journey-open.notes-open { padding-right: calc(clamp(300px, 34vw, 420px) + clamp(300px, 32vw, 400px)); }
 .add-todo-form.stack { flex-direction: column; align-items: stretch; }
 .template-row { display: flex; justify-content: space-between; gap: 8px; align-items: start; }
@@ -501,10 +501,10 @@ main.plan-wide { max-width: none; padding-inline: clamp(12px, 2vw, 28px); }
   body.student-drawers.journey-open.notes-open { padding-right: 0; padding-left: 0; }
   body.student-drawers .side-drawers .journey-panel.open,
   body.student-drawers .side-drawers .notes-panel.open { width: min(44vw, 420px); }
-  body.student-drawers.journey-open:not(.notes-open) .side-drawers,
-  body.student-drawers.notes-open:not(.journey-open) .side-drawers { width: calc(36px + min(100vw - 48px, 420px)); }
-  body.student-drawers.journey-open:not(.notes-open) .side-drawers .journey-panel.open,
-  body.student-drawers.notes-open:not(.journey-open) .side-drawers .notes-panel.open { width: min(100vw - 48px, 420px); }
+  body.student-drawers.journey-open:not(.notes-open) .side-drawers { width: calc(36px + min(100vw - 48px, 420px)); }
+  body.student-drawers.notes-open:not(.journey-open) .side-drawers { width: min(100vw - 12px, 420px); }
+  body.student-drawers.journey-open:not(.notes-open) .side-drawers .journey-panel.open { width: min(100vw - 48px, 420px); }
+  body.student-drawers.notes-open:not(.journey-open) .side-drawers .notes-panel.open { width: min(100vw - 12px, 420px); }
   body.student-drawers.journey-open.notes-open .side-drawers { width: min(100vw, calc(min(44vw, 420px) + min(44vw, 420px))); }
   .side-drawers:has(.open) { z-index: 40; }
   .staff-board { grid-template-columns: 1fr; }

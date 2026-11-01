@@ -57,18 +57,16 @@ test('list rows follow viewMode and the column no longer has its own expand butt
   assert.equal(expanded.includes('>Collapse<'), false);
 });
 
-test('staff student drawers collapse into one right rail and open with Notes on the right', () => {
-  const collapsed = staffStudentDrawersHtml({ journeyOpen: false, notesOpen: false });
+test('staff student drawers keep Notes and leave Journey to the carousel', () => {
+  const collapsed = staffStudentDrawersHtml({ notesOpen: false });
   assert.match(collapsed, /id="side-drawers" class="side-drawers"/);
-  assert.match(collapsed, /aria-label="Student Journey"/);
-  assert.match(collapsed, /class="journey-peek"[^>]*>Student Journey</);
+  assert.equal(collapsed.includes('Student Journey'), false);
+  assert.equal(collapsed.includes('id="journey-panel"'), false);
+  assert.equal(collapsed.includes('id="journey-drawer"'), false);
   assert.match(collapsed, /class="notes-peek"[^>]*>Notes</);
-  assert.ok(collapsed.indexOf('id="journey-panel"') < collapsed.indexOf('id="notes-panel"'));
-  assert.equal(collapsed.includes('>Journey<'), false);
-  const open = staffStudentDrawersHtml({ journeyOpen: true, notesOpen: true });
-  assert.match(open, /id="journey-panel" class="journey-panel open"/);
+  const open = staffStudentDrawersHtml({ notesOpen: true });
   assert.match(open, /id="notes-panel" class="notes-panel open"/);
-  assert.ok(open.indexOf('id="journey-panel"') < open.indexOf('id="notes-panel"'));
-  assert.match(open, /<strong>Student Journey<\/strong>/);
   assert.match(open, /<strong>Notes<\/strong>/);
+  assert.equal(open.includes('id="journey-panel"'), false);
+  assert.equal(open.includes('id="journey-drawer"'), false);
 });

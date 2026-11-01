@@ -1,11 +1,9 @@
 import { dispatchServer } from '../shared/api.js';
 import { escapeHtml } from '../shared/html.js';
 import { loadingLine } from '../shared/loading.js';
-import { isStale, sameScene } from '../shared/scene.js';
 import { state } from '../shared/state.js';
 import { requestPush } from '../router.js';
 import { renderShell } from '../navigation.js';
-import { paintStudentJourney } from './journey.js';
 
 export function loadStudentHome() {
   if (state.studentHome) return Promise.resolve(state.studentHome);
@@ -18,42 +16,6 @@ export function loadStudentHome() {
     });
   }
   return state.studentHomeRequest;
-}
-
-export function setJourneyOpen(open) {
-  state.journeyOpen = !!open;
-  document.body.classList.toggle('journey-open', state.journeyOpen);
-  const panel = document.getElementById('journey-panel');
-  if (panel) panel.classList.toggle('open', state.journeyOpen);
-  const toggle = document.getElementById('journey-toggle');
-  const peek = document.getElementById('journey-peek');
-  if (toggle) toggle.setAttribute('aria-expanded', state.journeyOpen ? 'true' : 'false');
-  if (peek) peek.setAttribute('aria-expanded', state.journeyOpen ? 'true' : 'false');
-  const drawer = document.getElementById('journey-drawer');
-  if (drawer) {
-    drawer.setAttribute('aria-hidden', state.journeyOpen ? 'false' : 'true');
-    if (state.journeyOpen) drawer.removeAttribute('inert');
-    else drawer.setAttribute('inert', '');
-  }
-}
-
-export function mountJourneyPanel() {
-  const body = document.getElementById('journey-body');
-  if (!body) return;
-  if (state.user.role !== 'student' && state.staffStudentHome) {
-    paintStudentJourney(state.staffStudentHome);
-    return;
-  }
-  if (!state.studentHome) body.innerHTML = loadingLine('Loading your journey...');
-  const scene = state.scene;
-  loadStudentHome().then(function(home) {
-    if (!sameScene(scene) || !document.getElementById('journey-body')) return;
-    paintStudentJourney(home);
-  }).catch(function(error) {
-    if (isStale(error)) return;
-    const target = document.getElementById('journey-body');
-    if (target) target.innerHTML = '<p class="notice error">' + escapeHtml(error && error.message ? error.message : error) + '</p>';
-  });
 }
 
 let repaintImpl = null;
@@ -79,7 +41,6 @@ export function openStudentSection(section) {
   if (state.user && state.user.role !== 'student') {
     state.staffPreviewView = page === null ? section : String(page);
     if (repaintImpl && state.staffStudentHome) repaintImpl(state.staffStudentHome);
-    else if (section === 'journey') setJourneyOpen(true);
     return;
   }
   if (!requestPush()) return;
@@ -152,9 +113,10 @@ export function staffStudentBar(home) {
 export function bindStaffStudentChrome() {
   const back = document.getElementById('staff-back');
   if (back) back.addEventListener('click', function() {
+    if (!requestPush()) return;
     state.staffStudent = null;
     state.staffStudentHome = null;
-    state.journeyOpen = false;
+    state.staffStudentId = '';
     state.notesOpen = false;
     state.staffPreviewView = '0';
     renderShell();
@@ -177,7 +139,7 @@ export function bindUnreadNotices(main, staff) {
       state.focusTicket = button.dataset.openUnread;
       state.staffStudent = null;
       state.staffStudentHome = null;
-      state.journeyOpen = false;
+      state.staffStudentId = '';
       state.studentFocus = '';
       state.section = staff ? 'tickets' : 'help';
       state.view = state.section;

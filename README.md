@@ -32,6 +32,7 @@ Navigation uses the History API. Refresh, share, and back/forward reopen the sam
 | `/resources` | student | Journey, scrolled to research support |
 | `/resources` | staff | Resources |
 | `/my-students` | staff | My Students |
+| `/my-students/:studentId` | staff | One student. The id is the student login email. Refresh and shared links load that student. `/my-ee` is unchanged |
 | `/messages` | supervisor or coordinator | Messages |
 | `/notes` | supervisor or coordinator | Notes |
 | `/allocation` | coordinator | Allocation dashboard |
