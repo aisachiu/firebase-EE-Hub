@@ -224,4 +224,41 @@ export class Store {
   async setMeta(id: string, data: Doc): Promise<void> {
     await this.db.collection('meta').doc(id).set(cleanDoc(data));
   }
+
+  settings(id: string) {
+    return this.db.collection('settings').doc(id);
+  }
+
+  async getSettings(id: string): Promise<Doc | null> {
+    if (!id) return null;
+    const snap = await this.settings(id).get();
+    return snap.exists ? (snap.data() as Doc) : null;
+  }
+
+  async setSettings(id: string, data: Doc): Promise<void> {
+    await this.settings(id).set(cleanDoc(data));
+  }
+
+  reflectionNotes(cohortId: string, email: string) {
+    return this.members(cohortId).doc(email).collection('reflectionNotes');
+  }
+
+  async listReflectionNotes(cohortId: string, email: string): Promise<Doc[]> {
+    if (!cohortId || !email) return [];
+    const snap = await this.reflectionNotes(cohortId, email).get();
+    return snap.docs.map((doc) => {
+      const data = doc.data() as Doc;
+      return { ...data, noteId: text(data.noteId) || doc.id };
+    });
+  }
+
+  async getReflectionNote(cohortId: string, email: string, noteId: string): Promise<Doc | null> {
+    if (!cohortId || !email || !noteId) return null;
+    const snap = await this.reflectionNotes(cohortId, email).doc(noteId).get();
+    return snap.exists ? (snap.data() as Doc) : null;
+  }
+
+  async setReflectionNote(cohortId: string, email: string, noteId: string, data: Doc): Promise<void> {
+    await this.reflectionNotes(cohortId, email).doc(noteId).set(cleanDoc(data));
+  }
 }

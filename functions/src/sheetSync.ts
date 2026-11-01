@@ -408,6 +408,14 @@ function checkRow(label: string, id: string, entity: string, data: Doc): void {
   }
 }
 
+/** A staff sheet that has no booking column leaves the link already stored on the record. */
+export function mergeStaffBooking(existing: Doc | null, incoming: Doc): Doc {
+  if (Object.prototype.hasOwnProperty.call(incoming, 'bookingLink')) return incoming;
+  const link = text(existing?.bookingLink);
+  if (!link) return incoming;
+  return { ...incoming, bookingLink: link };
+}
+
 async function keepCohortPlan(app: App, cohortId: string, data: Doc): Promise<Doc> {
   const existing = await app.store.get(COLLECTIONS.cohorts, cohortId);
   if (!existing) return data;
@@ -482,7 +490,9 @@ async function writeIngest(app: App, plan: SheetImportPlan, entities: string[], 
         ? await keepCohortPlan(app, doc.id, doc.data)
         : id === 'studentUsers'
           ? keepPublishedSubject(doc.data, await app.store.get(collection, doc.id))
-          : doc.data;
+          : id === 'staffUsers'
+            ? mergeStaffBooking(await app.store.get(collection, doc.id), doc.data)
+            : doc.data;
       await app.store.set(collection, doc.id, data);
     }
     for (const existing of await app.store.list(collection)) {

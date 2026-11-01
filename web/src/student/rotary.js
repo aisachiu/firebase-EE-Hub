@@ -6,11 +6,19 @@ export { clampEePage, stepEePage };
 export const EE_MOBILE_MAX = 700;
 
 export const EE_PAGES = [
-  { id: 0, title: 'Document', mobileTitle: 'Document' },
-  { id: 1, title: 'Document & Journey', mobileTitle: 'Journey' },
-  { id: 2, title: 'Journey & Calendar', mobileTitle: 'Calendar' },
-  { id: 3, title: 'Supervisor & Meetings', mobileTitle: 'Supervisor & Meetings' },
-  { id: 4, title: 'Chat & Document', mobileTitle: 'Chat' },
+  { id: 0, key: 'document', title: 'Document', mobileTitle: 'Document' },
+  { id: 1, key: 'journey', title: 'Journey', mobileTitle: 'Journey' },
+  { id: 2, key: 'calendar', title: 'Calendar', mobileTitle: 'Calendar' },
+  { id: 3, key: 'supervisor', title: 'Meetings', mobileTitle: 'Meetings' },
+  { id: 4, key: 'chat', title: 'Supervisor Chat', mobileTitle: 'Chat' },
+];
+
+export const STUDENT_PAGE_TOGGLES = [
+  { key: 'document', label: 'Document', hint: 'Document' },
+  { key: 'journey', label: 'Journey', hint: 'Journey' },
+  { key: 'calendar', label: 'Calendar', hint: 'Calendar' },
+  { key: 'supervisor', label: 'Supervisor', hint: 'Shown as Meetings' },
+  { key: 'chat', label: 'Chat', hint: 'Shown as Supervisor Chat' },
 ];
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -40,6 +48,60 @@ export function studentViewsForPage(page) {
     4: ['document', 'supervisor'],
   };
   return views[clampEePage(page)].slice();
+}
+
+function explicitPages(pages) {
+  return Array.isArray(pages) ? pages : EE_PAGES;
+}
+
+/** Hidden admin flags drop that page from the carousel. A missing flag stays visible. */
+export function visibleEePages(flags) {
+  const source = flags || {};
+  return EE_PAGES.filter(function(row) {
+    if (!row.key || !Object.prototype.hasOwnProperty.call(source, row.key)) return true;
+    return source[row.key] !== false;
+  });
+}
+
+export function settleVisiblePage(page, pages) {
+  const list = explicitPages(pages);
+  if (!list.length) return 0;
+  const ids = list.map(function(row) { return row.id; });
+  const index = clampEePage(page);
+  if (ids.indexOf(index) >= 0) return index;
+  return ids[0];
+}
+
+export function stepVisiblePage(page, direction, pages) {
+  const list = explicitPages(pages);
+  const ids = list.map(function(row) { return row.id; });
+  if (!ids.length) return 0;
+  const current = ids.indexOf(clampEePage(page));
+  const start = current < 0 ? 0 : current;
+  const delta = direction < 0 ? -1 : 1;
+  return ids[(start + delta + ids.length) % ids.length];
+}
+
+/** Signed slot distance that keeps the active title in the center of a loop. */
+export function circularOffset(index, active, count) {
+  const total = Number(count) || 0;
+  if (total <= 1) return 0;
+  let delta = index - active;
+  const half = total / 2;
+  if (delta > half) delta -= total;
+  if (delta < -half) delta += total;
+  return delta;
+}
+
+export function titleCarouselHtml(page, pages) {
+  const list = explicitPages(pages);
+  const active = settleVisiblePage(page, list);
+  const titles = list.map(function(row) {
+    const on = row.id === active;
+    return `<button type="button" class="ee-carousel-title${on ? ' is-active' : ''}" data-open-ee-page="${row.id}" aria-current="${on ? 'page' : 'false'}">${escapeHtml(row.title)}</button>`;
+  }).join('');
+  const locked = list.length < 2 ? ' disabled' : '';
+  return `<nav class="ee-carousel" data-ee-carousel aria-label="EE pages"><button type="button" class="ee-carousel-arrow" data-ee-prev aria-label="Previous page"${locked}>‹</button><div class="ee-carousel-window" data-ee-carousel-window>${titles}</div><button type="button" class="ee-carousel-arrow" data-ee-next aria-label="Next page"${locked}>›</button></nav>`;
 }
 
 /**
@@ -301,10 +363,52 @@ export function bindEeStage(root, options) {
     else embed.appendChild(iframe);
   }
 
+  function visibleIds() {
+    return explicitPages(opts.pages).map(function(row) { return row.id; });
+  }
+
+  function stageScope() {
+    return root.parentElement || root;
+  }
+
+  function placeCarousel(immediate) {
+    const windowEl = stageScope().querySelector('[data-ee-carousel-window]');
+    if (!windowEl) return;
+    const buttons = Array.prototype.slice.call(windowEl.querySelectorAll('[data-open-ee-page]'));
+    if (!buttons.length) return;
+    const ids = buttons.map(function(button) { return Number(button.getAttribute('data-open-ee-page')); });
+    let active = ids.indexOf(page);
+    if (active < 0) active = 0;
+    const sample = buttons[0].offsetWidth || 168;
+    buttons.forEach(function(button, index) {
+      const offset = circularOffset(index, active, buttons.length);
+      const previous = button.hasAttribute('data-offset') ? Number(button.getAttribute('data-offset')) : offset;
+      const jump = Math.abs(offset - previous) > 1;
+      if (immediate || jump) button.classList.add('no-anim');
+      button.style.transform = 'translateX(' + (offset * sample) + 'px)';
+      button.setAttribute('data-offset', String(offset));
+      const on = index === active;
+      button.classList.toggle('is-active', on);
+      button.setAttribute('aria-current', on ? 'page' : 'false');
+      if (immediate || jump) {
+        void button.offsetWidth;
+        button.classList.remove('no-anim');
+      }
+    });
+    const scope = stageScope();
+    const prev = scope.querySelector('[data-ee-prev]');
+    const next = scope.querySelector('[data-ee-next]');
+    if (prev) prev.disabled = buttons.length < 2;
+    if (next) next.disabled = buttons.length < 2;
+  }
+
+  let carouselReady = false;
   function settled() {
     paintChip();
     markPanes();
     syncEmbed();
+    placeCarousel(!carouselReady);
+    carouselReady = true;
     if (typeof opts.onPage === 'function') opts.onPage(page, { mobile: isMobile() });
   }
 
@@ -397,11 +501,13 @@ export function bindEeStage(root, options) {
   function goForwardMeetingsToChat() {
     if (isMobile()) {
       page = 4;
+      placeCarousel(false);
       applyMobile();
       return;
     }
     animating = true;
     page = 4;
+    placeCarousel(false);
     root.classList.add('wrap-anim', 'strip-mode');
     track.classList.remove('strip-p4');
     setTx(stripOffsetPx(3, stageWidth(), 'alt'), true);
@@ -429,11 +535,13 @@ export function bindEeStage(root, options) {
   function goBackChatToMeetings() {
     if (isMobile()) {
       page = 3;
+      placeCarousel(false);
       applyMobile();
       return;
     }
     animating = true;
     page = 3;
+    placeCarousel(false);
     root.classList.add('wrap-anim', 'strip-mode');
     track.classList.remove('strip-alt');
     track.classList.add('strip-p4');
@@ -467,10 +575,13 @@ export function bindEeStage(root, options) {
 
   function step(direction) {
     if (animating) return;
+    const ids = visibleIds();
+    if (ids.length < 2) return;
     const from = page;
-    const next = stepEePage(from, direction);
+    const next = stepVisiblePage(from, direction, opts.pages);
     if (isMobile()) {
       page = next;
+      placeCarousel(false);
       applyMobile();
       return;
     }
@@ -478,6 +589,7 @@ export function bindEeStage(root, options) {
     if (from === 4 && next === 3) return goBackChatToMeetings();
     animating = true;
     page = next;
+    placeCarousel(false);
     applyPage();
     const node = next === 0 ? (root.querySelector('.ee-pane-doc') || track) : track;
     onEnd(node, next === 0 ? '' : 'transform', function() {
@@ -487,9 +599,11 @@ export function bindEeStage(root, options) {
 
   function goTo(next) {
     const target = clampEePage(next);
+    if (visibleIds().indexOf(target) < 0) return;
     if (animating || target === page) return;
     if (isMobile()) {
       page = target;
+      placeCarousel(false);
       applyMobile();
       return;
     }
@@ -497,6 +611,7 @@ export function bindEeStage(root, options) {
     if (page === 4 && target === 3) return goBackChatToMeetings();
     animating = true;
     page = target;
+    placeCarousel(false);
     applyPage();
     onEnd(track, target === 0 ? '' : 'transform', function() { animating = false; });
   }
@@ -511,19 +626,20 @@ export function bindEeStage(root, options) {
     settled();
   } else settleStrip(page);
 
-  const prevBtn = root.querySelector('[data-ee-prev]');
-  const nextBtn = root.querySelector('[data-ee-next]');
+  const scope = stageScope();
+  const prevBtn = scope.querySelector('[data-ee-prev]');
+  const nextBtn = scope.querySelector('[data-ee-next]');
   function onPrev(event) { event.preventDefault(); step(-1); }
   function onNext(event) { event.preventDefault(); step(1); }
   if (prevBtn) prevBtn.addEventListener('click', onPrev);
   if (nextBtn) nextBtn.addEventListener('click', onNext);
   function onJump(event) {
     const jump = event.target.closest('[data-open-ee-page]');
-    if (!jump || !root.contains(jump)) return;
+    if (!jump || !scope.contains(jump)) return;
     event.preventDefault();
     goTo(jump.getAttribute('data-open-ee-page'));
   }
-  root.addEventListener('click', onJump);
+  scope.addEventListener('click', onJump);
 
   let startX = 0;
   let startY = 0;
@@ -580,12 +696,14 @@ export function bindEeStage(root, options) {
     }
     if (nowMobile) {
       setTx(0, true);
+      placeCarousel(true);
       return;
     }
     if (page === 1 || page === 2 || page === 3) {
       const mode = track.classList.contains('strip-alt') ? 'alt' : 'strip';
       setTx(stripOffsetPx(page, stageWidth(), mode), true);
     } else setTx(0, true);
+    placeCarousel(true);
   }
   window.addEventListener('resize', onViewport);
   if (typeof mq.addEventListener === 'function') mq.addEventListener('change', onViewport);
@@ -598,7 +716,7 @@ export function bindEeStage(root, options) {
     else if (typeof mq.removeListener === 'function') mq.removeListener(onViewport);
     if (prevBtn) prevBtn.removeEventListener('click', onPrev);
     if (nextBtn) nextBtn.removeEventListener('click', onNext);
-    root.removeEventListener('click', onJump);
+    scope.removeEventListener('click', onJump);
     root.removeEventListener('touchstart', onTouchStart);
     root.removeEventListener('touchend', onTouchEnd);
     detachStage = null;

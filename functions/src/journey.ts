@@ -7,6 +7,8 @@ import { App, audit, deny, requireStaff, requireUser } from './session';
 import { staffUnreadNotices, studentTicketNotice } from './messaging';
 import { publishedFormIds } from './forms';
 import { listAddedSupervisorTodos, supervisorOwnedMilestones } from './supervisorTodos';
+import { loadReflectionNotes } from './reflectionNotes';
+import { readStudentPageFlags } from './studentPages';
 import { dateOnlyValue, text } from './util';
 
 function sessionNotesFrom(events: { type: string; taskId: string; milestoneId: string; comment: string; at: string; actor: string }[]) {
@@ -46,14 +48,18 @@ export async function getStudentHome(app: App) {
   const published: Record<string, boolean> = {};
   (await publishedFormIds(app)).forEach((id) => { published[id] = true; });
   const ticketNotice = await studentTicketNotice(app, user.email);
-  const names = await staffDirectory(app);
+  const profiles = await staffProfiles(app);
+  const supervisorId = placement.supervisorId || '';
   return {
     displayName: placement.displayName || user.displayName,
     email: user.email,
     cohort: placement.cohortId || '',
     subject: placement.subject || '',
-    supervisorId: placement.supervisorId || '',
-    supervisorName: names[placement.supervisorId || ''] || '',
+    supervisorId,
+    supervisorName: profiles.names[supervisorId] || '',
+    bookingUrl: bookingUrlFrom(profiles.booking[supervisorId] || ''),
+    studentPages: await readStudentPageFlags(app),
+    reflectionNotes: await loadReflectionNotes(app, placement.cohortId || '', user.email, templates),
     sessionNotes: sessionNotesFrom(events),
     hrm: placement.hrm || '',
     anchor: placement.anchor || '',
@@ -134,14 +140,23 @@ function summarize(student: any, items: any[], templates: any[], returned: Recor
   };
 }
 
-async function staffDirectory(app: App) {
+async function staffProfiles(app: App) {
   const names: Record<string, string> = {};
+  const booking: Record<string, string> = {};
   const staff = await app.store.list(COLLECTIONS.staffUsers);
   staff.forEach((row) => {
     const email = text(row.EMAIL).toLowerCase();
-    if (email) names[email] = text(row.DisplayName) || email;
+    if (!email) return;
+    names[email] = text(row.DisplayName) || email;
+    booking[email] = text(row.bookingLink);
   });
-  return names;
+  return { names, booking };
+}
+
+function bookingUrlFrom(value: string) {
+  const raw = text(value);
+  if (!/^https:\/\/\S+$/i.test(raw)) return '';
+  return raw;
 }
 
 function supervisorChoices(roster: any[], names: Record<string, string>) {
@@ -197,7 +212,7 @@ export async function getStaffHome(app: App, cohortId: unknown, viewAs: unknown)
     canEditMilestones: view !== 'staff' && coordinatorOrAdmin(user),
     phases,
     templates,
-    supervisors: supervisorChoices(roster, await staffDirectory(app)),
+    supervisors: supervisorChoices(roster, (await staffProfiles(app)).names),
     students,
     supervisorMilestoneTodos,
     supervisorTodos,
@@ -235,7 +250,8 @@ export async function getStaffStudentHome(app: App, studentEmail: unknown, cohor
   const published: Record<string, boolean> = {};
   (await publishedFormIds(app)).forEach((id) => { published[id] = true; });
   const roster = context.roster;
-  const names = await staffDirectory(app);
+  const profiles = await staffProfiles(app);
+  const supervisorId = roster.supervisorId || '';
   return {
     staffView: true,
     viewAs: context.view,
@@ -246,8 +262,11 @@ export async function getStaffStudentHome(app: App, studentEmail: unknown, cohor
     email: context.email,
     cohort: text(cohortId),
     subject: roster.subject || '',
-    supervisorId: roster.supervisorId || '',
-    supervisorName: names[roster.supervisorId || ''] || '',
+    supervisorId,
+    supervisorName: profiles.names[supervisorId] || '',
+    bookingUrl: bookingUrlFrom(profiles.booking[supervisorId] || ''),
+    studentPages: await readStudentPageFlags(app),
+    reflectionNotes: await loadReflectionNotes(app, text(cohortId), context.email, templates),
     sessionNotes: sessionNotesFrom(events),
     hrm: roster.hrm || '',
     anchor: roster.anchor || '',

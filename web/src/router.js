@@ -34,6 +34,7 @@ const ADMIN_PANELS = {
   pathway: { adminEntity: 'pathway', title: 'Phases & milestones' },
   email: { adminEntity: 'emailNotifications', title: 'Email notifications' },
   'student-tasks': { adminEntity: 'studentTasks', title: 'Student Tasks' },
+  'student-pages': { adminEntity: 'studentPages', title: 'Student Pages' },
   'student-users': { adminEntity: 'studentUsers', title: 'Student users' },
   'staff-users': { adminEntity: 'staffUsers', staffPane: 'records', title: 'Staff users' },
   quotas: { adminEntity: 'staffUsers', staffPane: 'quotas', title: 'EE quotas' },

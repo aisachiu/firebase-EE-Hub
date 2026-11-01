@@ -30,6 +30,8 @@ const ACTIVITY_TITLES: Record<string, string> = {
   TICKET_STATUS: 'Changed a message status',
   TICKET_SHARE: 'Changed who can see a message',
   NOTE_CREATE: 'Saved a note',
+  SAVE_REFLECTION_NOTE: 'Saved a meeting note',
+  SAVE_STUDENT_PAGE_SETTINGS: 'Updated student pages',
   SAVE_TODO_TEMPLATE: 'Saved a template task',
   DELETE_TODO_TEMPLATE: 'Removed a template task',
   APPLY_TODO_TEMPLATE: 'Added a template task to a student',
