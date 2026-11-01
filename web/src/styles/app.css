@@ -1104,6 +1104,8 @@ body.ee-rotary main.ee-stage-main {
 .ee-bubble p, .ee-doc-comment p { margin: 4px 0 0; white-space: pre-wrap; }
 .ee-doc-comment { padding: 8px 10px; background: white; border: 1px solid var(--line); border-left: 3px solid var(--gold); }
 .ee-doc-comment blockquote { margin: 6px 0 0; padding-left: 8px; color: var(--muted); border-left: 2px solid var(--line); }
+.ee-doc-replies { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--line); }
+.ee-chat-note { margin: 0; padding: 8px 12px; border-top: 1px solid var(--line); }
 .ee-chat-compose { display: flex; gap: 8px; padding: 8px; background: white; border-top: 1px solid var(--line); }
 .ee-chat-compose textarea { flex: 1; min-height: 44px; padding: 7px 9px; color: var(--ink); background: white; border: 1px solid var(--line); }
 .activity-line-row { border-bottom: 1px solid var(--line); }

@@ -19,6 +19,7 @@ import {
   staffStudentBar,
 } from './home.js';
 import { mountCalendar } from './modules/calendar.js';
+import { syncChatCommentsIfOpen } from './modules/communication.js';
 import { renderEssayEmbed } from './modules/document.js';
 import { modules } from './modules/registry.js';
 import { renderBooking } from './modules/supervisor.js';
@@ -187,29 +188,31 @@ function mountStage(main, home, page, staff) {
     pages: visibleEePages(home && home.studentPages),
     onPage: function(next) { publishEePage(next, home, staff); },
   });
+  syncChatCommentsIfOpen(home, page);
 }
 
 function publishEePage(page, home, staff) {
   if (staff) {
     state.staffPreviewView = String(page);
-    return;
-  }
-  state.eePage = page;
-  const path = '/my-ee' + (page ? '?page=' + page : '');
-  const current = window.location.pathname + window.location.search;
-  if (current !== path && window.history && typeof window.history.replaceState === 'function') {
-    window.history.replaceState({ eeHub: '/my-ee' }, '', path);
-  }
-  studentViewsForPage(page).forEach(function(view) {
-    const pending = recordStudentViewOpen(view, home);
-    if (view === 'document' && page === 0 && pending) {
-      pending.then(function(wrote) {
-        if (!wrote) return;
-        state.activityFeed = null;
-        if (document.getElementById('my-activity')) paintStudentActivity(home);
-      });
+  } else {
+    state.eePage = page;
+    const path = '/my-ee' + (page ? '?page=' + page : '');
+    const current = window.location.pathname + window.location.search;
+    if (current !== path && window.history && typeof window.history.replaceState === 'function') {
+      window.history.replaceState({ eeHub: '/my-ee' }, '', path);
     }
-  });
+    studentViewsForPage(page).forEach(function(view) {
+      const pending = recordStudentViewOpen(view, home);
+      if (view === 'document' && page === 0 && pending) {
+        pending.then(function(wrote) {
+          if (!wrote) return;
+          state.activityFeed = null;
+          if (document.getElementById('my-activity')) paintStudentActivity(home);
+        });
+      }
+    });
+  }
+  syncChatCommentsIfOpen(home, page);
 }
 
 /** Students only. Staff previews do not write these events. Returns a promise when a write was started. */
