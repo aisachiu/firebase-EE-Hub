@@ -81,8 +81,37 @@ test('doc comments are distinct cards and deep-link with disco', () => {
     docComments: [{ at: '2026-10-01T12:00:00.000Z', author: 'Ms Sharma', quote: 'the river', body: 'Tighten this.', commentId: 'abc' }],
   });
   assert.deepEqual(entries.map((item) => item.type), ['chat', 'doc', 'chat']);
+  assert.equal(entries[0].mine, false);
+  assert.equal(entries[0].author, 'Ms Sharma');
+  assert.equal(entries[2].mine, true);
+  assert.equal(entries[2].author, 'You');
   assert.equal(entries[1].href, 'https://docs.google.com/document/d/abc123/edit?disco=abc');
   assert.equal(entries.some((item) => item.body === 'Coordinator only.'), false);
+});
+
+test('staff viewers see their own chat lines as theirs and the student by name', () => {
+  const entries = threadEntries({
+    tickets: [{
+      route: 'supervisor',
+      category: 'Doc comment',
+      messages: [{ createdAt: '2026-10-01T07:00:00.000Z', authorRole: 'staff', authorName: 'Ms Sharma', body: 'Tighten this.', quote: 'the river' }],
+    }, {
+      route: 'supervisor',
+      messages: [
+        { createdAt: '2026-10-01T08:00:00.000Z', authorRole: 'student', authorName: 'Jamie Wong', body: 'Hello' },
+        { createdAt: '2026-10-01T09:00:00.000Z', authorRole: 'staff', authorEmail: 'Priya@vsa.example.edu', authorName: 'Priya Shah', body: 'Hi Jamie' },
+        { createdAt: '2026-10-01T10:00:00.000Z', authorRole: 'staff', authorEmail: 'alex@vsa.example.edu', authorName: 'Alex Chen', body: 'Checking in' },
+      ],
+    }],
+  }, { ...home, displayName: 'Jamie Wong', staffView: true }, { staff: true, viewerEmail: 'priya@vsa.example.edu' });
+  assert.deepEqual(entries.map((item) => item.type), ['doc', 'chat', 'chat', 'chat']);
+  assert.equal(entries[0].author, 'Ms Sharma');
+  assert.equal(entries[1].mine, false);
+  assert.equal(entries[1].author, 'Jamie Wong');
+  assert.equal(entries[2].mine, true);
+  assert.equal(entries[2].author, 'You');
+  assert.equal(entries[3].mine, false);
+  assert.equal(entries[3].author, 'Alex Chen');
 });
 
 test('a page query is optional and invalid pages settle on the document', () => {

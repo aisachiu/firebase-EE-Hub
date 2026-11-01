@@ -4,7 +4,7 @@ import { canCompleteMilestone, HubUser, normalizeStaffView } from './permissions
 import { coordinatorOrAdmin, findPlacement, loginAliasMap, orderTemplates, readPhases, readRoster, readStaffTables, readTemplates, staffMayAddStudentTodo, staffMayUpdateAllMilestones, staffStudentContext } from './roster';
 import { COLLECTIONS } from './schema';
 import { App, audit, deny, requireStaff, requireUser } from './session';
-import { staffUnreadNotices, studentTicketNotice } from './messaging';
+import { staffMaySendStudentChat, staffUnreadNotices, studentTicketNotice } from './messaging';
 import { publishedFormIds } from './forms';
 import { listAddedSupervisorTodos, supervisorOwnedMilestones } from './supervisorTodos';
 import { dateOnlyValue, text } from './util';
@@ -241,6 +241,7 @@ export async function getStaffStudentHome(app: App, studentEmail: unknown, cohor
     viewAs: context.view,
     canUpdateMilestones: canUpdateAll,
     canWriteTodos: staffMayAddStudentTodo(user, context),
+    canSendChat: staffMaySendStudentChat(user, context.view, roster),
     viewLabel: staffViewLabel(context.view, canUpdateAll),
     displayName: roster.displayName,
     email: context.email,

@@ -109,6 +109,7 @@ export const state = {
   staffSelected: [],
   staffPane: 'home',
   staffStudentHome: null,
+  staffStudentChat: null,
   quote: 'A clear question is the start of a strong essay.',
   quotes: ['A clear question is the start of a strong essay.'],
   notesOpen: false,

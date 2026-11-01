@@ -14,6 +14,7 @@ import { openMassMilestoneEditor } from '../student/milestones.js';
 import { bindSupervisorTodoList, mayManageSupervisorTodos, renderSupervisorDesk, supervisorTodoList } from './supervisorTodos.js';
 
 export function openStaffStudent(email) {
+  state.staffStudentChat = null;
   callServer('getStaffStudentHome', email, state.cohortId, state.actingAs).then(function(detail) {
     state.staffStudentHome = detail;
     state.staffPreviewView = '0';

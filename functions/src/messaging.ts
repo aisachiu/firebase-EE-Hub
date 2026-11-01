@@ -76,18 +76,23 @@ async function messagesFor(app: App, ticketIds: string[]) {
   return grouped;
 }
 
-function publicMessage(message: any, includeEmail: boolean) {
+function publicMessage(message: any, includeEmail: boolean, names?: Record<string, string> | null) {
   const item: Doc = { messageId: message.messageId, authorRole: message.authorRole, body: message.body, createdAt: message.createdAt };
   if (includeEmail) item.authorEmail = message.authorEmail;
+  if (names && message.authorRole !== 'student') {
+    const name = names[normalizeEmail(message.authorEmail)];
+    if (name) item.authorName = name;
+  }
   return item;
 }
 
 async function attachMessages(app: App, tickets: TicketShape[], includeEmail: boolean) {
   const messages = await messagesFor(app, tickets.map((ticket) => text(ticket.ticketId)));
+  const names = includeEmail ? null : await staffDisplayNames(app);
   return tickets.map((ticket) => ({
     ...ticket,
     routeLabel: routeLabel(ticket),
-    messages: (messages[text(ticket.ticketId)] || []).map((message) => publicMessage(message, includeEmail)),
+    messages: (messages[text(ticket.ticketId)] || []).map((message) => publicMessage(message, includeEmail, names)),
   }));
 }
 
@@ -409,6 +414,154 @@ export async function getStaffTicketBadge(app: App, viewAs: unknown) {
     if (staffCanSeeTicket(user, view, ticket, placement) && ticket.staffUnread) unread += 1;
   }
   return { viewAs: view, unreadCount: unread };
+}
+
+/** Assigned supervisors, and coordinators on any student they can open. Browse staff stay out. */
+export function staffMaySendStudentChat(user: HubUser, view: string, roster?: { supervisorId?: string } | null): boolean {
+  if (!user || user.role !== 'staff' || !roster) return false;
+  if (view === 'coordinator') return !!user.permissions?.canAdmin;
+  if (view !== 'supervisor' || !user.permissions?.isSupervisor) return false;
+  const assigned = normalizeEmail(roster.supervisorId);
+  return !!assigned && assigned === user.email;
+}
+
+function isDocCommentCategory(category: unknown): boolean {
+  return /doc(ument)? comment/i.test(text(category));
+}
+
+function supervisorChatTickets(tickets: TicketShape[], studentEmail: string): TicketShape[] {
+  const wanted = normalizeEmail(studentEmail);
+  return tickets.filter((ticket) => {
+    if (ticket.studentId !== wanted || !ticket.shared) return false;
+    if (text(ticket.route) === 'coordinator') return false;
+    return true;
+  });
+}
+
+function latestChatReplyTarget(tickets: TicketShape[]): TicketShape | null {
+  const rows = tickets.filter((ticket) => !isDocCommentCategory(ticket.category));
+  rows.sort((left, right) => text(right.lastUpdated).localeCompare(text(left.lastUpdated)));
+  return rows[0] || null;
+}
+
+function chatSubject(body: string): string {
+  const line = text(body).split('\n')[0] || 'Message';
+  return line.length > 80 ? line.slice(0, 77) + '...' : line;
+}
+
+async function requireStudentChat(app: App, operation: string, studentEmail: unknown, cohortId: unknown, viewAs: unknown) {
+  const user = await requireStaff(app, operation);
+  const context = await staffStudentContext(app, user, text(studentEmail), text(cohortId), operation, viewAs);
+  if (!staffMaySendStudentChat(user, context.view, context.roster)) {
+    return deny(app, user, operation, 'Supervisors and coordinators send messages in this chat.');
+  }
+  return { user, context };
+}
+
+async function presentStudentChat(app: App, user: HubUser, context: { email: string; view: string; roster: { displayName?: string } }, tickets: TicketShape[]) {
+  return {
+    viewAs: context.view,
+    canCompose: true,
+    studentEmail: context.email,
+    displayName: context.roster.displayName || context.email,
+    viewerEmail: user.email,
+    tickets: await prepareStaffTickets(app, user, tickets),
+    categories: publicCategories(await readTicketCategories(app)).filter((item) => item.route === 'supervisor'),
+  };
+}
+
+export async function getStaffStudentChat(app: App, studentEmail: unknown, cohortId: unknown, viewAs: unknown) {
+  const { user, context } = await requireStudentChat(app, 'VIEW_STUDENT_CHAT', studentEmail, cohortId, viewAs);
+  const tickets = supervisorChatTickets(await readAllTickets(app), context.email);
+  return presentStudentChat(app, user, context, tickets);
+}
+
+export async function sendStaffStudentChat(app: App, studentEmail: unknown, cohortId: unknown, body: unknown, lastUpdated: unknown, viewAs: unknown) {
+  const message = text(body);
+  if (!message) throw new HubError('Write a message before sending.');
+  if (message.length > 2000) throw new HubError('Messages must be 2,000 characters or fewer.');
+  const { user, context } = await requireStudentChat(app, 'SEND_STUDENT_CHAT', studentEmail, cohortId, viewAs);
+  const target = latestChatReplyTarget(supervisorChatTickets(await readAllTickets(app), context.email));
+  if (target) return replyOnStudentChat(app, user, context, target, message, lastUpdated);
+  return openStudentChat(app, user, context, text(cohortId), message);
+}
+
+async function replyOnStudentChat(app: App, user: HubUser, context: { email: string; roster: { supervisorId?: string } }, target: TicketShape, message: string, lastUpdated: unknown) {
+  const preview = await loadTicket(app, text(target.ticketId));
+  if (!preview) throw new HubError('This message no longer exists.');
+  const previewTicket = ticketFromRecord(preview);
+  if (!chatReplyAllowed(previewTicket, context.email)) throw new HubError('This message no longer exists.');
+  return audited(app, user, 'TICKET_REPLY', { ...ticketAudit(preview), bodyHash: textHash(message), via: 'student-chat' }, async () => {
+    const current = await loadTicket(app, text(target.ticketId));
+    if (!current) throw new HubError('This message no longer exists.');
+    const ticket = ticketFromRecord(current);
+    if (!chatReplyAllowed(ticket, context.email)) throw new HubError('This message no longer exists.');
+    assertFresh(current, lastUpdated);
+    const now = nowIso();
+    let status = ticket.status;
+    if (status === 'Open' && !isStaffNote(ticket)) status = 'In Progress';
+    const assignee = normalizeEmail(current.Assignee) || normalizeEmail(context.roster.supervisorId);
+    current.Status = status;
+    current.LastUpdated = now;
+    current.LastActor = user.email;
+    current.StudentUnread = true;
+    current.StaffUnread = !!assignee && assignee !== user.email;
+    await app.store.set(COLLECTIONS.tickets, ticket.ticketId || '', current);
+    const messageId = uuid();
+    await app.store.addMessage(ticket.ticketId || '', messageId, {
+      MessageId: messageId,
+      TicketId: ticket.ticketId,
+      AuthorEmail: user.email,
+      AuthorRole: 'staff',
+      Body: message,
+      CreatedAt: now,
+    });
+    return { ticketId: ticket.ticketId, status, lastUpdated: now, created: false };
+  });
+}
+
+function chatReplyAllowed(ticket: TicketShape, studentEmail: string): boolean {
+  if (ticket.studentId !== normalizeEmail(studentEmail) || !ticket.shared) return false;
+  if (text(ticket.route) === 'coordinator' || isDocCommentCategory(ticket.category)) return false;
+  return true;
+}
+
+async function openStudentChat(app: App, user: HubUser, context: { email: string; roster: { supervisorId?: string } }, cohortId: string, message: string) {
+  const categories = await readTicketCategories(app);
+  const category = categories.find((item) => item.active && item.route === 'supervisor');
+  if (!category) throw new HubError('No message category is available yet.');
+  const now = nowIso();
+  const ticketId = uuid();
+  const assignee = assigneeForRoute('supervisor', context.roster);
+  const record = {
+    TicketId: ticketId,
+    StudentId: context.email,
+    Cohort: cohortId,
+    Category: category.name,
+    Title: chatSubject(message),
+    Status: 'Open',
+    Route: 'supervisor',
+    Assignee: assignee,
+    CreatedAt: now,
+    LastUpdated: now,
+    LastActor: user.email,
+    StudentUnread: true,
+    StaffUnread: !!assignee && assignee !== user.email,
+    Shared: true,
+  };
+  return audited(app, user, 'TICKET_CREATE', { ...ticketAudit(record), bodyHash: textHash(message), via: 'student-chat' }, async () => {
+    await app.store.set(COLLECTIONS.tickets, ticketId, record);
+    const messageId = uuid();
+    await app.store.addMessage(ticketId, messageId, {
+      MessageId: messageId,
+      TicketId: ticketId,
+      AuthorEmail: user.email,
+      AuthorRole: 'staff',
+      Body: message,
+      CreatedAt: now,
+    });
+    return { ticketId, lastUpdated: now, created: true };
+  });
 }
 
 export async function getOpeningMessages(app: App) {

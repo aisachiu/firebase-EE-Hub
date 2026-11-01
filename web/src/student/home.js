@@ -154,6 +154,7 @@ export function bindStaffStudentChrome() {
   if (back) back.addEventListener('click', function() {
     state.staffStudent = null;
     state.staffStudentHome = null;
+    state.staffStudentChat = null;
     state.journeyOpen = false;
     state.notesOpen = false;
     state.staffPreviewView = '0';
@@ -177,6 +178,7 @@ export function bindUnreadNotices(main, staff) {
       state.focusTicket = button.dataset.openUnread;
       state.staffStudent = null;
       state.staffStudentHome = null;
+      state.staffStudentChat = null;
       state.journeyOpen = false;
       state.studentFocus = '';
       state.section = staff ? 'tickets' : 'help';

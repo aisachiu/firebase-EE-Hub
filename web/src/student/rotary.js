@@ -177,8 +177,24 @@ export function docCommentHref(docUrl, commentId) {
   return base + join + 'disco=' + encodeURIComponent(id);
 }
 
-export function threadEntries(hub, home) {
+function threadAuthor(message, staff, viewer, home) {
+  const fromStudent = message.authorRole === 'student';
+  const email = String(message.authorEmail || '').trim().toLowerCase();
+  if (!staff) {
+    return {
+      mine: fromStudent,
+      author: fromStudent ? 'You' : (message.authorName || 'Supervisor'),
+    };
+  }
+  if (viewer && email === viewer) return { mine: true, author: 'You' };
+  if (fromStudent) return { mine: false, author: message.authorName || (home && home.displayName) || 'Student' };
+  return { mine: false, author: message.authorName || 'Supervisor' };
+}
+
+export function threadEntries(hub, home, options) {
   const items = [];
+  const staff = !!(options && options.staff);
+  const viewer = String((options && options.viewerEmail) || '').trim().toLowerCase();
   const docUrl = home && home.links ? home.links.doc : '';
   ((hub && hub.tickets) || []).forEach(function(ticket) {
     if (!ticket || ticket.route === 'coordinator') return;
@@ -186,11 +202,12 @@ export function threadEntries(hub, home) {
     (ticket.messages || []).forEach(function(message) {
       if (!message) return;
       const at = message.createdAt || ticket.lastUpdated || ticket.createdAt || '';
+      const who = threadAuthor(message, staff, viewer, home);
       if (ticketIsDoc || isDocComment(message)) {
         items.push({
           type: 'doc',
           at: at,
-          author: message.authorName || (message.authorRole === 'student' ? 'You' : 'Supervisor'),
+          author: who.author,
           quote: message.quote || '',
           body: message.body || '',
           href: docCommentHref(message.docUrl || docUrl, message.commentId || message.disco || message.anchor || ''),
@@ -200,8 +217,8 @@ export function threadEntries(hub, home) {
       items.push({
         type: 'chat',
         at: at,
-        mine: message.authorRole === 'student',
-        author: message.authorRole === 'student' ? 'You' : (message.authorName || 'Supervisor'),
+        mine: who.mine,
+        author: who.author,
         body: message.body || '',
       });
     });

@@ -227,6 +227,7 @@ export function renderShell() {
       state.selectedStudent = null;
       state.staffStudent = null;
       state.staffStudentHome = null;
+      state.staffStudentChat = null;
       state.journeyOpen = false;
       state.notesOpen = false;
       state.status = '';
@@ -316,6 +317,7 @@ function bindHeaderContext() {
     state.staffHome = null;
     state.staffStudent = null;
     state.staffStudentHome = null;
+    state.staffStudentChat = null;
     renderShell();
   });
   if (acting) acting.addEventListener('change', function(event) {
@@ -330,6 +332,7 @@ function bindHeaderContext() {
     state.staffHome = null;
     state.staffStudent = null;
     state.staffStudentHome = null;
+    state.staffStudentChat = null;
     state.ticketBadgeFor = '';
     renderShell();
   });
