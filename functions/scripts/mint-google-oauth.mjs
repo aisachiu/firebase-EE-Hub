@@ -1,4 +1,4 @@
-// Mint the one refresh token used by eeHub and notificationSweep.
+// Mint the one refresh token used by eeHub, notificationSweep, and docCommentSweep.
 // Sign in as the school mailbox (for VSA, sec-ict@vsa.edu.hk).
 // Does not write secrets to disk.
 
@@ -97,5 +97,5 @@ console.log(`EE_GOOGLE_OAUTH_CLIENT_ID=${CLIENT_ID}`);
 console.log(`EE_GOOGLE_OAUTH_CLIENT_SECRET=${CLIENT_SECRET}`);
 console.log(`EE_GOOGLE_OAUTH_REFRESH_TOKEN=${tokens.refresh_token}`);
 console.log('');
-console.log('Paste each value when prompted. After a remint, secrets:set the new refresh token and redeploy eeHub and notificationSweep.');
+console.log('Paste each value when prompted. After a remint, secrets:set the new refresh token and redeploy eeHub, notificationSweep, and docCommentSweep.');
 console.log('Then open Admin → Google account and check the connection.');

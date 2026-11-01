@@ -330,6 +330,8 @@ export const COLLECTIONS: Record<string, string> = {
   notificationOverlays: 'notificationOverlays',
   notificationSends: 'notificationSends',
   docWordLogs: 'docWordLogs',
+  docCommentThreads: 'docCommentThreads',
+  docCommentSync: 'docCommentSync',
 };
 
 export function tableConfig(entity: string): TableDef {

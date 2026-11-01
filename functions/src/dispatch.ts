@@ -30,6 +30,7 @@ import {
 } from './admin';
 import { getAppBootstrap } from './bootstrap';
 import { getMyEssayAnalytics, getStudentEssayAnalytics } from './docAnalytics';
+import { syncEssayDocComments } from './docComments';
 import { checkCohortDriveFolders, getCohortDriveSettings, getDriveAccount, saveCohortDriveSettings, saveDriveAccount, syncCohortDriveFolders } from './drive';
 import { getFormDesigner, getFormResponse, getStudentForm, listFormMilestones, publishForm, saveFormDraft, saveStudentForm } from './forms';
 import {
@@ -112,6 +113,7 @@ export async function dispatch(app: App, method: string, args: unknown[]): Promi
     case 'recordStudentView': return recordStudentView(app, args[0]);
     case 'getStudentActivity': return getStudentActivity(app, args[0], args[1]);
     case 'getMyEssayAnalytics': return getMyEssayAnalytics(app);
+    case 'syncEssayDocComments': return syncEssayDocComments(app, args[0], args[1], args[2]);
     case 'getStudentEssayAnalytics': return getStudentEssayAnalytics(app, args[0], args[1], args[2]);
     case 'getContentHub': return getContentHub(app);
     case 'getCohorts': return getCohorts(app);

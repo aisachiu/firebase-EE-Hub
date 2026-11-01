@@ -227,6 +227,13 @@ export function isDocComment(entry) {
   return /doc(ument)? comment/i.test(String(entry.category || ''));
 }
 
+/** Desktop meetings and chat show the chat column. On a phone only the chat page does. */
+export function chatPaneOpen(page, mobile) {
+  const index = clampEePage(page);
+  if (mobile) return index === 4;
+  return index === 3 || index === 4;
+}
+
 /** Live Docs comment links use disco=. A full URL is kept as given. */
 export function docCommentHref(docUrl, commentId) {
   const id = String(commentId || '').trim();
@@ -239,8 +246,32 @@ export function docCommentHref(docUrl, commentId) {
   return base + join + 'disco=' + encodeURIComponent(id);
 }
 
+function docThreadItem(source, docUrl, at, author) {
+  const commentId = source.commentId || source.threadId || source.disco || '';
+  return {
+    type: 'doc',
+    at: at,
+    author: author,
+    quote: source.quote || '',
+    body: source.body || source.text || '',
+    href: docCommentHref(source.docUrl || docUrl, commentId || source.anchor || ''),
+    commentId: commentId,
+    replyCount: Number(source.replyCount) || 0,
+    replies: Array.isArray(source.replies) ? source.replies : [],
+    resolved: !!source.resolved,
+  };
+}
+
+function rememberDoc(items, seen, item) {
+  const key = item.commentId || item.href || '';
+  if (key && seen[key]) return;
+  if (key) seen[key] = true;
+  items.push(item);
+}
+
 export function threadEntries(hub, home) {
   const items = [];
+  const seen = {};
   const docUrl = home && home.links ? home.links.doc : '';
   ((hub && hub.tickets) || []).forEach(function(ticket) {
     if (!ticket || ticket.route === 'coordinator') return;
@@ -249,14 +280,7 @@ export function threadEntries(hub, home) {
       if (!message) return;
       const at = message.createdAt || ticket.lastUpdated || ticket.createdAt || '';
       if (ticketIsDoc || isDocComment(message)) {
-        items.push({
-          type: 'doc',
-          at: at,
-          author: message.authorName || (message.authorRole === 'student' ? 'You' : 'Supervisor'),
-          quote: message.quote || '',
-          body: message.body || '',
-          href: docCommentHref(message.docUrl || docUrl, message.commentId || message.disco || message.anchor || ''),
-        });
+        rememberDoc(items, seen, docThreadItem(message, docUrl, at, message.authorName || (message.authorRole === 'student' ? 'You' : 'Supervisor')));
         return;
       }
       items.push({
@@ -270,17 +294,37 @@ export function threadEntries(hub, home) {
   });
   ((home && home.docComments) || []).forEach(function(comment) {
     if (!comment) return;
-    items.push({
-      type: 'doc',
-      at: comment.at || comment.createdAt || '',
-      author: comment.author || comment.authorName || 'Comment',
-      quote: comment.quote || '',
-      body: comment.body || comment.text || '',
-      href: docCommentHref(comment.docUrl || docUrl, comment.commentId || comment.disco || comment.anchor || ''),
-    });
+    rememberDoc(items, seen, docThreadItem(
+      comment,
+      docUrl,
+      comment.at || comment.modifiedAt || comment.createdAt || '',
+      comment.author || comment.authorName || 'Comment',
+    ));
   });
   items.sort(function(left, right) { return String(left.at).localeCompare(String(right.at)); });
   return items;
+}
+
+function replyBlock(item) {
+  const list = Array.isArray(item.replies) ? item.replies.filter(function(reply) { return reply && (reply.body || reply.author); }) : [];
+  const count = Number(item.replyCount) || list.length;
+  if (!list.length) return count ? `<p class="muted">${count} ${count === 1 ? 'reply' : 'replies'} in this thread</p>` : '';
+  const shown = list.slice(-3);
+  const lines = shown.map(function(reply) {
+    return `<p><strong>${escapeHtml(reply.author || 'Reply')}</strong> ${escapeHtml(reply.body || '')}</p>`;
+  }).join('');
+  const more = count > shown.length ? `<p class="muted">${count} replies in this thread</p>` : '';
+  return `<div class="ee-doc-replies">${lines}${more}</div>`;
+}
+
+/** One card per Drive thread. Replies stay inside the card. */
+export function docCommentCardHtml(item) {
+  const quote = item.quote ? `<blockquote>${escapeHtml(item.quote)}</blockquote>` : '';
+  const resolved = item.resolved ? '<p class="muted">Resolved</p>' : '';
+  const link = item.href
+    ? `<p><a href="${escapeHtml(item.href)}" target="_blank" rel="noopener noreferrer">Open in Google Docs</a></p>`
+    : '<p class="muted">No Doc link is available for this comment.</p>';
+  return `<article class="ee-doc-comment"><p class="eyebrow">Doc comment</p><strong>${escapeHtml(item.author || 'Comment')}</strong>${quote}<p>${escapeHtml(item.body || '')}</p>${replyBlock(item)}${resolved}${link}</article>`;
 }
 
 let detachStage = null;
