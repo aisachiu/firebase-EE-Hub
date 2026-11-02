@@ -853,7 +853,7 @@ main.staff-list { max-width: 1480px; }
 .alloc-assigned ul { margin: 0; padding: 0 12px 8px 28px; }
 .alloc-side { position: sticky; top: 52px; display: flex; flex-direction: column; max-height: calc(100vh - 68px); overflow: hidden; background: white; border: 1px solid var(--line); }
 .alloc-side-scroll { overflow-y: auto; min-height: 0; flex: 1 1 auto; }
-.alloc-side header, .alloc-side footer { padding: 12px; }
+.alloc-side header, .alloc-side footer { flex: 0 0 auto; padding: 12px; }
 .alloc-side header { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; border-bottom: 1px solid var(--line); }
 .alloc-side header h2 { margin: 0; font-size: 14px; }
 .alloc-side header .view-toggle { margin-left: 0; }

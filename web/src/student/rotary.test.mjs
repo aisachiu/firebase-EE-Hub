@@ -79,18 +79,10 @@ test('doc comments are distinct cards and deep-link with disco', () => {
   assert.equal(chatPaneOpen(3, true), false);
   assert.equal(chatPaneOpen(0, false), false);
   const entries = threadEntries({
-    tickets: [
-      {
-        route: 'supervisor',
-        messages: [
-          { createdAt: '2026-10-01T08:00:00.000Z', authorRole: 'staff', authorName: 'Ms Sharma', body: 'See you Friday.' },
-          { createdAt: '2026-10-02T08:00:00.000Z', authorRole: 'student', body: 'Thank you.' },
-        ],
-      },
-      {
-        route: 'coordinator',
-        messages: [{ createdAt: '2026-10-03T08:00:00.000Z', authorRole: 'staff', body: 'Coordinator only.' }],
-      },
+    entries: [
+      { kind: 'chat', at: '2026-10-01T08:00:00.000Z', authorRole: 'staff', authorName: 'Ms Sharma', body: 'See you Friday.' },
+      { kind: 'chat', at: '2026-10-02T08:00:00.000Z', authorRole: 'student', body: 'Thank you.' },
+      { kind: 'chat', at: '2026-10-03T08:00:00.000Z', authorRole: 'staff', authorName: 'Alex Chen', body: 'Checking the question.' },
     ],
   }, {
     links: home.links,
@@ -110,11 +102,15 @@ test('doc comments are distinct cards and deep-link with disco', () => {
       { at: '2026-10-01T13:00:00.000Z', author: 'Jamie Wong', body: 'Is this clear?', commentId: 'stu' },
     ],
   });
-  assert.deepEqual(entries.map((item) => item.type), ['chat', 'doc', 'doc', 'chat']);
+  assert.deepEqual(entries.map((item) => item.type), ['chat', 'doc', 'doc', 'chat', 'chat']);
+  assert.equal(entries[0].mine, false);
+  assert.equal(entries[0].author, 'Ms Sharma');
+  assert.equal(entries[3].mine, true);
+  assert.equal(entries[3].author, 'You');
+  assert.equal(entries[4].body, 'Checking the question.');
   assert.equal(entries[1].href, 'https://docs.google.com/document/d/abc123/edit?disco=abc');
   assert.equal(entries[1].replyCount, 2);
   assert.equal(entries.filter((item) => item.type === 'doc').length, 2);
-  assert.equal(entries.some((item) => item.body === 'Coordinator only.'), false);
   const card = docCommentCardHtml(entries[1]);
   assert.match(card, /class="ee-doc-comment"/);
   assert.doesNotMatch(card, /ee-bubble/);
@@ -127,6 +123,25 @@ test('doc comments are distinct cards and deep-link with disco', () => {
   const studentCard = docCommentCardHtml(entries[2]);
   assert.match(studentCard, /Jamie Wong/);
   assert.match(studentCard, /Is this clear/);
+});
+
+test('staff viewers see their own chat lines as theirs and the student by name', () => {
+  const entries = threadEntries({
+    entries: [
+      { kind: 'doc-comment', at: '2026-10-01T07:00:00.000Z', authorRole: 'staff', authorName: 'Ms Sharma', body: 'Tighten this.', quote: 'the river', commentId: 'doc-1', docUrl: home.links.doc },
+      { kind: 'chat', at: '2026-10-01T08:00:00.000Z', authorRole: 'student', authorName: 'Jamie Wong', body: 'Hello' },
+      { kind: 'chat', at: '2026-10-01T09:00:00.000Z', authorRole: 'staff', authorEmail: 'Priya@vsa.example.edu', authorName: 'Priya Shah', body: 'Hi Jamie' },
+      { kind: 'chat', at: '2026-10-01T10:00:00.000Z', authorRole: 'staff', authorEmail: 'alex@vsa.example.edu', authorName: 'Alex Chen', body: 'Checking in' },
+    ],
+  }, { ...home, displayName: 'Jamie Wong', staffView: true }, { staff: true, viewerEmail: 'priya@vsa.example.edu' });
+  assert.deepEqual(entries.map((item) => item.type), ['doc', 'chat', 'chat', 'chat']);
+  assert.equal(entries[0].author, 'Ms Sharma');
+  assert.equal(entries[1].mine, false);
+  assert.equal(entries[1].author, 'Jamie Wong');
+  assert.equal(entries[2].mine, true);
+  assert.equal(entries[2].author, 'You');
+  assert.equal(entries[3].mine, false);
+  assert.equal(entries[3].author, 'Alex Chen');
 });
 
 test('a page query is optional and invalid pages settle on the document', () => {

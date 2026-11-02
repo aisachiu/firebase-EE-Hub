@@ -29,6 +29,7 @@ import {
   setMilestoneAnchor,
 } from './admin';
 import { getAppBootstrap } from './bootstrap';
+import { getStaffStudentChat, getStudentChat, sendStaffStudentChat, sendStudentChat } from './chat';
 import { getMyEssayAnalytics, getStudentEssayAnalytics } from './docAnalytics';
 import { syncEssayDocComments } from './docComments';
 import { checkCohortDriveFolders, getCohortDriveSettings, getDriveAccount, saveCohortDriveSettings, saveDriveAccount, syncCohortDriveFolders } from './drive';
@@ -47,16 +48,11 @@ import { saveReflectionNote } from './reflectionNotes';
 import { getStudentPageSettings, saveStudentPageSettings } from './studentPages';
 import {
   createStaffNote,
-  createTicket,
   getStaffNotesHub,
   getStaffStudentPanel,
-  getStaffTicketBadge,
-  getStaffTickets,
-  getTicketHub,
   markTicketRead,
   replyTicket,
   setMessageShared,
-  setTicketStatus,
 } from './messaging';
 import {
   deleteNotificationOverlay,
@@ -151,17 +147,16 @@ export async function dispatch(app: App, method: string, args: unknown[]): Promi
     case 'saveTodoTemplate': return saveTodoTemplate(app, args[0]);
     case 'deleteTodoTemplate': return deleteTodoTemplate(app, args[0]);
     case 'applyTodoTemplate': return applyTodoTemplate(app, args[0], args[1], args[2], args[3], args[4]);
-    case 'getTicketHub': return getTicketHub(app);
-    case 'createTicket': return createTicket(app, args[0]);
+    case 'getStudentChat': return getStudentChat(app);
+    case 'sendStudentChat': return sendStudentChat(app, args[0], args[1]);
     case 'replyTicket': return replyTicket(app, args[0], args[1], args[2], args[3]);
-    case 'setTicketStatus': return setTicketStatus(app, args[0], args[1], args[2], args[3]);
     case 'markTicketRead': return markTicketRead(app, args[0], args[1], args[2]);
     case 'setMessageShared': return setMessageShared(app, args[0], args[1], args[2], args[3]);
-    case 'getStaffTickets': return getStaffTickets(app, args[0]);
-    case 'getStaffTicketBadge': return getStaffTicketBadge(app, args[0]);
+    case 'getStaffStudentChat': return getStaffStudentChat(app, args[0], args[1], args[2]);
     case 'getStaffNotesHub': return getStaffNotesHub(app, args[0]);
     case 'getStaffStudentPanel': return getStaffStudentPanel(app, args[0], args[1], args[2]);
     case 'createStaffNote': return createStaffNote(app, args[0], args[1], args[2], args[3], args[4]);
+    case 'sendStaffStudentChat': return sendStaffStudentChat(app, args[0], args[1], args[2], args[3], args[4]);
     case 'listFormMilestones': return listFormMilestones(app);
     case 'getFormDesigner': return getFormDesigner(app, args[0]);
     case 'saveFormDraft': return saveFormDraft(app, args[0], args[1]);

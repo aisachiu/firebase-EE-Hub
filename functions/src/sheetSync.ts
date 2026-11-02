@@ -358,12 +358,11 @@ async function validateIngest(app: App, plan: SheetImportPlan, entities: string[
         if (doc.data['Body Format'] === 'html') assertSafeResourceHtml(text(doc.data.Body));
       });
     }
-    if (id === 'ticketCategories') {
-      const names = new Set<string>();
+    if (id === 'tickets') {
       docs.forEach((doc) => {
-        const name = text(doc.data.Name).toLowerCase();
-        if (names.has(name)) throw new HubError(`Message categories has more than one row named ${doc.data.Name}.`);
-        names.add(name);
+        if (text(doc.data.Category) !== 'Note') {
+          throw new HubError(`Notes row ${doc.id} is a chat message. Chats stay in the hub and are not replaced from a sheet.`);
+        }
       });
     }
   }

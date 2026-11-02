@@ -3,40 +3,8 @@ import { HubUser, normalizeStaffView } from './permissions';
 import { findPlacement, readPhases, readRoster, readStaffTables, staffMayAddStudentTodo, staffMayViewPlacement, staffStudentContext, StaffTables } from './roster';
 import { COLLECTIONS } from './schema';
 import { App, audited, deny, requireStaff, requireUser } from './session';
-import { assigneeForRoute, compareRecentActivity, DEFAULT_TICKET_CATEGORIES, isStaffNote, routeLabel, staffCanSeeTicket, staffNotesForRoster, staffNotesForStudent, studentCanSeeTicket, ticketAuthorEmail, ticketChip, ticketFromRecord, TicketShape } from './ticketsPure';
+import { compareRecentActivity, isStaffNote, routeLabel, staffCanSeeTicket, staffNotesForRoster, staffNotesForStudent, studentCanSeeTicket, ticketAuthorEmail, ticketFromRecord, TicketShape } from './ticketsPure';
 import { Doc, HubError, normalizeEmail, nowIso, text, textHash, toBoolean, uuid } from './util';
-
-const TICKET_STATUSES = ['Open', 'In Progress', 'Resolved', 'Closed'];
-
-export async function readTicketCategories(app: App) {
-  let records = await app.store.list(COLLECTIONS.ticketCategories);
-  if (!records.length) {
-    for (const category of DEFAULT_TICKET_CATEGORIES) {
-      await app.store.set(COLLECTIONS.ticketCategories, category.id, {
-        CategoryId: category.id,
-        Name: category.name,
-        Route: category.route,
-        SortOrder: category.sort,
-        Active: true,
-      });
-    }
-    records = await app.store.list(COLLECTIONS.ticketCategories);
-  }
-  return records.map((record) => ({
-    id: text(record.CategoryId),
-    name: text(record.Name),
-    route: text(record.Route).toLowerCase(),
-    sortOrder: Number(record.SortOrder) || 0,
-    active: toBoolean(record.Active),
-  })).filter((category) => category.name && (category.route === 'supervisor' || category.route === 'coordinator'))
-    .sort((left, right) => left.sortOrder - right.sortOrder || left.name.localeCompare(right.name));
-}
-
-async function categoryByName(app: App, name: unknown) {
-  const wanted = text(name);
-  const categories = await readTicketCategories(app);
-  return categories.find((category) => category.active && category.name === wanted) || null;
-}
 
 export async function readAllTickets(app: App): Promise<TicketShape[]> {
   const records = await app.store.list(COLLECTIONS.tickets);
@@ -76,18 +44,23 @@ async function messagesFor(app: App, ticketIds: string[]) {
   return grouped;
 }
 
-function publicMessage(message: any, includeEmail: boolean) {
+function publicMessage(message: any, includeEmail: boolean, names?: Record<string, string> | null) {
   const item: Doc = { messageId: message.messageId, authorRole: message.authorRole, body: message.body, createdAt: message.createdAt };
   if (includeEmail) item.authorEmail = message.authorEmail;
+  if (names && message.authorRole !== 'student') {
+    const name = names[normalizeEmail(message.authorEmail)];
+    if (name) item.authorName = name;
+  }
   return item;
 }
 
 async function attachMessages(app: App, tickets: TicketShape[], includeEmail: boolean) {
   const messages = await messagesFor(app, tickets.map((ticket) => text(ticket.ticketId)));
+  const names = includeEmail ? null : await staffDisplayNames(app);
   return tickets.map((ticket) => ({
     ...ticket,
     routeLabel: routeLabel(ticket),
-    messages: (messages[text(ticket.ticketId)] || []).map((message) => publicMessage(message, includeEmail)),
+    messages: (messages[text(ticket.ticketId)] || []).map((message) => publicMessage(message, includeEmail, names)),
   }));
 }
 
@@ -132,50 +105,6 @@ async function staffMayContributeToNote(app: App, user: HubUser, ticket: TicketS
   }
 }
 
-function sortTickets<T extends { lastUpdated?: string }>(tickets: T[], unreadKey: string) {
-  return tickets.sort((left: any, right: any) => {
-    if (!!left[unreadKey] !== !!right[unreadKey]) return left[unreadKey] ? -1 : 1;
-    return text(right.lastUpdated).localeCompare(text(left.lastUpdated));
-  });
-}
-
-export async function studentTicketNotice(app: App, email: string) {
-  const wanted = normalizeEmail(email);
-  const unread = (await readAllTickets(app)).filter((ticket) => ticket.studentId === wanted && ticket.shared && ticket.studentUnread)
-    .sort((left, right) => text(right.lastUpdated).localeCompare(text(left.lastUpdated)));
-  return {
-    count: unread.length,
-    title: unread.length ? unread[0].title : '',
-    tickets: unread.slice(0, 20).map((ticket) => ({ ticketId: ticket.ticketId, title: ticket.title, category: ticket.category, lastUpdated: ticket.lastUpdated })),
-  };
-}
-
-async function placementMap(app: App, tickets: TicketShape[], known?: Record<string, any>) {
-  const map: Record<string, any> = { ...(known || {}) };
-  for (const ticket of tickets) {
-    if (map[ticket.studentId]) continue;
-    map[ticket.studentId] = await findPlacement(app, ticket.studentId);
-  }
-  return map;
-}
-
-export async function staffUnreadNotices(app: App, user: HubUser, view: string, placements?: Record<string, any>) {
-  const tickets = await readAllTickets(app);
-  const map = placements || await placementMap(app, tickets);
-  const unread = tickets.filter((ticket) => staffCanSeeTicket(user, view, ticket, map[ticket.studentId])).filter((ticket) => ticket.staffUnread)
-    .sort((left, right) => text(right.lastUpdated).localeCompare(text(left.lastUpdated)));
-  return {
-    count: unread.length,
-    tickets: unread.slice(0, 20).map((ticket) => ({
-      ticketId: ticket.ticketId,
-      title: ticket.title,
-      category: ticket.category,
-      displayName: map[ticket.studentId]?.displayName || ticket.studentId,
-      lastUpdated: ticket.lastUpdated,
-    })),
-  };
-}
-
 function assertFresh(record: Doc, clientToken: unknown) {
   if (text(record.LastUpdated) !== String(clientToken || '')) {
     throw new HubError('This message changed in another tab. Reload it and try again.');
@@ -206,72 +135,6 @@ async function assertTicketActor(app: App, user: HubUser, ticket: TicketShape, v
   throw new HubError('You cannot update this message.');
 }
 
-function publicCategories(categories: Awaited<ReturnType<typeof readTicketCategories>>) {
-  return categories.filter((item) => item.active).map((item) => ({ name: item.name, route: item.route, chip: ticketChip(item.name) }));
-}
-
-export async function getTicketHub(app: App) {
-  const user = await requireUser(app, 'VIEW_TICKETS');
-  if (user.role !== 'student') return deny(app, user, 'VIEW_TICKETS', 'Student access required.');
-  const tickets = sortTickets((await readAllTickets(app)).filter((ticket) => studentCanSeeTicket(user.email, ticket)), 'studentUnread');
-  const notice = tickets.filter((ticket) => ticket.studentUnread && ticket.shared);
-  const categories = await readTicketCategories(app);
-  return {
-    faqs: await readPublishedFaqs(app, 'student'),
-    categories: publicCategories(categories),
-    tickets: withShareControls(await attachMessages(app, tickets, false), user),
-    unreadCount: notice.length,
-    unreadTitle: notice.length ? notice[0].title : '',
-  };
-}
-
-export async function createTicket(app: App, payload: any) {
-  const user = await requireUser(app, 'TICKET_CREATE');
-  if (user.role !== 'student') return deny(app, user, 'TICKET_CREATE', 'Students send messages.');
-  const input = payload || {};
-  const category = await categoryByName(app, input.category);
-  if (!category) throw new HubError('Choose a category.');
-  const title = text(input.title);
-  const body = text(input.body);
-  if (!title) throw new HubError('Add a short subject.');
-  if (title.length > 90) throw new HubError('Subject must be 90 characters or fewer.');
-  if (!body) throw new HubError('Write your message before sending.');
-  if (body.length > 2000) throw new HubError('Messages must be 2,000 characters or fewer.');
-  const placement = await findPlacement(app, user.email);
-  const assignee = assigneeForRoute(category.route, placement);
-  const now = nowIso();
-  const ticketId = uuid();
-  const record = {
-    TicketId: ticketId,
-    StudentId: user.email,
-    Cohort: placement ? placement.cohortId : '',
-    Category: category.name,
-    Title: title,
-    Status: 'Open',
-    Route: category.route,
-    Assignee: assignee || '',
-    CreatedAt: now,
-    LastUpdated: now,
-    LastActor: user.email,
-    StudentUnread: false,
-    StaffUnread: true,
-    Shared: true,
-  };
-  return audited(app, user, 'TICKET_CREATE', { ...ticketAudit(record), bodyHash: textHash(body) }, async () => {
-    await app.store.set(COLLECTIONS.tickets, ticketId, record);
-    const messageId = uuid();
-    await app.store.addMessage(ticketId, messageId, {
-      MessageId: messageId,
-      TicketId: ticketId,
-      AuthorEmail: user.email,
-      AuthorRole: 'student',
-      Body: body,
-      CreatedAt: now,
-    });
-    return { ticketId, route: category.route, routeLabel: routeLabel(ticketFromRecord(record)), lastUpdated: now };
-  });
-}
-
 function ticketAudit(ticket: any, extra?: Doc) {
   const detail: Doc = {
     ticketId: ticket.ticketId || ticket.TicketId,
@@ -291,11 +154,13 @@ export async function replyTicket(app: App, ticketId: unknown, body: unknown, la
   if (message.length > 2000) throw new HubError('Replies must be 2,000 characters or fewer.');
   const preview = await loadTicket(app, text(ticketId));
   if (!preview) throw new HubError('This message no longer exists.');
+  if (!isStaffNote(ticketFromRecord(preview))) throw new HubError('Chat messages are sent from the student chat.');
   await requireTicketActor(app, user, ticketFromRecord(preview), viewAs);
   return audited(app, user, 'TICKET_REPLY', { ...ticketAudit(preview), bodyHash: textHash(message) }, async () => {
     const current = await loadTicket(app, text(ticketId));
     if (!current) throw new HubError('This message no longer exists.');
     const ticket = ticketFromRecord(current);
+    if (!isStaffNote(ticket)) throw new HubError('Chat messages are sent from the student chat.');
     await assertTicketActor(app, user, ticket, viewAs);
     assertFresh(current, lastUpdated);
     const now = nowIso();
@@ -325,28 +190,6 @@ export async function replyTicket(app: App, ticketId: unknown, body: unknown, la
   });
 }
 
-export async function setTicketStatus(app: App, ticketId: unknown, status: unknown, lastUpdated: unknown, viewAs: unknown) {
-  const user = await requireStaff(app, 'TICKET_STATUS');
-  const nextStatus = text(status);
-  if (!TICKET_STATUSES.includes(nextStatus)) throw new HubError('Choose a valid status.');
-  const preview = await loadTicket(app, text(ticketId));
-  if (!preview) throw new HubError('This message no longer exists.');
-  await requireTicketActor(app, user, ticketFromRecord(preview), viewAs);
-  if (text(preview.Status) === nextStatus) return { ticketId: text(preview.TicketId), status: nextStatus, lastUpdated: text(preview.LastUpdated) };
-  return audited(app, user, 'TICKET_STATUS', { ...ticketAudit(preview), status: nextStatus }, async () => {
-    const current = await loadTicket(app, text(ticketId));
-    if (!current) throw new HubError('This message no longer exists.');
-    await assertTicketActor(app, user, ticketFromRecord(current), viewAs);
-    assertFresh(current, lastUpdated);
-    const now = nowIso();
-    current.Status = nextStatus;
-    current.LastUpdated = now;
-    current.LastActor = user.email;
-    await app.store.set(COLLECTIONS.tickets, text(current.TicketId), current);
-    return { ticketId: text(current.TicketId), status: nextStatus, lastUpdated: now };
-  });
-}
-
 export async function markTicketRead(app: App, ticketId: unknown, lastUpdated: unknown, viewAs: unknown) {
   const user = await requireUser(app, 'TICKET_READ');
   const preview = await loadTicket(app, text(ticketId));
@@ -368,64 +211,6 @@ export async function markTicketRead(app: App, ticketId: unknown, lastUpdated: u
     await app.store.set(COLLECTIONS.tickets, text(current.TicketId), current);
     return { ticketId: text(current.TicketId), lastUpdated: now, changed: true };
   });
-}
-
-async function prepareStaffTickets(app: App, user: HubUser, tickets: TicketShape[]) {
-  const names = await staffDisplayNames(app);
-  const attached = withShareControls(await attachMessages(app, tickets, true), user);
-  for (const ticket of attached) {
-    const placement = await findPlacement(app, ticket.studentId);
-    ticket.displayName = placement ? placement.displayName : ticket.studentId;
-    applyAuthorNames(ticket, names);
-  }
-  return attached;
-}
-
-function staffTicketHub(user: HubUser, view: string, prepared: any[], categories: any[]) {
-  const queued = sortTickets(prepared.filter((ticket) => staffCanSeeTicket(user, view, ticket, { supervisorId: ticket.supervisorId })), 'staffUnread');
-  return { viewAs: view, tickets: queued, unreadCount: queued.filter((ticket) => ticket.staffUnread).length, categories };
-}
-
-export async function getStaffTickets(app: App, viewAs: unknown) {
-  const user = await requireStaff(app, 'VIEW_TICKETS');
-  const view = normalizeStaffView(user, viewAs);
-  const tickets = await readAllTickets(app);
-  const prepared = await prepareStaffTickets(app, user, tickets);
-  for (const ticket of prepared) {
-    const placement = await findPlacement(app, ticket.studentId);
-    ticket.supervisorId = placement?.supervisorId || '';
-  }
-  const categories = publicCategories(await readTicketCategories(app));
-  return staffTicketHub(user, view, prepared, categories);
-}
-
-export async function getStaffTicketBadge(app: App, viewAs: unknown) {
-  const user = await requireStaff(app, 'VIEW_TICKETS');
-  const view = normalizeStaffView(user, viewAs);
-  const tickets = await readAllTickets(app);
-  let unread = 0;
-  for (const ticket of tickets) {
-    const placement = await findPlacement(app, ticket.studentId);
-    if (staffCanSeeTicket(user, view, ticket, placement) && ticket.staffUnread) unread += 1;
-  }
-  return { viewAs: view, unreadCount: unread };
-}
-
-export async function getOpeningMessages(app: App) {
-  const user = await requireUser(app, 'VIEW_TICKETS');
-  if (user.role === 'student') return { active: 'student', student: await getTicketHub(app) };
-  if (!user.permissions?.isSupervisor && !user.permissions?.canAdmin) return { active: 'staff' };
-  const prepared = await prepareStaffTickets(app, user, await readAllTickets(app));
-  for (const ticket of prepared) {
-    const placement = await findPlacement(app, ticket.studentId);
-    ticket.supervisorId = placement?.supervisorId || '';
-  }
-  const categories = publicCategories(await readTicketCategories(app));
-  const active = user.permissions?.canAdmin ? 'coordinator' : 'supervisor';
-  const result: Doc = { active };
-  if (user.permissions?.canAdmin) result.coordinator = staffTicketHub(user, 'coordinator', prepared, categories);
-  if (user.permissions?.isSupervisor) result.supervisor = staffTicketHub(user, 'supervisor', prepared, categories);
-  return result;
 }
 
 export async function setMessageShared(app: App, ticketId: unknown, shared: unknown, lastUpdated: unknown, viewAs: unknown) {
@@ -563,16 +348,3 @@ export async function getStaffStudentPanel(app: App, studentEmail: unknown, coho
   };
 }
 
-export async function validateTicketCategory(app: App, values: Doc, originalKey: string) {
-  values.Name = text(values.Name);
-  values.Route = text(values.Route).toLowerCase();
-  if (values.Name.length > 80) throw new HubError('Category name must be 80 characters or fewer.');
-  if (values.Active === undefined || values.Active === '') values.Active = true;
-  else values.Active = toBoolean(values.Active);
-  const key = text(originalKey || values.CategoryId);
-  const categories = await readTicketCategories(app);
-  categories.forEach((category) => {
-    if (key && category.id === key) return;
-    if (category.name.toLowerCase() === values.Name.toLowerCase()) throw new HubError('A message category with this name already exists.');
-  });
-}

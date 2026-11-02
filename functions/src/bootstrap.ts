@@ -1,5 +1,5 @@
 import { builtinQuotes, readQuotePool } from './admin';
-import { getOpeningMessages } from './messaging';
+import { getOpeningMessages } from './chat';
 import { App, audit, currentUser } from './session';
 import { quoteDayStamp } from './util';
 

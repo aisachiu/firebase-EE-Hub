@@ -1,4 +1,4 @@
-import { paintTabDot, renderShell } from '../navigation.js';
+import { renderShell } from '../navigation.js';
 import { requestPush } from '../router.js';
 import { callServer } from '../shared/api.js';
 import { showError } from '../shared/feedback.js';
@@ -22,6 +22,7 @@ export function openStaffStudent(email) {
   state.view = 'students';
   if (state.staffStudentId !== studentId) {
     state.staffStudentHome = null;
+    state.staffStudentChat = null;
     state.notesOpen = false;
     state.staffPreviewView = '0';
   }
@@ -75,7 +76,6 @@ export function renderStaffHome() {
     state.cohortId = home.cohortId || '';
     rememberHeaderCohorts(home.cohorts);
     state.staffTicketUnread = home.unreadTicketCount || 0;
-    paintTabDot('tickets', state.staffTicketUnread, 'Messages');
     paintStaffCards(home);
   }).catch(showError);
 }

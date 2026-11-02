@@ -212,6 +212,42 @@ export class Store {
     await this.messages(ticketId).doc(messageId).delete();
   }
 
+  chats(cohortId: string) {
+    return this.db.collection(COLLECTIONS.cohorts).doc(cohortId).collection('chats');
+  }
+
+  chatEntries(cohortId: string, studentId: string) {
+    return this.chats(cohortId).doc(studentId).collection('entries');
+  }
+
+  async getChat(cohortId: string, studentId: string): Promise<Doc | null> {
+    if (!cohortId || !studentId) return null;
+    const snap = await this.chats(cohortId).doc(studentId).get();
+    return snap.exists ? (snap.data() as Doc) : null;
+  }
+
+  async setChat(cohortId: string, studentId: string, data: Doc): Promise<void> {
+    await this.chats(cohortId).doc(studentId).set(cleanDoc(data));
+  }
+
+  async listChats(cohortId: string): Promise<Doc[]> {
+    if (!cohortId) return [];
+    const snap = await this.chats(cohortId).get();
+    return snap.docs.map((doc) => doc.data() as Doc);
+  }
+
+  async listChatEntries(cohortId: string, studentId: string): Promise<Doc[]> {
+    if (!cohortId || !studentId) return [];
+    const snap = await this.chatEntries(cohortId, studentId).get();
+    return snap.docs
+      .map((doc) => doc.data() as Doc)
+      .sort((left, right) => text(left.CreatedAt).localeCompare(text(right.CreatedAt)) || text(left.EntryId).localeCompare(text(right.EntryId)));
+  }
+
+  async setChatEntry(cohortId: string, studentId: string, entryId: string, data: Doc): Promise<void> {
+    await this.chatEntries(cohortId, studentId).doc(entryId).set(cleanDoc(data));
+  }
+
   async addAudit(entry: Doc): Promise<void> {
     await this.col(COLLECTIONS.auditLogs).add(cleanDoc(entry));
   }

@@ -246,6 +246,20 @@ export function docCommentHref(docUrl, commentId) {
   return base + join + 'disco=' + encodeURIComponent(id);
 }
 
+function threadAuthor(message, staff, viewer, home) {
+  const fromStudent = message.authorRole === 'student';
+  const email = String(message.authorEmail || '').trim().toLowerCase();
+  if (!staff) {
+    return {
+      mine: fromStudent,
+      author: fromStudent ? 'You' : (message.authorName || 'Supervisor'),
+    };
+  }
+  if (viewer && email === viewer) return { mine: true, author: 'You' };
+  if (fromStudent) return { mine: false, author: message.authorName || (home && home.displayName) || 'Student' };
+  return { mine: false, author: message.authorName || 'Supervisor' };
+}
+
 function docThreadItem(source, docUrl, at, author) {
   const commentId = source.commentId || source.threadId || source.disco || '';
   return {
@@ -269,29 +283,12 @@ function rememberDoc(items, seen, item) {
   items.push(item);
 }
 
-export function threadEntries(hub, home) {
+export function threadEntries(hub, home, options) {
   const items = [];
   const seen = {};
+  const staff = !!(options && options.staff);
+  const viewer = String((options && options.viewerEmail) || '').trim().toLowerCase();
   const docUrl = home && home.links ? home.links.doc : '';
-  ((hub && hub.tickets) || []).forEach(function(ticket) {
-    if (!ticket || ticket.route === 'coordinator') return;
-    const ticketIsDoc = isDocComment(ticket);
-    (ticket.messages || []).forEach(function(message) {
-      if (!message) return;
-      const at = message.createdAt || ticket.lastUpdated || ticket.createdAt || '';
-      if (ticketIsDoc || isDocComment(message)) {
-        rememberDoc(items, seen, docThreadItem(message, docUrl, at, message.authorName || (message.authorRole === 'student' ? 'You' : 'Supervisor')));
-        return;
-      }
-      items.push({
-        type: 'chat',
-        at: at,
-        mine: message.authorRole === 'student',
-        author: message.authorRole === 'student' ? 'You' : (message.authorName || 'Supervisor'),
-        body: message.body || '',
-      });
-    });
-  });
   ((home && home.docComments) || []).forEach(function(comment) {
     if (!comment) return;
     rememberDoc(items, seen, docThreadItem(
@@ -300,6 +297,22 @@ export function threadEntries(hub, home) {
       comment.at || comment.modifiedAt || comment.createdAt || '',
       comment.author || comment.authorName || 'Comment',
     ));
+  });
+  ((hub && hub.entries) || []).forEach(function(entry) {
+    if (!entry) return;
+    const at = entry.at || entry.createdAt || '';
+    const who = threadAuthor(entry, staff, viewer, home);
+    if (entry.kind === 'doc-comment' || isDocComment(entry)) {
+      rememberDoc(items, seen, docThreadItem(entry, entry.docUrl || docUrl, at, entry.authorName || who.author));
+      return;
+    }
+    items.push({
+      type: 'chat',
+      at: at,
+      mine: who.mine,
+      author: who.author,
+      body: entry.body || '',
+    });
   });
   items.sort(function(left, right) { return String(left.at).localeCompare(String(right.at)); });
   return items;

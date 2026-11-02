@@ -5,6 +5,7 @@ export function staffActingRoles(user) {
   const permissions = (user && user.permissions) || {};
   const roles = [];
   if (permissions.canAdmin) roles.push(['coordinator', 'Coordinator']);
+  if (permissions.isLead) roles.push(['lead', 'EE Lead']);
   if (permissions.isSupervisor) roles.push(['supervisor', 'Supervisor']);
   roles.push(['staff', 'Staff browse']);
   return roles;

@@ -5,7 +5,6 @@ import { AnchorMode, reanchorMilestones } from './pathwayPlan';
 import { listCohorts, placementFromMember, requireCohort } from './roster';
 import { adminSchema, cohortSheetName, COLLECTIONS, docIdFor, fieldConfig, normalizePhaseColor, staffHasAdminAccess, tableConfig, tableHeaders, tableKey, validateRecordFields } from './schema';
 import { App, audited, requireAdmin } from './session';
-import { validateTicketCategory } from './messaging';
 import { assertSafeResourceHtml } from './formsPure';
 import { canonicalStudentEmail, canonicalStudentNumber, presentStoredIdentifiers, STUDENT_EMAIL_FIELD, STUDENT_NUMBER_FIELD, syncStudentUserFromMember, writeStudentIdentifiers } from './studentIdentity';
 import { Doc, driveNamePart, HubError, normalizeEmail, text, toBoolean, uuid, validateEmail } from './util';
@@ -142,7 +141,6 @@ export async function saveAdminRecord(app: App, entity: string, record: Doc, ori
     if (text(values.Colour)) values.Colour = normalizePhaseColor(values.Colour);
     values['Short Name'] = text(values['Short Name']);
   }
-  if (entity === 'ticketCategories') await validateTicketCategory(app, values, keyName);
   const key = tableKey(entity);
   const keyField = fieldConfig(entity, key);
   if (!text(values[key]) && !keyName && keyField?.generated) values[key] = uuid();
