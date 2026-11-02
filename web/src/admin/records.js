@@ -10,6 +10,7 @@ import {
 import { refreshAdminSectionSilently, sectionLabel, singularSection } from './sections.js';
 import { bindStaffPane, renderStaffRecords, staffSectionNav } from './staff.js';
 import { callServer, runMutation } from '../shared/api.js';
+import { refreshHeaderCohorts } from '../shared/headerCohorts.js';
 import { subjectList } from '../shared/checks.js';
 import { showError } from '../shared/feedback.js';
 import { cssEscape, escapeHtml, formatValue, hexColour, toBoolean } from '../shared/html.js';
@@ -574,6 +575,7 @@ export function saveForm(event) {
       state.editingRecord = null;
       state.originalKey = '';
     }
+    if (entity === 'cohorts') refreshHeaderCohorts();
     refreshAdminSectionSilently();
   }).catch(function(error) {
     submit.disabled = false;
@@ -599,6 +601,7 @@ export function removeRecord(record) {
   request.then(function(result) {
     state.status = result && result.auditWarning ? 'Change saved, but the completion audit entry could not be written.' : 'Change saved.';
     state.editingRecord = null;
+    if (entity === 'cohorts') refreshHeaderCohorts();
     refreshAdminSectionSilently();
   }).catch(showError);
 }

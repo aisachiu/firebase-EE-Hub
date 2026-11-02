@@ -94,6 +94,24 @@ window.eeWatchAllocation = function(cohortId, handlers) {
   };
 };
 
+window.eeWatchCohorts = function(handlers) {
+  let stopped = false;
+  const unsub = onSnapshot(collection(db, 'cohorts'), function(snap) {
+    if (stopped || !handlers || typeof handlers.onData !== 'function') return;
+    handlers.onData(snap.docs.map(function(item) {
+      return Object.assign({ id: item.id }, item.data() || {});
+    }));
+  }, function(error) {
+    if (stopped) return;
+    if (handlers && typeof handlers.onError === 'function') handlers.onError(error);
+  });
+  return function() {
+    if (stopped) return;
+    stopped = true;
+    unsub();
+  };
+};
+
 window.eeSignIn = function() {
   return signInWithPopup(auth, new GoogleAuthProvider());
 };
