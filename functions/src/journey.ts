@@ -1,10 +1,10 @@
 import { activityFeed, studentViewEventName } from './activity';
 import { getStudentActionItems, latestReturned, readActionItemsForEmails, readEvents } from './actions';
 import { canCompleteMilestone, HubUser, normalizeStaffView } from './permissions';
-import { coordinatorOrAdmin, findPlacement, loginAliasMap, orderTemplates, readPhases, readRoster, readStaffTables, readTemplates, staffMayAddStudentTodo, staffMayUpdateAllMilestones, staffStudentContext } from './roster';
+import { coordinatorOrAdmin, findCurrentPlacement, findPlacement, leadBySupervisor, loginAliasMap, orderTemplates, readPhases, readRoster, readStaffTables, readTemplates, staffMayAddStudentTodo, staffMayUpdateAllMilestones, staffStudentContext } from './roster';
 import { COLLECTIONS } from './schema';
 import { App, audit, deny, requireStaff, requireUser } from './session';
-import { staffMaySendStudentChat, staffUnreadNotices, studentTicketNotice } from './messaging';
+import { staffChatNotices, staffMaySendStudentChat, studentChatNotice } from './chat';
 import { publishedFormIds } from './forms';
 import { listAddedSupervisorTodos, supervisorOwnedMilestones } from './supervisorTodos';
 import { loadReflectionNotes } from './reflectionNotes';
@@ -38,7 +38,7 @@ function dueTime(value: string) {
 export async function getStudentHome(app: App) {
   const user = await requireUser(app, 'VIEW_STUDENT_HOME');
   if (user.role !== 'student') return deny(app, user, 'VIEW_STUDENT_HOME', 'Student access required.');
-  const placement = await findPlacement(app, user.email) || { cohortId: '', displayName: user.displayName, email: user.email, subject: '', supervisorId: '', hrm: '', anchor: '', folder: '', doc: '', rppf: '', poster: '', surname: '', firstName: '', studentNumber: '' };
+  const placement = await findCurrentPlacement(app, user.email) || { cohortId: '', displayName: user.displayName, email: user.email, studentEmail: user.email, subject: '', supervisorId: '', hrm: '', anchor: '', folder: '', doc: '', rppf: '', poster: '', surname: '', firstName: '', studentNumber: '' };
   const phases = await readPhases(app, placement.cohortId);
   const templates = orderTemplates(await readTemplates(app, placement.cohortId), phases);
   const items = await getStudentActionItems(app, user.email, user);
@@ -47,7 +47,7 @@ export async function getStudentHome(app: App) {
   items.forEach((item) => { item.returnedComment = returned[item.TaskId] ? returned[item.TaskId].comment : ''; });
   const published: Record<string, boolean> = {};
   (await publishedFormIds(app)).forEach((id) => { published[id] = true; });
-  const ticketNotice = await studentTicketNotice(app, user.email);
+  const ticketNotice = await studentChatNotice(app, user.email);
   const profiles = await staffProfiles(app);
   const supervisorId = placement.supervisorId || '';
   return {
@@ -70,7 +70,7 @@ export async function getStudentHome(app: App) {
     publishedForms: published,
     unreadTicketCount: ticketNotice.count,
     unreadTicketTitle: ticketNotice.title,
-    unreadTickets: ticketNotice.tickets || [],
+    unreadTickets: ticketNotice.chats || [],
   };
 }
 
@@ -190,6 +190,10 @@ export async function getStaffHome(app: App, cohortId: unknown, viewAs: unknown)
   const templates = orderTemplates(await readTemplates(app, selected), phases);
   let roster = (tables.byCohort[selected] || []).slice();
   if (view === 'supervisor') roster = roster.filter((student) => student.supervisorId === user.email);
+  if (view === 'lead') {
+    const leads = await leadBySupervisor(app);
+    roster = roster.filter((student) => leads[student.supervisorId] === user.email);
+  }
   const emails: Record<string, boolean> = {};
   roster.forEach((student) => { emails[student.email] = true; });
   const items = await readActionItemsForEmails(app, emails, loginAliasMap(roster));
@@ -198,7 +202,7 @@ export async function getStaffHome(app: App, cohortId: unknown, viewAs: unknown)
   const today = todayUtc();
   const students = roster.map((student) => summarize(student, items[student.email] || [], templates, returned, today, user, view))
     .sort((left, right) => right.urgency - left.urgency || left.displayName.localeCompare(right.displayName));
-  const notices = await staffUnreadNotices(app, user, view, tables.byEmail);
+  const notices = await staffChatNotices(app, user, view);
   const supervisorMilestoneTodos = view === 'supervisor' ? supervisorOwnedMilestones(roster, templates, items) : [];
   const supervisorTodos = view === 'supervisor'
     ? (await listAddedSupervisorTodos(app, selected)).filter((todo) => todo.supervisorId === user.email && todo.status !== 'Completed')
@@ -208,7 +212,7 @@ export async function getStaffHome(app: App, cohortId: unknown, viewAs: unknown)
     cohortId: selected,
     viewAs: view,
     viewerEmail: user.email,
-    canAct: view !== 'staff',
+    canAct: view === 'supervisor' || view === 'coordinator',
     canEditMilestones: view !== 'staff' && coordinatorOrAdmin(user),
     phases,
     templates,
@@ -217,12 +221,13 @@ export async function getStaffHome(app: App, cohortId: unknown, viewAs: unknown)
     supervisorMilestoneTodos,
     supervisorTodos,
     unreadTicketCount: notices.count,
-    unreadTickets: notices.tickets,
+    unreadTickets: notices.chats,
   };
 }
 
 function staffViewLabel(view: string, canUpdate: boolean) {
   if (view === 'coordinator') return canUpdate ? 'Coordinator · you can update every milestone' : 'Coordinator';
+  if (view === 'lead') return 'EE Lead';
   if (view === 'supervisor') return canUpdate ? 'Supervisor · you can update every milestone' : 'Supervisor · you can update milestones you own';
   return 'Staff browse · read only';
 }
@@ -265,7 +270,7 @@ export async function getStaffStudentHome(app: App, studentEmail: unknown, cohor
     viewAs: context.view,
     canUpdateMilestones: canUpdateAll,
     canWriteTodos: staffMayAddStudentTodo(user, context),
-    canSendChat: staffMaySendStudentChat(user, context.view, roster),
+    canSendChat: staffMaySendStudentChat(user, context.view, roster, context.leadId),
     viewLabel: staffViewLabel(context.view, canUpdateAll),
     displayName: roster.displayName,
     email: context.email,

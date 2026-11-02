@@ -8,9 +8,7 @@ const SECTION_SLUGS = {
   supervisor: 'supervisor',
   doc: 'document',
   resources: 'resources',
-  help: 'help',
   'my-students': 'students',
-  messages: 'tickets',
   notes: 'notes',
 };
 
@@ -19,10 +17,8 @@ const SECTION_TITLES = {
   document: 'My EE',
   journey: 'My EE',
   supervisor: 'My EE',
-  help: 'Help',
   resources: 'Resources',
   students: 'My Students',
-  tickets: 'Messages',
   notes: 'Notes',
 };
 
@@ -42,7 +38,6 @@ const ADMIN_PANELS = {
   forms: { adminEntity: 'formDesigner', title: 'Milestone forms' },
   resources: { adminEntity: 'resources', title: 'Resources' },
   faqs: { adminEntity: 'faqs', title: 'FAQs' },
-  categories: { adminEntity: 'ticketCategories', title: 'Message categories' },
   assignments: { adminEntity: 'studentTasks', title: 'Student Tasks' },
 };
 
@@ -59,14 +54,10 @@ export function sectionTabs(user, actingAs) {
   const student = !!(user && user.role === 'student');
   const permissions = (user && user.permissions) || {};
   const tabs = student
-    ? [['my-ee', 'My EE'], ['resources', 'Resources'], ['help', 'Help']]
+    ? [['my-ee', 'My EE'], ['resources', 'Resources']]
     : [['students', 'My Students'], ['resources', 'Resources']];
-  if (!student && (actingAs === 'supervisor' || actingAs === 'coordinator') && (permissions.isSupervisor || permissions.canAdmin)) {
-    tabs.splice(1, 0, ['tickets', 'Messages']);
-  }
   if (!student && (permissions.isSupervisor || permissions.canAdmin)) {
-    const notesAt = tabs.some(function(tab) { return tab[0] === 'tickets'; }) ? 2 : 1;
-    tabs.splice(notesAt, 0, ['notes', 'Notes']);
+    tabs.splice(1, 0, ['notes', 'Notes']);
   }
   if (permissions.canAdmin) tabs.push(['allocation', 'Allocation'], ['admin', 'Admin']);
   return tabs;

@@ -24,6 +24,7 @@ const ACTIVITY_TITLES: Record<string, string> = {
   UPDATE_ACTION_ITEM_STATUS: 'Updated a task',
   FORM_SUBMIT: 'Submitted a form',
   FORM_DRAFT: 'Saved a form draft',
+  CHAT_SEND: 'Sent a chat message',
   TICKET_CREATE: 'Sent a message',
   TICKET_REPLY: 'Sent a reply',
   TICKET_READ: 'Opened a message',
@@ -135,7 +136,7 @@ function activityKind(action: string) {
   if (action === 'LOGIN_SUCCESS' || action === 'ACCESS_DENIED') return 'sign-in';
   if (action.indexOf('student.view.') === 0) return 'view';
   if (action.indexOf('FORM_') === 0) return 'form';
-  if (action.indexOf('TICKET_') === 0 || action === 'NOTE_CREATE') return 'question';
+  if (action.indexOf('TICKET_') === 0 || action.indexOf('CHAT_') === 0 || action === 'NOTE_CREATE') return 'question';
   if (action.indexOf('TODO') >= 0 || action === 'SET_ACTION_ITEM_DUE_DATE' || action === 'UPDATE_ACTION_ITEM_STATUS' || action === 'REPOSITION_STUDENT_TODO') return 'task';
   return 'other';
 }
@@ -169,6 +170,7 @@ function activitySummary(action: string, unpacked: { payload: any; reason: strin
     if (text(payload.category) === 'Note') return payload.shared ? 'Visible for student' : 'Hidden from student';
     return payload.shared ? 'Shared message' : 'Private note';
   }
+  if (action.indexOf('CHAT_') === 0) return 'Chat';
   if (action.indexOf('TICKET_') === 0) return text(payload.category) || 'Message';
   if (action === 'APPLY_TODO_TEMPLATE' || action === 'SAVE_TODO_TEMPLATE' || action === 'DELETE_TODO_TEMPLATE') return text(payload.title) || 'Template task';
   if (action === 'SAVE_DRIVE_ACCOUNT') return text(payload.actorEmail);

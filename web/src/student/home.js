@@ -124,12 +124,13 @@ export function bindStaffStudentChrome() {
   });
 }
 
-export function renderUnreadNotices(tickets) {
-  const items = tickets || [];
+export function renderUnreadNotices(chats) {
+  const items = chats || [];
   if (!items.length) return '';
-  return `<section class="notice-list" aria-label="Unread messages"><h2>Unread messages</h2><ul>${items.map(function(ticket) {
-    const detail = [ticket.displayName, ticket.category === 'Note' ? '' : ticket.category].filter(Boolean).join(' · ');
-    return `<li><button type="button" data-open-unread="${escapeHtml(ticket.ticketId)}"><strong>${escapeHtml(ticket.title || 'Message')}</strong>${detail ? `<span class="muted">${escapeHtml(detail)}</span>` : ''}</button></li>`;
+  return `<section class="notice-list" aria-label="Unread messages"><h2>Unread messages</h2><ul>${items.map(function(chat) {
+    const detail = chat.displayName || '';
+    const key = chat.studentEmail || '';
+    return `<li><button type="button" data-open-unread="${escapeHtml(key)}" data-unread-cohort="${escapeHtml(chat.cohortId || '')}"><strong>${escapeHtml(chat.title || 'Chat')}</strong>${detail ? `<span class="muted">${escapeHtml(detail)}</span>` : ''}</button></li>`;
   }).join('')}</ul></section>`;
 }
 
@@ -137,14 +138,27 @@ export function bindUnreadNotices(main, staff) {
   main.querySelectorAll('[data-open-unread]').forEach(function(button) {
     button.addEventListener('click', function() {
       if (!requestPush()) return;
-      state.focusTicket = button.dataset.openUnread;
-      state.staffStudent = null;
-      state.staffStudentHome = null;
-      state.staffStudentChat = null;
-      state.staffStudentId = '';
+      state.focusTicket = '';
       state.studentFocus = '';
-      state.section = staff ? 'tickets' : 'help';
-      state.view = state.section;
+      if (staff) {
+        const email = String(button.dataset.openUnread || '').trim().toLowerCase();
+        const cohort = button.dataset.unreadCohort || '';
+        state.staffStudent = null;
+        state.staffStudentHome = null;
+        state.staffStudentChat = null;
+        if (state.staffStudentId !== email) state.notesOpen = false;
+        state.staffStudentId = email;
+        if (cohort) state.cohortId = cohort;
+        state.section = 'students';
+        state.view = 'students';
+        state.staffPane = 'home';
+        state.staffPreviewView = '4';
+        renderShell();
+        return;
+      }
+      state.section = 'my-ee';
+      state.view = 'my-ee';
+      state.eePage = 4;
       renderShell();
     });
   });

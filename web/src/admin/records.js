@@ -137,11 +137,10 @@ export function renderAdminData(data, options) {
     ? `${filtered.length} shown · ${records.length} record${records.length === 1 ? '' : 's'}`
     : `${records.length} record${records.length === 1 ? '' : 's'}`;
   const selectionHeader = isCohortMembers ? collapsibleHeader('cohort-member-selection', 'Selection and import', `<div class="toolbar"><button type="button" class="button secondary" id="open-roster-import">Import CSV / paste</button><button type="button" class="button secondary" id="create-selected-users" disabled>Add selected as users</button>${cohortProvisionSelectionActions()}<label><input type="checkbox" id="select-all-members"> Select all</label><span id="selected-count" class="muted">0 selected</span></div>`) : '';
-  const categoryNote = entity === 'ticketCategories' ? '<p class="lede">These names are the choices a student sees when they send a message. Who they message sends it to that student\'s supervisor or to the EE Coordinator.</p>' : '';
   const taskNote = entity === 'studentTasks' ? `<p class="lede">Tasks for cohort ${escapeHtml(state.cohortId || '')}. Add, edit, and delete stay on this cohort.</p>` : '';
   const filterControl = isCohortMembers ? cohortProvisionFilterControl(state.memberProvisionFilter) : '';
   const colourAction = entity === 'subjects' ? '<button type="button" class="button secondary" id="auto-subject-colours">Auto Apply Colours</button>' : '';
-  target.innerHTML = `${staffNav}${categoryNote}${taskNote}<div class="toolbar"><button type="button" class="button" id="new-record">Add ${escapeHtml(addLabel)}</button>${colourAction}${filterControl}<span class="muted">${shownCount}</span></div>
+  target.innerHTML = `${staffNav}${taskNote}<div class="toolbar"><button type="button" class="button" id="new-record">Add ${escapeHtml(addLabel)}</button>${colourAction}${filterControl}<span class="muted">${shownCount}</span></div>
     ${selectionHeader}
     ${state.status ? `<p class="status">${escapeHtml(state.status)}</p>` : ''}
     ${sorted.length ? `<div class="table-wrap"><table><thead><tr>${isCohortMembers ? '<th scope="col"><span class="sr-only">Select</span></th>' : ''}${columns.map(function(field) { return sortableHeader(tableId, field.name, field.label || field.name); }).join('')}${isCohortMembers ? sortableHeader(tableId, 'workspace', 'Workspace') : ''}<th scope="col">Actions</th></tr></thead><tbody>${sorted.map(function(item) {

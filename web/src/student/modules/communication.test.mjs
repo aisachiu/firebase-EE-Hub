@@ -25,12 +25,14 @@ test('supervisors and coordinators get a compose box on the student chat page', 
     email: 'jamie@vsa.example.edu',
   };
   const coordinator = { ...supervisor, viewAs: 'coordinator' };
+  const lead = { ...supervisor, viewAs: 'lead' };
   const browse = { ...supervisor, viewAs: 'staff', canSendChat: false };
   const blockedSupervisor = { ...supervisor, canSendChat: false };
   const student = { displayName: 'Jamie Wong', links: { doc: 'https://docs.google.com/document/d/abc123/edit' } };
 
   assert.equal(communication.staffChatComposeEnabled(supervisor), true);
   assert.equal(communication.staffChatComposeEnabled(coordinator), true);
+  assert.equal(communication.staffChatComposeEnabled(lead), true);
   assert.equal(communication.staffChatComposeEnabled(browse), false);
   assert.equal(communication.staffChatComposeEnabled(blockedSupervisor), false);
   assert.equal(communication.staffChatComposeEnabled(student), false);
@@ -38,31 +40,36 @@ test('supervisors and coordinators get a compose box on the student chat page', 
   assert.match(communication.render(supervisor, { thread: true }), /data-communication-host/);
   assert.match(communication.render(coordinator, { thread: true }), /data-communication-host/);
   assert.match(communication.render(browse, { thread: true }), /data-communication-host/);
-  assert.match(communication.render(browse, {}), /does not open their inbox/);
+  assert.match(communication.render(browse, {}), /Open Supervisor Chat/);
   assert.match(communication.render(blockedSupervisor, { thread: true }), /data-communication-host/);
   assert.match(communication.render(student, { thread: true }), /data-communication-host/);
-  assert.doesNotMatch(communication.render(student, { thread: true }), /does not open their inbox/);
+  assert.doesNotMatch(communication.render(student, { thread: true }), /Open Supervisor Chat/);
 
   const hub = {
     canCompose: true,
     viewerEmail: 'supervisor@vsa.example.edu',
-    tickets: [{
-      route: 'supervisor',
-      category: 'Doc comment',
-      messages: [{
-        createdAt: '2026-10-01T07:00:00.000Z',
-        authorRole: 'staff',
-        authorName: 'Ms Sharma',
-        quote: 'the river',
-        body: 'Tighten this.',
-        commentId: 'abc',
-      }],
+    entries: [{
+      kind: 'doc-comment',
+      at: '2026-10-01T07:00:00.000Z',
+      authorRole: 'staff',
+      authorName: 'Ms Sharma',
+      quote: 'the river',
+      body: 'Tighten this.',
+      commentId: 'abc',
+      docUrl: student.links.doc,
     }, {
-      route: 'supervisor',
-      messages: [
-        { createdAt: '2026-10-01T08:00:00.000Z', authorRole: 'student', authorName: 'Jamie Wong', body: 'Hello' },
-        { createdAt: '2026-10-01T09:00:00.000Z', authorRole: 'staff', authorEmail: 'supervisor@vsa.example.edu', authorName: 'Priya Shah', body: 'Hi Jamie' },
-      ],
+      kind: 'chat',
+      at: '2026-10-01T08:00:00.000Z',
+      authorRole: 'student',
+      authorName: 'Jamie Wong',
+      body: 'Hello',
+    }, {
+      kind: 'chat',
+      at: '2026-10-01T09:00:00.000Z',
+      authorRole: 'staff',
+      authorEmail: 'supervisor@vsa.example.edu',
+      authorName: 'Priya Shah',
+      body: 'Hi Jamie',
     }],
   };
   const staffHtml = communication.supervisorThreadHtml(hub, { ...supervisor, links: student.links });
@@ -79,25 +86,22 @@ test('supervisors and coordinators get a compose box on the student chat page', 
   assert.match(staffHtml, /class="ee-bubble mine"/);
 
   const studentHtml = communication.supervisorThreadHtml({
-    tickets: [{
-      route: 'supervisor',
-      messages: [
-        { createdAt: '2026-10-01T08:00:00.000Z', authorRole: 'student', body: 'Hello' },
-        { createdAt: '2026-10-01T09:00:00.000Z', authorRole: 'staff', authorName: 'Priya Shah', body: 'Hi Jamie' },
-      ],
-    }],
+    entries: [
+      { kind: 'chat', at: '2026-10-01T08:00:00.000Z', authorRole: 'student', body: 'Hello' },
+      { kind: 'chat', at: '2026-10-01T09:00:00.000Z', authorRole: 'staff', authorName: 'Priya Shah', body: 'Hi Jamie' },
+    ],
   }, student);
   assert.match(studentHtml, /data-chat-form/);
   assert.match(studentHtml, /Message to your supervisor/);
   assert.match(studentHtml, /Message your supervisor/);
-  assert.match(studentHtml, /data-chat-help/);
+  assert.doesNotMatch(studentHtml, /data-chat-help/);
   assert.match(studentHtml, /Priya Shah/);
   assert.match(studentHtml, /class="ee-bubble mine"/);
 
-  const readOnly = communication.supervisorThreadHtml({ canCompose: false, tickets: [] }, supervisor);
+  const readOnly = communication.supervisorThreadHtml({ canCompose: false, entries: [] }, supervisor);
   assert.doesNotMatch(readOnly, /data-chat-form/);
   assert.match(readOnly, /No Doc comments in this chat yet/);
-  assert.match(readOnly, /In-app messages stay on your Messages tab/);
-  const browseHtml = communication.supervisorThreadHtml({ tickets: [] }, browse);
+  assert.doesNotMatch(readOnly, /Messages tab/);
+  const browseHtml = communication.supervisorThreadHtml({ entries: [] }, browse);
   assert.doesNotMatch(browseHtml, /data-chat-form/);
 });

@@ -289,26 +289,6 @@ export function threadEntries(hub, home, options) {
   const staff = !!(options && options.staff);
   const viewer = String((options && options.viewerEmail) || '').trim().toLowerCase();
   const docUrl = home && home.links ? home.links.doc : '';
-  ((hub && hub.tickets) || []).forEach(function(ticket) {
-    if (!ticket || ticket.route === 'coordinator') return;
-    const ticketIsDoc = isDocComment(ticket);
-    (ticket.messages || []).forEach(function(message) {
-      if (!message) return;
-      const at = message.createdAt || ticket.lastUpdated || ticket.createdAt || '';
-      const who = threadAuthor(message, staff, viewer, home);
-      if (ticketIsDoc || isDocComment(message)) {
-        rememberDoc(items, seen, docThreadItem(message, docUrl, at, who.author));
-        return;
-      }
-      items.push({
-        type: 'chat',
-        at: at,
-        mine: who.mine,
-        author: who.author,
-        body: message.body || '',
-      });
-    });
-  });
   ((home && home.docComments) || []).forEach(function(comment) {
     if (!comment) return;
     rememberDoc(items, seen, docThreadItem(
@@ -317,6 +297,22 @@ export function threadEntries(hub, home, options) {
       comment.at || comment.modifiedAt || comment.createdAt || '',
       comment.author || comment.authorName || 'Comment',
     ));
+  });
+  ((hub && hub.entries) || []).forEach(function(entry) {
+    if (!entry) return;
+    const at = entry.at || entry.createdAt || '';
+    const who = threadAuthor(entry, staff, viewer, home);
+    if (entry.kind === 'doc-comment' || isDocComment(entry)) {
+      rememberDoc(items, seen, docThreadItem(entry, entry.docUrl || docUrl, at, entry.authorName || who.author));
+      return;
+    }
+    items.push({
+      type: 'chat',
+      at: at,
+      mine: who.mine,
+      author: who.author,
+      body: entry.body || '',
+    });
   });
   items.sort(function(left, right) { return String(left.at).localeCompare(String(right.at)); });
   return items;

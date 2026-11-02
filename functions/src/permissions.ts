@@ -46,11 +46,14 @@ export function canCompleteMilestone(
   return OWNER_OPTIONS.includes(milestoneOwner) && !!(user.permissions && (user.permissions as Record<string, boolean>)[permissionName]);
 }
 
-export function normalizeStaffView(user: HubUser, viewAs: unknown): 'supervisor' | 'coordinator' | 'staff' {
+export function normalizeStaffView(user: HubUser, viewAs: unknown): 'supervisor' | 'coordinator' | 'lead' | 'staff' {
   const requested = text(viewAs).toLowerCase();
   if (requested === 'supervisor' && user.permissions?.isSupervisor) return 'supervisor';
+  if (requested === 'lead' && user.permissions?.isLead) return 'lead';
   if (requested === 'staff') return 'staff';
+  if (requested === 'coordinator' && user.permissions?.canAdmin) return 'coordinator';
   if (user.permissions?.canAdmin) return 'coordinator';
   if (user.permissions?.isSupervisor) return 'supervisor';
+  if (user.permissions?.isLead) return 'lead';
   return 'staff';
 }

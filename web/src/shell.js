@@ -57,10 +57,12 @@ export function bootHub() {
     }
     state.user = result.user;
     rememberOpeningMessages(result.messages);
+    state.openingChatUnread = result.messages && result.messages.studentUnread ? result.messages.studentUnread : 0;
     state.view = state.user.role === 'student' ? 'my-ee' : 'students';
     state.section = state.view;
     if (state.user.permissions && state.user.permissions.canAdmin) state.actingAs = 'coordinator';
     else if (state.user.permissions && state.user.permissions.isSupervisor) state.actingAs = 'supervisor';
+    else if (state.user.permissions && state.user.permissions.isLead) state.actingAs = 'lead';
     else state.actingAs = 'staff';
     applyLocation();
     renderShell();
@@ -76,7 +78,6 @@ let shellRender = 0;
 const chunkLoaders = {
   coordinator: function() { return import('./admin/coordinator.js'); },
   resources: function() { return import('./shared/resources.js'); },
-  tickets: function() { return import('./staff/messages.js'); },
   notes: function() { return import('./staff/notes.js'); },
   studentViews: function() { return import('./student/views.js'); },
   staff: function() { return import('./staff/students.js'); },
@@ -105,8 +106,7 @@ function readyChunk(name) {
 function sectionChunk(section, student) {
   if (section === 'admin' || section === 'allocation') return 'coordinator';
   if (section === 'resources') return 'resources';
-  if (section === 'help' || section === 'my-ee' || section === 'document' || section === 'journey' || section === 'supervisor') return 'studentViews';
-  if (section === 'tickets') return 'tickets';
+  if (section === 'my-ee' || section === 'document' || section === 'journey' || section === 'supervisor') return 'studentViews';
   if (section === 'notes') return 'notes';
   return student ? 'studentViews' : 'staff';
 }
@@ -116,8 +116,7 @@ function paintSection(mod) {
   if (state.section === 'admin') mod.renderAdmin();
   else if (state.section === 'allocation') mod.renderAllocation();
   else if (state.section === 'resources') mod.renderResources();
-  else if (state.section === 'my-ee' || state.section === 'document' || state.section === 'journey' || state.section === 'supervisor' || state.section === 'help') mod.renderStudentSection();
-  else if (state.section === 'tickets') mod.renderStaffTickets();
+  else if (state.section === 'my-ee' || state.section === 'document' || state.section === 'journey' || state.section === 'supervisor') mod.renderStudentSection();
   else if (state.section === 'notes') mod.renderStaffNotes();
   else if (student) mod.renderStudentSection();
   else mod.renderStaffHome();
@@ -225,15 +224,6 @@ export function renderShell() {
       showFatal('Unable to open this section', error && error.message ? error.message : 'This section could not be loaded.');
     });
   }
-  if (!student && tabs.some(function(tab) { return tab[0] === 'tickets'; }) && state.ticketBadgeFor !== state.actingAs && !state.messageDesks[state.actingAs]) {
-    const requested = state.actingAs;
-    state.ticketBadgeFor = requested;
-    callServer('getStaffTicketBadge', requested).then(function(badge) {
-      if (state.actingAs !== requested) return;
-      state.staffTicketUnread = badge.unreadCount || 0;
-      paintTabDot('tickets', state.staffTicketUnread, 'Messages');
-    }).catch(function() { state.ticketBadgeFor = ''; });
-  }
   syncHistory();
   ensureHeaderCohorts();
   paintRequestIndicator();
@@ -311,9 +301,9 @@ function bindHeaderContext() {
 }
 
 export function tabLabel(tab) {
-  const helpUnread = state.studentHome ? state.studentHome.unreadTicketCount : (state.messageDesks.student ? state.messageDesks.student.unreadCount : 0);
-  if (tab[0] === 'help' && helpUnread) return 'Help<span class="dot" aria-label="Unread reply"></span>';
-  if (tab[0] === 'tickets' && state.staffTicketUnread) return 'Messages<span class="dot" aria-label="Unread messages"></span>';
+  const chatUnread = state.studentHome ? state.studentHome.unreadTicketCount : (state.openingChatUnread || 0);
+  if (tab[0] === 'my-ee' && chatUnread) return 'My EE<span class="dot" aria-label="Unread chat"></span>';
+  if (tab[0] === 'students' && state.staffHome && state.staffHome.unreadTicketCount) return 'My Students<span class="dot" aria-label="Unread chat"></span>';
   return tab[1];
 }
 
