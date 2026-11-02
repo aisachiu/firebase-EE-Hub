@@ -5,7 +5,6 @@ import { loadingLine } from '../shared/loading.js';
 import { advanceScene, sameScene } from '../shared/scene.js';
 import { state } from '../shared/state.js';
 import { paintStudentActivity } from './activity.js';
-import { renderStudentHelp } from './help.js';
 import {
   bindStaffStudentChrome,
   bindUnreadNotices,
@@ -28,10 +27,6 @@ import { pathwayStage } from './stage.js';
 import { paintStudentJourney } from './journey.js';
 
 export function renderStudentSection() {
-  if (state.section === 'help') {
-    renderStudentHelp();
-    return;
-  }
   advanceScene();
   const main = document.getElementById('main');
   main.innerHTML = loadingLine('Loading your EE...');

@@ -93,6 +93,7 @@ export const APP_TABLES: Record<string, TableDef> = {
       { name: 'isStaff', type: 'checkbox', defaultValue: true },
       { name: 'isSupervisor', type: 'checkbox' },
       { name: 'isLead', type: 'checkbox' },
+      { name: 'LeadId', type: 'email', validator: 'email', label: 'EE Lead' },
       { name: 'isCoordinator', type: 'checkbox' },
       { name: 'isAdmin', type: 'checkbox' },
       { name: 'EEQuota', type: 'number' },
@@ -136,16 +137,6 @@ export const APP_TABLES: Record<string, TableDef> = {
       { name: 'Audience', type: 'select', options: ['all', 'student', 'staff'] },
       { name: 'Published', type: 'checkbox', defaultValue: true },
       { name: 'SortOrder', type: 'number' },
-    ],
-  },
-  ticketCategories: {
-    sheet: 'TICKET_CATEGORIES',
-    fields: [
-      { name: 'CategoryId', type: 'text', key: true, generated: true },
-      { name: 'Name', type: 'text', required: true },
-      { name: 'Route', type: 'select', required: true, label: 'Who they message', options: ['supervisor', 'coordinator'], optionLabels: ["The student's supervisor", 'EE Coordinator'] },
-      { name: 'SortOrder', type: 'number', label: 'Sort order' },
-      { name: 'Active', type: 'checkbox', defaultValue: true },
     ],
   },
   cohortMembers: {
@@ -316,7 +307,6 @@ export const COLLECTIONS: Record<string, string> = {
   subjects: 'subjects',
   resources: 'resources',
   faqs: 'faqs',
-  ticketCategories: 'ticketCategories',
   studentActionItems: 'studentActionItems',
   auditLogs: 'auditLogs',
   formDefinitions: 'formDefinitions',

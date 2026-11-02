@@ -67,6 +67,42 @@ class MemoryStore {
     return row ? { ...row } : null;
   }
 
+  async listMessages(): Promise<Doc[]> {
+    return [];
+  }
+
+  async remove(name: string, id: string): Promise<void> {
+    if (this.docs[name]) delete this.docs[name][id];
+  }
+
+  chats: Record<string, Record<string, Doc>> = {};
+  entries: Record<string, Record<string, Doc>> = {};
+
+  async getChat(cohortId: string, studentId: string): Promise<Doc | null> {
+    const row = (this.chats[cohortId] || {})[studentId];
+    return row ? { ...row } : null;
+  }
+
+  async setChat(cohortId: string, studentId: string, data: Doc): Promise<void> {
+    if (!this.chats[cohortId]) this.chats[cohortId] = {};
+    this.chats[cohortId][studentId] = { ...data };
+  }
+
+  async listChats(cohortId: string): Promise<Doc[]> {
+    return Object.values(this.chats[cohortId] || {}).map((row) => ({ ...row }));
+  }
+
+  async listChatEntries(cohortId: string, studentId: string): Promise<Doc[]> {
+    const key = `${cohortId}\n${studentId}`;
+    return Object.values(this.entries[key] || {}).map((row) => ({ ...row }));
+  }
+
+  async setChatEntry(cohortId: string, studentId: string, entryId: string, data: Doc): Promise<void> {
+    const key = `${cohortId}\n${studentId}`;
+    if (!this.entries[key]) this.entries[key] = {};
+    this.entries[key][entryId] = { ...data };
+  }
+
   async addAudit(): Promise<void> {}
 }
 
@@ -324,19 +360,20 @@ test('opening chat syncs both authors once per thread, then only comments modifi
   assert.equal(first.calls[0].startModifiedTime, '');
   assert.equal(opened.comments.length, 2);
   assert.deepEqual(opened.comments.map((comment) => comment.authorEmail).sort(), [studentEmail, supervisorEmail]);
-  assert.equal(Object.keys(store.docs.docCommentThreads || {}).length, 2);
-  const supervisorThread = await store.get('docCommentThreads', threadRecordId(FILE_ID, 'sup-1'));
+  const storedThreads = await store.listChatEntries('2026', studentEmail);
+  assert.equal(storedThreads.length, 2);
+  const supervisorThread = storedThreads.find((row) => row.ThreadId === 'sup-1');
   assert.equal(supervisorThread?.ReplyCount, 1);
-  assert.equal(Object.keys(store.docs.docCommentThreads || {}).includes(threadRecordId(FILE_ID, 'reply-1')), false);
-  const cursor = await store.get('docCommentSync', pairRecordId(studentEmail, FILE_ID));
-  assert.equal(cursor?.LastSuccessAt, NOW.toISOString());
-  assert.equal(cursor?.Status, 'ok');
+  assert.equal(storedThreads.some((row) => row.ThreadId === 'reply-1'), false);
+  const cursor = await store.getChat('2026', studentEmail);
+  assert.equal(cursor?.CommentCursor, NOW.toISOString());
+  assert.equal(cursor?.CommentSyncStatus, 'ok');
 
   const later = new Date('2026-11-01T12:20:00.000Z');
   const again = await syncEssayDocComments(student, undefined, undefined, undefined, depsFor(first.drive, later));
   assert.equal(again.incremental, true);
   assert.equal(first.calls[1].startModifiedTime, NOW.toISOString());
-  assert.equal(Object.keys(store.docs.docCommentThreads || {}).length, 2);
+  assert.equal((await store.listChatEntries('2026', studentEmail)).length, 2);
   assert.equal(again.comments.find((comment) => comment.threadId === 'sup-1')?.body, 'One more pass.');
   assert.equal(again.comments.find((comment) => comment.threadId === 'sup-1')?.resolved, true);
   assert.equal(again.comments.find((comment) => comment.threadId === 'sup-1')?.replyCount, 2);
@@ -344,7 +381,7 @@ test('opening chat syncs both authors once per thread, then only comments modifi
   const removed = await syncEssayDocComments(student, undefined, undefined, undefined, depsFor(first.drive, new Date('2026-11-01T13:00:00.000Z')));
   assert.equal(removed.comments.some((comment) => comment.threadId === 'sup-1'), false);
   assert.equal(removed.comments.length, 1);
-  assert.equal((await store.get('docCommentThreads', threadRecordId(FILE_ID, 'sup-1')))?.Deleted, true);
+  assert.equal((await store.listChatEntries('2026', studentEmail)).find((row) => row.ThreadId === 'sup-1')?.Deleted, true);
 });
 
 test('a supervisor can sync their student, and another supervisor cannot', async () => {
@@ -395,9 +432,9 @@ test('a failed read keeps the previous cursor and still returns stored threads',
   assert.equal(failed.reason, 'access');
   assert.equal(failed.comments.length, 1);
   assert.equal(failed.comments[0].body, 'Kept.');
-  const cursor = await store.get('docCommentSync', pairRecordId(studentEmail, FILE_ID));
-  assert.equal(cursor?.LastSuccessAt, NOW.toISOString());
-  assert.equal(cursor?.Status, 'error');
+  const cursor = await store.getChat('2026', studentEmail);
+  assert.equal(cursor?.CommentCursor, NOW.toISOString());
+  assert.equal(cursor?.CommentSyncStatus, 'error');
   assert.equal(calls[1], NOW.toISOString());
 });
 
@@ -427,22 +464,28 @@ test('chat still shows stored comments when Drive is not connected', async () =>
   assert.equal(result.comments.length, 1);
   assert.equal(called, false);
   assert.equal(await store.get('docCommentSync', pairRecordId(studentEmail, FILE_ID)), null);
+  assert.equal(await store.get('docCommentThreads', threadRecordId(FILE_ID, 'sup-1')), null);
+  assert.equal((await store.listChatEntries('2026', studentEmail)).find((row) => row.ThreadId === 'sup-1')?.Body, 'Stored.');
 });
 
 test('the half-hourly sweep refreshes stale student files and leaves fresh ones alone', async () => {
   const store = new MemoryStore();
   await seed(store);
-  await store.set('docCommentSync', pairRecordId(otherStudentEmail, OTHER_FILE_ID), {
+  await store.setChat('2026', otherStudentEmail, {
     StudentId: otherStudentEmail,
-    FileId: OTHER_FILE_ID,
-    LastSuccessAt: FRESH,
-    Status: 'ok',
+    Cohort: '2026',
+    DocFileId: OTHER_FILE_ID,
+    DocUrl: OTHER_DOC_URL,
+    CommentCursor: FRESH,
+    CommentLastAttemptAt: FRESH,
   });
-  await store.set('docCommentSync', pairRecordId(quietStudentEmail, QUIET_FILE_ID), {
+  await store.setChat('2026', quietStudentEmail, {
     StudentId: quietStudentEmail,
-    FileId: QUIET_FILE_ID,
-    LastSuccessAt: STALE,
-    Status: 'ok',
+    Cohort: '2026',
+    DocFileId: QUIET_FILE_ID,
+    DocUrl: QUIET_DOC_URL,
+    CommentCursor: STALE,
+    CommentLastAttemptAt: STALE,
   });
   const script = scriptedDrive({
     [FILE_ID]: [{ complete: true, comments: [thread('stu-1', { authorName: 'Jamie Wong', authorEmail: studentEmail, content: 'From the sweep.', modifiedTime: '2026-11-01T03:00:00.000Z' })] }],
@@ -456,16 +499,16 @@ test('the half-hourly sweep refreshes stale student files and leaves fresh ones 
   assert.deepEqual(script.calls.map((call) => call.fileId), [FILE_ID, QUIET_FILE_ID]);
   assert.equal(script.calls[0].startModifiedTime, '');
   assert.equal(script.calls[1].startModifiedTime, STALE);
-  assert.equal((await store.get('docCommentThreads', threadRecordId(FILE_ID, 'stu-1')))?.AuthorEmail, studentEmail);
-  assert.equal(await store.get('docCommentThreads', threadRecordId(OTHER_FILE_ID, 'fresh-1')), null);
-  assert.equal(await store.get('docCommentThreads', threadRecordId('inactiveDoc123456', 'x')), null);
+  assert.equal((await store.listChatEntries('2026', studentEmail)).find((row) => row.ThreadId === 'stu-1')?.AuthorEmail, studentEmail);
+  assert.equal((await store.listChatEntries('2026', otherStudentEmail)).some((row) => row.ThreadId === 'fresh-1'), false);
+  assert.equal((await store.listChatEntries('2025', 'inactive@vsa.example.edu')).length, 0);
 
   const limited = scriptedDrive({
     [FILE_ID]: [{ complete: true, comments: [] }],
     [QUIET_FILE_ID]: [{ complete: true, comments: [] }],
   });
-  await store.set('docCommentSync', pairRecordId(studentEmail, FILE_ID), { LastSuccessAt: '', StudentId: studentEmail, FileId: FILE_ID });
-  await store.set('docCommentSync', pairRecordId(quietStudentEmail, QUIET_FILE_ID), { LastSuccessAt: STALE, StudentId: quietStudentEmail, FileId: QUIET_FILE_ID });
+  await store.setChat('2026', studentEmail, { StudentId: studentEmail, Cohort: '2026', DocFileId: FILE_ID, CommentCursor: '', CommentLastAttemptAt: '' });
+  await store.setChat('2026', quietStudentEmail, { StudentId: quietStudentEmail, Cohort: '2026', DocFileId: QUIET_FILE_ID, CommentCursor: STALE, CommentLastAttemptAt: STALE });
   const capped = await runDocCommentSweep(appFor(store, 'doc-comments@ee-hub'), { ...depsFor(limited.drive, NOW), limit: 1 });
   assert.equal(capped.considered, 1);
   assert.deepEqual(limited.calls.map((call) => call.fileId), [FILE_ID]);

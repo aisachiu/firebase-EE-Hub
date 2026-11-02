@@ -23,7 +23,7 @@ export const adminSections = [
   ['studentPages', 'Student Pages'],
   ['allocationSettings', 'Allocation'],
   ['studentUsers', 'Student users'], ['staffUsers', 'Staff users'], ['subjects', 'Subjects'], ['formDesigner', 'Milestone forms'],
-  ['resources', 'Resources'], ['faqs', 'FAQs'], ['ticketCategories', 'Message categories']
+  ['resources', 'Resources'], ['faqs', 'FAQs']
 ];
 
 export function renderAdmin() {

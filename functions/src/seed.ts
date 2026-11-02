@@ -220,38 +220,29 @@ async function seed() {
   for (let index = 0; index < quotes.length; index++) {
     await store.set(COLLECTIONS.quotations, `quote-${index + 1}`, { QuoteId: `quote-${index + 1}`, Display: quotes[index], Quote: quotes[index], Author: '' });
   }
-  const categories = [
-    ['cat-subject', 'Subject & Methodology', 'supervisor', 1],
-    ['cat-citations', 'Citations', 'supervisor', 2],
-    ['cat-ethics', 'Ethics', 'coordinator', 3],
-    ['cat-extensions', 'Extensions', 'coordinator', 4],
-    ['cat-technical', 'Technical', 'coordinator', 5],
-  ] as const;
-  for (const [id, name, route, sort] of categories) {
-    await store.set(COLLECTIONS.ticketCategories, id, { CategoryId: id, Name: name, Route: route, SortOrder: sort, Active: true });
-  }
-  const ticketId = 'ticket-seed-question';
-  await store.set(COLLECTIONS.tickets, ticketId, {
-    TicketId: ticketId,
+  await store.setChat('2026', STUDENT, {
     StudentId: STUDENT,
     Cohort: '2026',
-    Category: 'Subject & Methodology',
-    Title: 'Is my question too broad?',
-    Status: 'Open',
-    Route: 'supervisor',
-    Assignee: SUPERVISOR,
+    SupervisorId: SUPERVISOR,
+    LeadId: '',
     CreatedAt: now,
     LastUpdated: now,
     LastActor: STUDENT,
-    StudentUnread: false,
-    StaffUnread: true,
-    Shared: true,
+    UnreadFor: [SUPERVISOR],
+    DocFileId: '',
+    DocUrl: '',
+    CommentCursor: '',
+    CommentLastAttemptAt: '',
+    CommentSyncStatus: '',
+    CommentSyncError: '',
+    LegacyImported: true,
   });
-  await store.addMessage(ticketId, 'msg-seed-1', {
-    MessageId: 'msg-seed-1',
-    TicketId: ticketId,
+  await store.setChatEntry('2026', STUDENT, 'msg-seed-1', {
+    EntryId: 'msg-seed-1',
+    Kind: 'chat',
     AuthorEmail: STUDENT,
     AuthorRole: 'student',
+    AuthorName: 'Jamie Wong',
     Body: 'I want to write about cities in fiction. Is that too broad for 4,000 words?',
     CreatedAt: now,
   });

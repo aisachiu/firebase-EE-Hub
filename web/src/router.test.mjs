@@ -21,11 +21,11 @@ function studentState(section) {
   };
 }
 
-test('students get My EE, Resources, and Help, and My EE is the default', async () => {
+test('students get My EE and Resources, and My EE is the default', async () => {
   installWindow();
   const router = await import('./router.js');
   const user = studentState().user;
-  assert.deepEqual(router.sectionTabs(user, '').map((tab) => tab[1]), ['My EE', 'Resources', 'Help']);
+  assert.deepEqual(router.sectionTabs(user, '').map((tab) => tab[1]), ['My EE', 'Resources']);
   const home = studentState();
   router.applyRoute(router.matchPath('/'), home);
   assert.equal(home.section, 'my-ee');
@@ -42,21 +42,22 @@ test('old document, journey, and supervisor links open My EE on the matching pag
     ['/my-ee', 0, ''],
     ['/journey', 1, '?page=1'],
     ['/supervisor', 3, '?page=3'],
-    ['/help', 'help', ''],
   ];
   cases.forEach((row) => {
     const appState = studentState();
     router.applyRoute(router.matchPath(row[0]), appState);
-    if (row[1] === 'help') {
-      assert.equal(appState.section, 'help', row[0]);
-      assert.equal(router.pathFromState(appState), '/help', row[0]);
-      return;
-    }
     assert.equal(appState.section, 'my-ee', row[0]);
     if (row[0] !== '/my-ee') assert.equal(appState.eePage, row[1], row[0]);
     assert.equal(router.pathFromState(appState), '/my-ee', row[0]);
     appState.eePage = row[1];
     assert.equal(router.searchForState(appState), row[2], row[0]);
+  });
+  ['/help', '/messages', '/admin/categories'].forEach((path) => {
+    const appState = studentState();
+    router.applyRoute(router.matchPath(path), appState);
+    assert.equal(appState.section, 'my-ee', path);
+    assert.equal(router.pathFromState(appState), '/my-ee', path);
+    assert.equal(router.searchForState(appState), '', path);
   });
 });
 

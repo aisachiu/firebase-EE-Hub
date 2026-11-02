@@ -71,7 +71,7 @@ async function seed(app: App) {
   await store.set(COLLECTIONS.subjects, 'english', { 'Subject ID': 'english', Name: 'English', Active: true });
   await store.set(COLLECTIONS.formResponses, `m1__${encodeURIComponent(STUDENT)}`, { MilestoneId: 'm1', StudentId: STUDENT, FormVersion: 1, Status: 'Submitted', SubmittedAt: '2026-10-02T00:00:00.000Z', LastUpdated: '2026-10-02T00:00:00.000Z', choice1: 'English' });
   await store.set(COLLECTIONS.formResponses, `m2__${encodeURIComponent(STUDENT)}`, { MilestoneId: 'm2', StudentId: STUDENT, FormVersion: 1, Status: 'Draft', SubmittedAt: '', LastUpdated: '2026-10-03T00:00:00.000Z', choice1: 'History' });
-  await store.set(COLLECTIONS.tickets, 't1', { TicketId: 't1', StudentId: STUDENT, Category: 'Subject', Title: 'Question', Status: 'Open', Route: 'supervisor', Assignee: 'supervisor@vsa.edu', CreatedAt: '2026-10-06T00:00:00.000Z', LastUpdated: '2026-10-06T00:00:00.000Z', LastActor: STUDENT });
+  await store.set(COLLECTIONS.tickets, 't1', { TicketId: 't1', StudentId: STUDENT, Category: 'Note', Title: 'Question', Status: 'Open', Route: 'supervisor', Assignee: 'supervisor@vsa.edu', CreatedAt: '2026-10-06T00:00:00.000Z', LastUpdated: '2026-10-06T00:00:00.000Z', LastActor: STUDENT, Shared: false });
   await store.addMessage('t1', 'keep', { MessageId: 'keep', TicketId: 't1', AuthorEmail: STUDENT, AuthorRole: 'student', Body: 'Keep this', CreatedAt: '2026-10-06T00:00:00.000Z' });
   await store.addMessage('t1', 'drop', { MessageId: 'drop', TicketId: 't1', AuthorEmail: STUDENT, AuthorRole: 'student', Body: 'Drop this', CreatedAt: '2026-10-06T01:00:00.000Z' });
 }
@@ -197,6 +197,20 @@ test('removing a message thread also removes its replies', async () => {
   await applySheetIngest(app, SHEET, ['tickets'], true, { workbook: workbook(grids) });
   assert.equal(await app.store.get(COLLECTIONS.tickets, 't1'), null);
   assert.deepEqual(await app.store.listMessages('t1'), []);
+});
+
+test('a sheet cannot replace the chat with a non-note ticket', async () => {
+  const app = appFor();
+  await seed(app);
+  const grid: SheetGrid = {
+    title: 'TICKETS',
+    rows: [
+      ['TicketId', 'StudentId', 'Category', 'Title', 'Status', 'Route', 'Assignee', 'CreatedAt', 'LastUpdated', 'LastActor', 'Shared'],
+      ['t2', STUDENT, 'Subject', 'Question', 'Open', 'supervisor', 'supervisor@vsa.edu', '2026-10-06T00:00:00.000Z', '2026-10-06T00:00:00.000Z', STUDENT, 'true'],
+    ],
+  };
+  await assert.rejects(applySheetIngest(app, SHEET, ['tickets'], true, { workbook: workbook([grid]) }), /chat message/);
+  assert.ok(await app.store.get(COLLECTIONS.tickets, 't1'));
 });
 
 test('roster ingest stores Student Number and copies it onto the student user', async () => {

@@ -1,3 +1,4 @@
+import { isEeActive } from './allocationPure';
 import { HubUser, normalizeStaffView } from './permissions';
 import { cohortSheetName, COLLECTIONS, normalizePhaseColor } from './schema';
 import { App, deny } from './session';
@@ -97,6 +98,41 @@ async function profilesByLogin(app: App): Promise<Map<string, Doc>> {
   return map;
 }
 
+/** The later active membership. A student who is active in two cohorts lands in the later year. */
+export async function findCurrentPlacement(app: App, studentEmail: string): Promise<Placement | null> {
+  const email = normalizeEmail(studentEmail);
+  if (!email) return null;
+  const cohorts = await listCohorts(app, false);
+  const profile = await app.store.get(COLLECTIONS.studentUsers, email);
+  const hits: Placement[] = [];
+  for (const cohort of cohorts) {
+    const record = await app.store.getMember(cohort.id, email);
+    if (!record || !normalizeEmail(record.StudentId) || !isEeActive(record.eeActive)) continue;
+    hits.push(placementFromMember(cohort.id, record, profile));
+  }
+  if (!hits.length) return findPlacement(app, email);
+  hits.sort((left, right) => right.cohortId.localeCompare(left.cohortId) || left.email.localeCompare(right.email));
+  return hits[0];
+}
+
+export async function leadIdForSupervisor(app: App, supervisorId: string): Promise<string> {
+  const id = normalizeEmail(supervisorId);
+  if (!id) return '';
+  const row = await app.store.get(COLLECTIONS.staffUsers, id);
+  return normalizeEmail(row?.LeadId);
+}
+
+export async function leadBySupervisor(app: App): Promise<Record<string, string>> {
+  const map: Record<string, string> = {};
+  const staff = await app.store.list(COLLECTIONS.staffUsers);
+  staff.forEach((row) => {
+    const email = normalizeEmail(row.EMAIL);
+    const lead = normalizeEmail(row.LeadId);
+    if (email && lead) map[email] = lead;
+  });
+  return map;
+}
+
 export async function findPlacement(app: App, studentEmail: string): Promise<Placement | null> {
   const email = normalizeEmail(studentEmail);
   if (!email) return null;
@@ -148,8 +184,18 @@ export async function readStaffTables(app: App): Promise<StaffTables> {
   return { activeCohorts, byEmail, byCohort };
 }
 
-export function staffMayViewPlacement(user: HubUser, view: string, roster: { supervisorId?: string } | null | undefined): boolean {
+export function staffMayViewPlacement(
+  user: HubUser,
+  view: string,
+  roster: { supervisorId?: string } | null | undefined,
+  leadId?: string,
+): boolean {
   if (!user || user.role !== 'staff' || !roster) return false;
+  if (view === 'lead') {
+    if (!user.permissions?.isLead) return false;
+    const supervisor = normalizeEmail(roster.supervisorId);
+    return !!supervisor && normalizeEmail(leadId) === user.email;
+  }
   if (view === 'supervisor' && roster.supervisorId && normalizeEmail(roster.supervisorId) !== user.email && !user.permissions?.canAdmin) {
     return false;
   }
@@ -162,13 +208,14 @@ export async function staffStudentContext(app: App, user: HubUser, studentEmail:
   const roster = (await readRoster(app, cohortId)).find((student) => student.email === email);
   if (!roster) throw new HubError('Student is not in the selected cohort.');
   const requested = viewAs === undefined
-    ? (user.permissions?.canAdmin ? 'coordinator' : (user.permissions?.isSupervisor ? 'supervisor' : 'staff'))
+    ? (user.permissions?.canAdmin ? 'coordinator' : (user.permissions?.isSupervisor ? 'supervisor' : (user.permissions?.isLead ? 'lead' : 'staff')))
     : viewAs;
   const view = normalizeStaffView(user, requested);
-  if (!staffMayViewPlacement(user, view, roster)) {
+  const leadId = await leadIdForSupervisor(app, roster.supervisorId);
+  if (!staffMayViewPlacement(user, view, roster, leadId)) {
     return deny(app, user, operation, 'This student is assigned to another supervisor.');
   }
-  return { email, roster, view };
+  return { email, roster, view, leadId };
 }
 
 export function staffMayAddStudentTodo(user: HubUser, context: { view: string; roster: Placement }): boolean {

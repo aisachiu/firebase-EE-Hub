@@ -3,6 +3,8 @@
 // filter. A half-hourly sweep retries pairs that open path missed.
 // The school Google account reads comments. Students and staff do not consent.
 
+import { ensureCohortChat } from './chat';
+import { docCommentEntryId } from './chatPure';
 import { presentDriveAccount } from './driveAccount';
 import { parseDriveId, RECONNECT, WRONG_ACCOUNT } from './drive';
 import {
@@ -11,16 +13,13 @@ import {
   DOC_COMMENT_PAGE_CAP,
   DOC_COMMENT_SWEEP_LIMIT,
   normalizeThreadRecord,
-  pairRecordId,
   presentDocComment,
   PublicDocComment,
   RawDriveComment,
   staleCommentPairs,
-  threadRecordId,
 } from './docCommentsPure';
 import { DRIVE_SCOPE, getGoogleAuth, GoogleOAuthSource } from './googleAuth';
-import { findPlacement, listCohorts, staffStudentContext } from './roster';
-import { COLLECTIONS } from './schema';
+import { findCurrentPlacement, findPlacement, listCohorts, staffStudentContext } from './roster';
 import { App, requireStaff, requireUser } from './session';
 import { Doc, HubError, normalizeEmail, text } from './util';
 
@@ -193,30 +192,32 @@ async function prepareDrive(app: App, deps?: DocCommentDeps): Promise<{ drive: C
 }
 
 async function storedComments(app: App, target: SyncTarget): Promise<PublicDocComment[]> {
-  const rows = await app.store.whereEqual(COLLECTIONS.docCommentThreads, 'StudentId', target.studentId);
+  if (typeof app.store.listChatEntries !== 'function') return [];
+  const rows = await app.store.listChatEntries(target.cohortId, target.studentId);
   return rows
-    .filter((row) => text(row.FileId) === target.fileId)
+    .filter((row) => text(row.Kind) === 'doc-comment' && text(row.FileId) === target.fileId)
     .map((row) => presentDocComment(row))
     .filter((row): row is PublicDocComment => !!row)
     .sort((left, right) => left.at.localeCompare(right.at) || left.threadId.localeCompare(right.threadId));
 }
 
-async function readCursor(app: App, target: SyncTarget): Promise<Doc | null> {
-  return app.store.get(COLLECTIONS.docCommentSync, pairRecordId(target.studentId, target.fileId));
+async function readCursor(app: App, target: SyncTarget): Promise<string> {
+  if (typeof app.store.getChat !== 'function') return '';
+  const chat = await app.store.getChat(target.cohortId, target.studentId);
+  return text(chat?.CommentCursor);
 }
 
 async function writeCursor(app: App, target: SyncTarget, input: { lastSuccessAt: string; status: string; error: string; attempt: string }): Promise<void> {
-  await app.store.set(COLLECTIONS.docCommentSync, pairRecordId(target.studentId, target.fileId), {
-    Id: pairRecordId(target.studentId, target.fileId),
-    StudentId: target.studentId,
-    FileId: target.fileId,
-    Cohort: target.cohortId,
-    DocUrl: target.docUrl,
-    LastSuccessAt: input.lastSuccessAt,
-    LastAttemptAt: input.attempt,
-    Status: input.status,
-    Error: text(input.error).slice(0, 300),
-  });
+  if (typeof app.store.getChat !== 'function') return;
+  const chat = await app.store.getChat(target.cohortId, target.studentId);
+  if (!chat) return;
+  chat.DocFileId = target.fileId;
+  chat.DocUrl = target.docUrl;
+  chat.CommentCursor = input.lastSuccessAt;
+  chat.CommentLastAttemptAt = input.attempt;
+  chat.CommentSyncStatus = input.status;
+  chat.CommentSyncError = text(input.error).slice(0, 300);
+  await app.store.setChat(target.cohortId, target.studentId, chat);
 }
 
 function emptyResult(target: SyncTarget | null, extra: Partial<DocCommentSyncResult>): DocCommentSyncResult {
@@ -236,8 +237,8 @@ function emptyResult(target: SyncTarget | null, extra: Partial<DocCommentSyncRes
 
 async function syncTarget(app: App, target: SyncTarget, drive: CommentDrive, now: Date): Promise<DocCommentSyncResult> {
   const started = now.toISOString();
-  const existing = await readCursor(app, target);
-  const cursor = text(existing?.LastSuccessAt);
+  await ensureCohortChat(app, target.cohortId, target.studentId);
+  const cursor = await readCursor(app, target);
   try {
     const listed = await drive.listComments(target.fileId, cursor);
     for (const comment of listed.comments) {
@@ -249,7 +250,13 @@ async function syncTarget(app: App, target: SyncTarget, drive: CommentDrive, now
         comment,
       });
       if (!record) continue;
-      await app.store.set(COLLECTIONS.docCommentThreads, text(record.Id), record);
+      const entryId = docCommentEntryId(target.fileId, text(record.ThreadId));
+      await app.store.setChatEntry(target.cohortId, target.studentId, entryId, {
+        ...record,
+        EntryId: entryId,
+        Kind: 'doc-comment',
+        CommentId: text(record.ThreadId),
+      });
     }
     if (!listed.complete) {
       await writeCursor(app, target, { lastSuccessAt: cursor, status: 'partial', error: 'Comment list was incomplete.', attempt: started });
@@ -290,7 +297,7 @@ async function syncTarget(app: App, target: SyncTarget, drive: CommentDrive, now
 async function resolveTarget(app: App, studentEmail: unknown, cohortId: unknown, viewAs: unknown): Promise<SyncTarget> {
   const user = await requireUser(app, 'SYNC_DOC_COMMENTS');
   if (user.role === 'student') {
-    const placement = await findPlacement(app, user.email);
+    const placement = await findCurrentPlacement(app, user.email);
     const docUrl = placement?.doc || '';
     return {
       studentId: user.email,
@@ -323,13 +330,14 @@ export async function syncEssayDocComments(app: App, studentEmail?: unknown, coh
   if (!target.fileId) {
     return emptyResult(target, { reason: 'missing', message: 'This student has no essay Google Doc yet.', comments: [] });
   }
+  await ensureCohortChat(app, target.cohortId, target.studentId);
   const prepared = await prepareDrive(app, deps);
   if (!prepared.drive) {
     return emptyResult(target, {
       ok: prepared.reason === 'config',
       reason: prepared.reason,
       message: prepared.message,
-      cursor: text((await readCursor(app, target))?.LastSuccessAt),
+      cursor: await readCursor(app, target),
       comments: await storedComments(app, target),
     });
   }
@@ -346,14 +354,14 @@ async function commentPairs(app: App): Promise<CommentPair[]> {
       const docUrl = text(member.EEDoc);
       const fileId = parseDriveId(docUrl);
       if (!studentId || !fileId) continue;
-      const cursor = await app.store.get(COLLECTIONS.docCommentSync, pairRecordId(studentId, fileId));
+      const chat = typeof app.store.getChat === 'function' ? await app.store.getChat(cohort.id, studentId) : null;
       pairs.push({
         studentId,
         cohortId: cohort.id,
         fileId,
         docUrl,
-        lastSuccessAt: text(cursor?.LastSuccessAt),
-        lastAttemptAt: text(cursor?.LastAttemptAt),
+        lastSuccessAt: text(chat?.CommentCursor),
+        lastAttemptAt: text(chat?.CommentLastAttemptAt),
       });
     }
   }

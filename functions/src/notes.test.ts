@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { getStudentChat } from './chat';
 import {
   createStaffNote,
   getStaffNotesHub,
   getStaffStudentPanel,
-  getTicketHub,
   replyTicket,
   setMessageShared,
 } from './messaging';
@@ -59,6 +59,42 @@ class MemoryStore {
   async addMessage(ticketId: string, messageId: string, data: Doc): Promise<void> {
     if (!this.messages[ticketId]) this.messages[ticketId] = {};
     this.messages[ticketId][messageId] = { ...data };
+  }
+
+  async remove(name: string, id: string): Promise<void> {
+    if (this.docs[name]) delete this.docs[name][id];
+  }
+
+  async removeMessage(ticketId: string, messageId: string): Promise<void> {
+    if (this.messages[ticketId]) delete this.messages[ticketId][messageId];
+  }
+
+  chats: Record<string, Record<string, Doc>> = {};
+  entries: Record<string, Record<string, Doc>> = {};
+
+  async getChat(cohortId: string, studentId: string): Promise<Doc | null> {
+    const row = (this.chats[cohortId] || {})[studentId];
+    return row ? { ...row } : null;
+  }
+
+  async setChat(cohortId: string, studentId: string, data: Doc): Promise<void> {
+    if (!this.chats[cohortId]) this.chats[cohortId] = {};
+    this.chats[cohortId][studentId] = { ...data };
+  }
+
+  async listChats(cohortId: string): Promise<Doc[]> {
+    return Object.values(this.chats[cohortId] || {}).map((row) => ({ ...row }));
+  }
+
+  async listChatEntries(cohortId: string, studentId: string): Promise<Doc[]> {
+    const key = `${cohortId}\n${studentId}`;
+    return Object.values(this.entries[key] || {}).map((row) => ({ ...row }));
+  }
+
+  async setChatEntry(cohortId: string, studentId: string, entryId: string, data: Doc): Promise<void> {
+    const key = `${cohortId}\n${studentId}`;
+    if (!this.entries[key]) this.entries[key] = {};
+    this.entries[key][entryId] = { ...data };
   }
 
   async addAudit(): Promise<void> {}
@@ -164,8 +200,8 @@ test('staff share notes on the student page, with titles, authors, and replies',
     /Access denied/,
   );
 
-  const hidden = await getTicketHub(student);
-  assert.equal(hidden.tickets.length, 0);
+  const hidden = await getStudentChat(student);
+  assert.equal(hidden.entries.length, 0);
 
   await assert.rejects(
     replyTicket(other, first.ticketId, 'I should not see this.', '2020-01-01T00:00:00.000Z', 'supervisor'),
@@ -199,8 +235,9 @@ test('staff share notes on the student page, with titles, authors, and replies',
   );
   const shared = await setMessageShared(supervisor, first.ticketId, true, reply.lastUpdated, 'supervisor');
   assert.equal(shared.shared, true);
-  const visible = await getTicketHub(student);
-  assert.equal(visible.tickets.length, 1);
-  assert.equal(visible.tickets[0].title, 'Research question');
-  assert.equal(visible.tickets[0].messages.length, 2);
+  const visible = await getStudentChat(student);
+  assert.equal(visible.entries.some((entry) => entry.body === 'Jamie is still choosing between two questions.'), false);
+  assert.equal(visible.entries.some((entry) => entry.body === 'I read the draft and the second question is stronger.'), false);
+  const sharedPanel = await getStaffStudentPanel(supervisor, studentEmail, '2026', 'supervisor');
+  assert.equal(sharedPanel.notes.some((note) => note.title === 'Research question'), true);
 });
