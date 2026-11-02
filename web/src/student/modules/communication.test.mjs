@@ -37,8 +37,9 @@ test('supervisors and coordinators get a compose box on the student chat page', 
 
   assert.match(communication.render(supervisor, { thread: true }), /data-communication-host/);
   assert.match(communication.render(coordinator, { thread: true }), /data-communication-host/);
-  assert.match(communication.render(browse, { thread: true }), /does not open their inbox/);
-  assert.match(communication.render(blockedSupervisor, { thread: true }), /does not open their inbox/);
+  assert.match(communication.render(browse, { thread: true }), /data-communication-host/);
+  assert.match(communication.render(browse, {}), /does not open their inbox/);
+  assert.match(communication.render(blockedSupervisor, { thread: true }), /data-communication-host/);
   assert.match(communication.render(student, { thread: true }), /data-communication-host/);
   assert.doesNotMatch(communication.render(student, { thread: true }), /does not open their inbox/);
 
@@ -95,5 +96,8 @@ test('supervisors and coordinators get a compose box on the student chat page', 
 
   const readOnly = communication.supervisorThreadHtml({ canCompose: false, tickets: [] }, supervisor);
   assert.doesNotMatch(readOnly, /data-chat-form/);
-  assert.match(readOnly, /No messages with this student yet/);
+  assert.match(readOnly, /No Doc comments in this chat yet/);
+  assert.match(readOnly, /In-app messages stay on your Messages tab/);
+  const browseHtml = communication.supervisorThreadHtml({ tickets: [] }, browse);
+  assert.doesNotMatch(browseHtml, /data-chat-form/);
 });

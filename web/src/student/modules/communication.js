@@ -7,11 +7,11 @@ import { state } from '../../shared/state.js';
 import { syncStaffUnread } from '../../shared/tickets.js';
 import { openStudentSection } from '../home.js';
 import { paintStudentMessages, syncStudentUnread } from '../help.js';
-import { previewPage, threadEntries } from '../rotary.js';
+import { chatPaneOpen, docCommentCardHtml, EE_MOBILE_MAX, previewPage, threadEntries } from '../rotary.js';
 
 export const id = 'communication';
 
-/** Supervisors and coordinators compose. Browse staff keep the closed preview. */
+/** Supervisors and coordinators compose. Browse staff keep Doc comments without a compose box. */
 export function staffChatComposeEnabled(home) {
   if (!home || !home.staffView) return false;
   if (home.viewAs !== 'supervisor' && home.viewAs !== 'coordinator') return false;
@@ -19,25 +19,33 @@ export function staffChatComposeEnabled(home) {
   return true;
 }
 
+const COMMENT_RESYNC_MS = 10000;
+const commentSyncPending = {};
+const commentSyncedAt = {};
+
 export function render(home, context) {
-  if (home && home.staffView && !staffChatComposeEnabled(home)) {
-    return `<div class="ee-chat"><h2>Chat</h2><p class="muted">This student's messages stay on your Messages tab. This preview does not open their inbox.</p></div>`;
-  }
   const thread = context && context.thread;
   const compact = context && context.slot === 'compact';
+  if (home && home.staffView && !thread) {
+    return `<div class="ee-chat"><h2>Chat</h2><p class="muted">This student's messages stay on your Messages tab. This preview does not open their inbox.</p></div>`;
+  }
   if (thread) return `<div class="ee-chat" data-communication-host><p class="muted">Loading messages...</p></div>`;
   return `<div data-communication-host>${compact ? '<p class="muted">Loading messages...</p>' : loadingLine('Loading messages...')}</div>`;
 }
 
 export function mount(host, home, context) {
-  if (home && home.staffView) {
-    if (!staffChatComposeEnabled(home)) return;
-    mountStaffChat(host, home);
-    return;
-  }
   const target = host.querySelector('[data-communication-host]') || host;
   const thread = context && context.thread;
   const compact = context && context.slot === 'compact';
+  if (home && home.staffView) {
+    if (!thread) return;
+    if (staffChatComposeEnabled(home)) {
+      mountStaffChat(host, home);
+      return;
+    }
+    paintSupervisorThread({ tickets: [] }, target, home);
+    return;
+  }
   const hub = state.messageDesks.student;
   if (hub) {
     syncStudentUnread(hub);
@@ -81,12 +89,64 @@ function loadStaffStudentChat(home) {
   return callServer('getStaffStudentChat', home.email, home.cohort || '', home.viewAs || state.actingAs || '');
 }
 
+function staffChatHub(home) {
+  const cached = state.staffStudentChat;
+  if (cached && home && cached.studentEmail === home.email) return cached;
+  return { tickets: [] };
+}
+
 function communicationStillOpen() {
   if (state.user && state.user.role === 'student') {
     return state.section === 'my-ee' || state.section === 'help' || state.section === 'supervisor' || state.section === 'document';
   }
   const page = previewPage(state.staffPreviewView);
   return page === 3 || page === 4;
+}
+
+export function essayCommentSyncArgs(home) {
+  if (home && home.staffView) return [home.email || '', home.cohort || '', home.viewAs || state.actingAs || ''];
+  return [];
+}
+
+function commentSyncKey(home) {
+  const who = home && home.staffView ? 'staff' : 'student';
+  const email = (home && home.email) || 'self';
+  const doc = home && home.links ? home.links.doc || '' : '';
+  return who + '|' + email + '|' + doc;
+}
+
+function repaintChat(home) {
+  if (typeof document === 'undefined' || typeof document.querySelector !== 'function') return;
+  const host = document.querySelector('[data-ee-pane="chat"] [data-communication-host]');
+  if (!host || host.isConnected === false) return;
+  const staff = !!(home && home.staffView);
+  const hub = staff ? staffChatHub(home) : (state.messageDesks.student || { tickets: [] });
+  paintSupervisorThread(hub, host, home);
+}
+
+/** Incremental Drive sync for the open chat. A short pause collapses a remount of the same panel. */
+export function refreshEssayComments(home) {
+  if (typeof window === 'undefined' || typeof window.eeCall !== 'function') return Promise.resolve(null);
+  const key = commentSyncKey(home);
+  if (commentSyncPending[key]) return commentSyncPending[key];
+  if (commentSyncedAt[key] && Date.now() - commentSyncedAt[key] < COMMENT_RESYNC_MS) return Promise.resolve(null);
+  commentSyncPending[key] = quietServer('syncEssayDocComments', essayCommentSyncArgs(home)).then(function(result) {
+    commentSyncedAt[key] = Date.now();
+    if (result && Array.isArray(result.comments) && home) home.docComments = result.comments;
+    repaintChat(home);
+    return result;
+  }).catch(function() {
+    return null;
+  }).finally(function() {
+    delete commentSyncPending[key];
+  });
+  return commentSyncPending[key];
+}
+
+export function syncChatCommentsIfOpen(home, page) {
+  const mobile = typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(max-width: ' + EE_MOBILE_MAX + 'px)').matches;
+  if (!chatPaneOpen(page, !!mobile)) return Promise.resolve(null);
+  return refreshEssayComments(home);
 }
 
 export function supervisorThreadHtml(hub, home) {
@@ -97,20 +157,23 @@ export function supervisorThreadHtml(hub, home) {
     const day = shortDate(item.at) || '';
     const gap = day && day !== lastDay ? `<p class="ee-chat-day">${escapeHtml(day)}</p>` : '';
     if (day) lastDay = day;
-    if (item.type === 'doc') return gap + docCommentCard(item);
+    if (item.type === 'doc') return gap + docCommentCardHtml(item);
     return gap + `<article class="ee-bubble${item.mine ? ' mine' : ''}"><strong>${escapeHtml(item.author || 'Supervisor')}</strong><p>${escapeHtml(item.body || '')}</p></article>`;
   }).join('');
   const compose = showCompose(hub, home);
-  const empty = staff ? 'No messages with this student yet.' : 'No messages with your supervisor yet.';
+  const empty = !staff
+    ? 'No messages with your supervisor yet.'
+    : (compose ? 'No messages with this student yet.' : 'No Doc comments in this chat yet.');
   const label = staff ? 'Message to this student' : 'Message to your supervisor';
   const placeholder = staff ? 'Message this student' : 'Message your supervisor';
   const help = staff ? '' : '<button type="button" class="button secondary" data-chat-help>Help</button>';
+  const note = staff && !compose ? '<p class="muted ee-chat-note">In-app messages stay on your Messages tab.</p>' : '';
   const form = compose
     ? `<form class="ee-chat-compose" data-chat-form><textarea maxlength="2000" aria-label="${label}" placeholder="${placeholder}"></textarea><button type="submit" class="button">Send</button></form>`
     : '';
   return `<div class="ee-chat-bar"><h2>Chat</h2>${help}</div>
     <div class="ee-chat-scroll" data-chat-scroll>${body || '<div class="empty">' + empty + '</div>'}</div>
-    ${form}`;
+    ${note}${form}`;
 }
 
 function showCompose(hub, home) {
@@ -121,11 +184,10 @@ function showCompose(hub, home) {
 
 export function paintSupervisorThread(hub, host, home, draft) {
   if (!host) return;
+  const staff = !!(home && home.staffView);
   host.innerHTML = supervisorThreadHtml(hub, home);
   const scroller = host.querySelector('[data-chat-scroll]');
   if (scroller) scroller.scrollTop = scroller.scrollHeight;
-  const help = host.querySelector('[data-chat-help]');
-  if (help) help.addEventListener('click', function() { openStudentSection('help'); });
   const form = host.querySelector('[data-chat-form]');
   if (form) form.addEventListener('submit', function(event) {
     event.preventDefault();
@@ -134,16 +196,13 @@ export function paintSupervisorThread(hub, host, home, draft) {
     if (!text) return;
     sendSupervisorChat(text, hub, host, home, input);
   });
-  if (draft) {
-    const input = form && form.querySelector('textarea');
+  if (draft && form) {
+    const input = form.querySelector('textarea');
     if (input) input.value = draft;
   }
-}
-
-function docCommentCard(item) {
-  const quote = item.quote ? `<blockquote>${escapeHtml(item.quote)}</blockquote>` : '';
-  const link = item.href ? `<p><a href="${escapeHtml(item.href)}" target="_blank" rel="noopener noreferrer">Open in Google Docs</a></p>` : '<p class="muted">No Doc link is available for this comment.</p>';
-  return `<article class="ee-doc-comment"><p class="eyebrow">Doc comment</p><strong>${escapeHtml(item.author || 'Comment')}</strong>${quote}<p>${escapeHtml(item.body || '')}</p>${link}</article>`;
+  if (staff) return;
+  const helpButton = host.querySelector('[data-chat-help]');
+  if (helpButton) helpButton.addEventListener('click', function() { openStudentSection('help'); });
 }
 
 function supervisorCategory(hub) {

@@ -89,6 +89,44 @@ test('student tasks replace the assignments admin path', async () => {
   router.applyRoute(router.matchPath('/admin/assignments'), legacy);
   assert.equal(legacy.adminEntity, 'studentTasks');
   assert.equal(router.pathFromState(legacy), '/admin/student-tasks');
+  const pages = { user: user, actingAs: 'coordinator', section: '', view: '', studentFocus: '', adminEntity: '', staffPane: '' };
+  router.applyRoute(router.matchPath('/admin/student-pages'), pages);
+  assert.equal(pages.section, 'admin');
+  assert.equal(pages.adminEntity, 'studentPages');
+  assert.equal(router.pathFromState(pages), '/admin/student-pages');
+  assert.equal(router.titleForState(pages), 'Student Pages · EE Hub');
+});
+
+test('a staff student link keeps the student id and /my-ee stays a student route', async () => {
+  installWindow();
+  const router = await import('./router.js');
+  const staff = { role: 'staff', permissions: { isSupervisor: true, canAdmin: false } };
+  const appState = { user: staff, actingAs: 'supervisor', section: '', view: '', studentFocus: '', staffStudentId: '' };
+  router.applyRoute(router.matchPath('/my-students/Student%40vsa.example.edu'), appState);
+  assert.equal(appState.section, 'students');
+  assert.equal(appState.staffStudentId, 'student@vsa.example.edu');
+  assert.equal(router.pathFromState(appState), '/my-students/student%40vsa.example.edu');
+  assert.equal(router.matchPath(router.pathFromState(appState)).studentId, 'student@vsa.example.edu');
+  router.applyRoute(router.matchPath('/my-students/student@vsa.example.edu'), appState);
+  assert.equal(appState.staffStudentId, 'student@vsa.example.edu');
+  assert.equal(appState.staffStudentHome, null);
+  router.applyRoute(router.matchPath('/my-students'), appState);
+  assert.equal(appState.section, 'students');
+  assert.equal(appState.staffStudentId, '');
+  assert.equal(router.pathFromState(appState), '/my-students');
+  const student = studentState();
+  student.eePage = 1;
+  assert.equal(router.matchPath('/my-ee/student@vsa.example.edu'), null);
+  router.applyRoute(router.matchPath('/my-students/student@vsa.example.edu'), student);
+  assert.equal(student.section, 'my-ee');
+  assert.equal(student.eePage, 1);
+  assert.equal(router.pathFromState(student), '/my-ee');
+  assert.equal(router.searchForState(student), '?page=1');
+  const journey = studentState();
+  router.applyRoute(router.matchPath('/journey'), journey);
+  assert.equal(journey.section, 'my-ee');
+  assert.equal(journey.eePage, 1);
+  assert.equal(router.pathFromState(journey), '/my-ee');
 });
 
 test('staff keep Resources and do not see the student views in the tab bar', async () => {

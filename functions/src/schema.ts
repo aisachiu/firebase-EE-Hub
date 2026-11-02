@@ -97,6 +97,7 @@ export const APP_TABLES: Record<string, TableDef> = {
       { name: 'isAdmin', type: 'checkbox' },
       { name: 'EEQuota', type: 'number' },
       { name: 'EESubjects', type: 'checks', label: 'EE subjects', optionsFrom: 'subjects' },
+      { name: 'bookingLink', type: 'url', label: 'Booking link', table: false },
     ],
   },
   subjects: {
@@ -329,6 +330,8 @@ export const COLLECTIONS: Record<string, string> = {
   notificationOverlays: 'notificationOverlays',
   notificationSends: 'notificationSends',
   docWordLogs: 'docWordLogs',
+  docCommentThreads: 'docCommentThreads',
+  docCommentSync: 'docCommentSync',
 };
 
 export function tableConfig(entity: string): TableDef {

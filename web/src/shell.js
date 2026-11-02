@@ -78,7 +78,6 @@ const chunkLoaders = {
   resources: function() { return import('./shared/resources.js'); },
   tickets: function() { return import('./staff/messages.js'); },
   notes: function() { return import('./staff/notes.js'); },
-  home: function() { return import('./student/home.js'); },
   studentViews: function() { return import('./student/views.js'); },
   staff: function() { return import('./staff/students.js'); },
 };
@@ -124,24 +123,6 @@ function paintSection(mod) {
   else mod.renderStaffHome();
 }
 
-function bindJourneyChrome(homeMod) {
-  const journeyToggle = document.getElementById('journey-toggle');
-  const journeyPeek = document.getElementById('journey-peek');
-  const journeyClose = document.getElementById('journey-close');
-  if (journeyToggle) journeyToggle.addEventListener('click', function() { homeMod.setJourneyOpen(!state.journeyOpen); });
-  if (journeyPeek) journeyPeek.addEventListener('click', function() {
-    homeMod.setJourneyOpen(true);
-    const closeButton = document.getElementById('journey-close');
-    if (closeButton) closeButton.focus();
-  });
-  if (journeyClose) journeyClose.addEventListener('click', function() {
-    homeMod.setJourneyOpen(false);
-    const peek = document.getElementById('journey-peek');
-    if (peek) peek.focus();
-  });
-  homeMod.mountJourneyPanel();
-}
-
 function bindNotesChrome(notesMod) {
   const notesToggle = document.getElementById('notes-toggle');
   const notesPeek = document.getElementById('notes-peek');
@@ -170,9 +151,7 @@ export function renderShell() {
     state.staffTicketUnread = state.messageDesks[state.actingAs].unreadCount || 0;
     state.ticketBadgeFor = state.actingAs;
   }
-  const staffJourney = !student && state.section === 'students' && !!state.staffStudentHome;
-  const showJourney = staffJourney;
-  const showNotes = staffJourney;
+  const showNotes = !student && state.section === 'students' && !!state.staffStudentHome;
   const tabs = sectionTabs(state.user, state.actingAs);
   if (!tabs.some(function(tab) { return tab[0] === state.section; })) state.section = fallbackSection(state);
   state.view = state.section;
@@ -182,8 +161,8 @@ export function renderShell() {
   const studentRotary = student && state.section === 'my-ee';
   const staffRotary = !student && state.section === 'students' && !!state.staffStudentHome;
   document.body.classList.toggle('ee-rotary', studentRotary || staffRotary);
-  document.body.classList.toggle('has-journey', showJourney);
-  document.body.classList.toggle('journey-open', showJourney && state.journeyOpen);
+  document.body.classList.toggle('has-journey', false);
+  document.body.classList.toggle('journey-open', false);
   document.body.classList.toggle('has-notes', showNotes);
   document.body.classList.toggle('notes-open', showNotes && state.notesOpen);
   document.body.classList.toggle('student-drawers', showNotes);
@@ -196,18 +175,11 @@ export function renderShell() {
       <nav class="tabs" aria-label="Sections">${tabs.map(function(tab) {
         return `<button type="button" data-view="${tab[0]}" aria-current="${state.section === tab[0] ? 'page' : 'false'}">${tabLabel(tab)}</button>`;
       }).join('')}</nav>
-      <div class="account">${headerContextMarkup()}${student ? docChipMarkup(state.studentHome) : ''}${showNotes ? `<button type="button" class="journey-toggle" id="notes-toggle" aria-expanded="${state.notesOpen ? 'true' : 'false'}" aria-controls="notes-panel">Notes</button>` : ''}${showJourney ? `<button type="button" class="journey-toggle" id="journey-toggle" aria-expanded="${state.journeyOpen ? 'true' : 'false'}" aria-controls="journey-panel">${showNotes ? 'Student Journey' : 'Journey'}</button>` : ''}<span id="request-indicator" class="request-indicator" aria-live="polite" aria-busy="false"></span><div>${escapeHtml(state.user.displayName)} <button type="button" id="sign-out" style="margin-left:8px;border:0;background:transparent;color:#e8f0f5;font-weight:700;">Sign out</button></div></div>
+      <div class="account">${headerContextMarkup()}${student ? docChipMarkup(state.studentHome) : ''}${showNotes ? `<button type="button" class="journey-toggle" id="notes-toggle" aria-expanded="${state.notesOpen ? 'true' : 'false'}" aria-controls="notes-panel">Notes</button>` : ''}<span id="request-indicator" class="request-indicator" aria-live="polite" aria-busy="false"></span><div>${escapeHtml(state.user.displayName)} <button type="button" id="sign-out" style="margin-left:8px;border:0;background:transparent;color:#e8f0f5;font-weight:700;">Sign out</button></div></div>
     </header>
     <div id="feedback-region" aria-live="polite"></div>
-    ${showNotes ? staffStudentDrawersHtml({ journeyOpen: state.journeyOpen, notesOpen: state.notesOpen }) : ''}
+    ${showNotes ? staffStudentDrawersHtml({ notesOpen: state.notesOpen }) : ''}
     <main id="main"></main>
-    ${showJourney && !showNotes ? `<aside id="journey-panel" class="journey-panel${state.journeyOpen ? ' open' : ''}" aria-label="Journey and to-dos">
-      <button type="button" class="journey-peek" id="journey-peek" aria-expanded="${state.journeyOpen ? 'true' : 'false'}" aria-controls="journey-drawer">Journey</button>
-      <div class="journey-drawer" id="journey-drawer"${state.journeyOpen ? '' : ' inert'} aria-hidden="${state.journeyOpen ? 'false' : 'true'}">
-        <div class="journey-panel-bar"><strong>Journey</strong><button type="button" id="journey-close">Close</button></div>
-        <div id="journey-body" class="journey-scroll"></div>
-      </div>
-    </aside>` : ''}
     <div id="form-dialog" class="form-dialog" hidden></div>`;
   bindHeaderContext();
   const signOutButton = document.getElementById('sign-out');
@@ -228,7 +200,7 @@ export function renderShell() {
       state.staffStudent = null;
       state.staffStudentHome = null;
       state.staffStudentChat = null;
-      state.journeyOpen = false;
+      state.staffStudentId = '';
       state.notesOpen = false;
       state.status = '';
       renderShell();
@@ -236,21 +208,17 @@ export function renderShell() {
   });
   const chunkName = sectionChunk(state.section, student);
   const sectionMod = readyChunk(chunkName);
-  const homeMod = showJourney ? readyChunk('home') : null;
   const notesMod = showNotes ? readyChunk('notes') : null;
   const waiting = [];
   if (!sectionMod) waiting.push(cachedChunk(chunkName));
-  if (showJourney && !homeMod) waiting.push(cachedChunk('home'));
   if (showNotes && !notesMod) waiting.push(cachedChunk('notes'));
   if (sectionMod) paintSection(sectionMod);
   else document.getElementById('main').innerHTML = loadingLine('Loading...');
-  if (homeMod) bindJourneyChrome(homeMod);
   if (notesMod) bindNotesChrome(notesMod);
   if (waiting.length) {
     Promise.all(waiting).then(function() {
       if (renderId !== shellRender) return;
       if (!sectionMod) paintSection(readyChunk(chunkName));
-      if (showJourney && !homeMod) bindJourneyChrome(readyChunk('home'));
       if (showNotes && !notesMod) bindNotesChrome(readyChunk('notes'));
     }).catch(function(error) {
       if (renderId !== shellRender) return;
@@ -318,6 +286,8 @@ function bindHeaderContext() {
     state.staffStudent = null;
     state.staffStudentHome = null;
     state.staffStudentChat = null;
+    state.staffStudentId = '';
+    state.notesOpen = false;
     renderShell();
   });
   if (acting) acting.addEventListener('change', function(event) {
@@ -333,6 +303,8 @@ function bindHeaderContext() {
     state.staffStudent = null;
     state.staffStudentHome = null;
     state.staffStudentChat = null;
+    state.staffStudentId = '';
+    state.notesOpen = false;
     state.ticketBadgeFor = '';
     renderShell();
   });

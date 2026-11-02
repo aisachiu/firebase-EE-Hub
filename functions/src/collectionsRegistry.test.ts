@@ -18,7 +18,7 @@ test('the sheet registry is the allowlist for import and export', () => {
   assert.equal(sheetCollectionRejection('ticketMessages', 'import'), null);
   assert.equal(sheetCollectionRejection('auditLogs', 'export'), null);
   assert.match(sheetCollectionRejection('auditLogs', 'import') || '', /Audit logs/);
-  ['docWordLogs', 'notificationRules', 'notificationSends', 'notificationOverlays', 'functionSecrets'].forEach((id) => {
+  ['docWordLogs', 'docCommentThreads', 'docCommentSync', 'notificationRules', 'notificationSends', 'notificationOverlays', 'functionSecrets'].forEach((id) => {
     assert.match(sheetCollectionRejection(id, 'export') || '', /not registered/);
     assert.match(sheetCollectionRejection(id, 'import') || '', /not registered/);
   });

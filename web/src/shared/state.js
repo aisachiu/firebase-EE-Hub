@@ -74,7 +74,6 @@ export const state = {
   driveSettingsLoaded: false,
   assignmentStudentIds: [],
   importRecords: null,
-  journeyOpen: false,
   journeyHeroExpanded: true,
   journeyFilters: { phaseId: 'all', showSystem: true, showStudent: true },
   editingTodo: '',
@@ -91,6 +90,7 @@ export const state = {
   loggedStudentViews: null,
   staffHome: null,
   staffStudent: null,
+  staffStudentId: '',
   staffQuery: '',
   staffSort: 'surname',
   staffViewMode: (function() {

@@ -1,4 +1,5 @@
 import { paintTabDot, renderShell } from '../navigation.js';
+import { requestPush } from '../router.js';
 import { callServer } from '../shared/api.js';
 import { showError } from '../shared/feedback.js';
 import { rememberHeaderCohorts } from '../shared/headerCohorts.js';
@@ -14,17 +15,22 @@ import { openMassMilestoneEditor } from '../student/milestones.js';
 import { bindSupervisorTodoList, mayManageSupervisorTodos, renderSupervisorDesk, supervisorTodoList } from './supervisorTodos.js';
 
 export function openStaffStudent(email) {
-  state.staffStudentChat = null;
-  callServer('getStaffStudentHome', email, state.cohortId, state.actingAs).then(function(detail) {
-    state.staffStudentHome = detail;
-    state.staffPreviewView = '0';
-    state.staffPane = 'home';
-    state.journeyOpen = true;
+  const studentId = String(email || '').trim().toLowerCase();
+  if (!studentId) return;
+  if (!requestPush()) return;
+  state.section = 'students';
+  state.view = 'students';
+  if (state.staffStudentId !== studentId) {
+    state.staffStudentHome = null;
+    state.staffStudentChat = null;
     state.notesOpen = false;
-    state.journeyFilters = { phaseId: 'all', showSystem: true, showStudent: true };
-    state.editingTodo = '';
-    renderShell();
-  }).catch(showError);
+    state.staffPreviewView = '0';
+  }
+  state.staffStudentId = studentId;
+  state.staffPane = 'home';
+  state.journeyFilters = { phaseId: 'all', showSystem: true, showStudent: true };
+  state.editingTodo = '';
+  renderShell();
 }
 
 function supervisorDeskHooks() {
@@ -45,6 +51,11 @@ export function renderStaffHome() {
   advanceScene();
   const main = document.getElementById('main');
   if (state.supervisorDesk && !mayManageSupervisorTodos(state.user)) state.supervisorDesk = false;
+  if (state.staffStudentId) {
+    loadStaffStudentFromRoute(main);
+    return;
+  }
+  state.staffStudentHome = null;
   if (state.emailDesk) {
     const scene = state.scene;
     main.innerHTML = loadingLine('Loading email notifications...');
@@ -58,7 +69,6 @@ export function renderStaffHome() {
     });
     return;
   }
-  if (state.staffStudentHome) { paintStaffAsStudent(state.staffStudentHome); return; }
   if (state.supervisorDesk) { renderSupervisorDesk(main, supervisorDeskHooks()); return; }
   main.innerHTML = loadingLine('Loading students...');
   callServer('getStaffHome', state.cohortId || '', state.actingAs).then(function(home) {
@@ -73,6 +83,32 @@ export function renderStaffHome() {
 
 export function paintStaffAsStudent(home) {
   paintStaffPreview(home);
+}
+
+function loadStaffStudentFromRoute(main) {
+  const requested = String(state.staffStudentId || '').trim().toLowerCase();
+  if (state.staffStudentHome && String(state.staffStudentHome.email || '').trim().toLowerCase() === requested) {
+    paintStaffAsStudent(state.staffStudentHome);
+    return;
+  }
+  state.staffStudentHome = null;
+  state.notesOpen = false;
+  const scene = state.scene;
+  if (main) main.innerHTML = loadingLine('Loading student...');
+  callServer('getStaffStudentHome', requested, state.cohortId || '', state.actingAs).then(function(detail) {
+    if (!sameScene(scene)) return;
+    if (String(state.staffStudentId || '').trim().toLowerCase() !== requested) return;
+    state.staffStudentHome = detail;
+    state.staffStudentId = String((detail && detail.email) || requested).trim().toLowerCase();
+    if (detail && detail.cohort) state.cohortId = detail.cohort;
+    state.staffPane = 'home';
+    renderShell();
+  }).catch(function(error) {
+    if (!sameScene(scene)) return;
+    showError(error);
+    const target = document.getElementById('main');
+    if (target) target.innerHTML = '<p class="notice error">' + escapeHtml(error && error.message ? error.message : error) + '</p>';
+  });
 }
 
 export function staffSortValue(student, sort) {

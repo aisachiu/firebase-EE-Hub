@@ -5,6 +5,7 @@ import { renderPathwayPlanner } from './pathway.js';
 import { closeMemberEditor, renderAdminData } from './records.js';
 import { renderSheetSync } from './sheets.js';
 import { renderStaffQuotas } from './staff.js';
+import { renderStudentPages } from './student-pages.js';
 import { renderStudentTasks } from './studentTasks.js';
 import { callServer } from '../shared/api.js';
 import { showError } from '../shared/feedback.js';
@@ -19,6 +20,7 @@ export const adminSections = [
   ['cohorts', 'Cohorts'], ['driveAccount', 'Google account'], ['sheetSync', 'Sheets'], ['cohortMembers', 'Students in cohorts'], ['pathway', 'Phases & milestones'],
   ['emailNotifications', 'Email notifications'],
   ['studentTasks', 'Student Tasks'],
+  ['studentPages', 'Student Pages'],
   ['allocationSettings', 'Allocation'],
   ['studentUsers', 'Student users'], ['staffUsers', 'Staff users'], ['subjects', 'Subjects'], ['formDesigner', 'Milestone forms'],
   ['resources', 'Resources'], ['faqs', 'FAQs'], ['ticketCategories', 'Message categories']
@@ -92,6 +94,10 @@ export function loadAdminSection() {
     renderStudentTasks(target);
     return;
   }
+  if (state.adminEntity === 'studentPages') {
+    renderStudentPages(target);
+    return;
+  }
   if (state.adminEntity === 'staffUsers' && state.staffPane === 'quotas') {
     renderStaffQuotas(target);
     return;
@@ -137,6 +143,10 @@ export function refreshAdminSectionSilently() {
       if (state.adminEntity !== 'studentTasks') return;
       renderAdminData(data);
     }).catch(showError);
+    return;
+  }
+  if (state.adminEntity === 'studentPages') {
+    renderStudentPages(document.getElementById('admin-content'));
     return;
   }
   callServer('getAdminRecords', state.adminEntity).then(renderAdminData).catch(showError);
