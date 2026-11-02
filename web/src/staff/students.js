@@ -22,6 +22,7 @@ export function openStaffStudent(email) {
   state.view = 'students';
   if (state.staffStudentId !== studentId) {
     state.staffStudentHome = null;
+    state.staffStudentChat = null;
     state.notesOpen = false;
     state.staffPreviewView = '0';
   }

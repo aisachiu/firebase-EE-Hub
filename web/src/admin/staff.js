@@ -404,7 +404,7 @@ export function paintStaffQuotas() {
         <td>${subjectMenuMarkup(row.email, row.subjects, state.quotaSubjects, 'data-quota-subject-toggle')}</td>
       </tr>`;
     }).join('') : `<tr><td colspan="5"><div class="empty">${state.quotaRows.length ? 'No staff match that name.' : 'No staff users yet.'}</div></td></tr>`}</tbody></table></div>
-    <aside class="alloc-side"><header><h2>Subject capacity</h2></header><div id="quota-dashboard"></div>
+    <aside class="alloc-side"><header><h2>Subject capacity</h2></header><div id="quota-dashboard" class="alloc-side-scroll"></div>
       <footer>
         <p class="muted">Tokens apply to cohort ${escapeHtml(quotaCohortLabel() || '—')}.</p>
         ${state.cohortId ? '' : '<p class="notice">Create a cohort before generating tokens.</p>'}

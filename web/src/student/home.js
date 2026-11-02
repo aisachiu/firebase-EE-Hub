@@ -116,6 +116,7 @@ export function bindStaffStudentChrome() {
     if (!requestPush()) return;
     state.staffStudent = null;
     state.staffStudentHome = null;
+    state.staffStudentChat = null;
     state.staffStudentId = '';
     state.notesOpen = false;
     state.staffPreviewView = '0';
@@ -139,6 +140,7 @@ export function bindUnreadNotices(main, staff) {
       state.focusTicket = button.dataset.openUnread;
       state.staffStudent = null;
       state.staffStudentHome = null;
+      state.staffStudentChat = null;
       state.staffStudentId = '';
       state.studentFocus = '';
       state.section = staff ? 'tickets' : 'help';

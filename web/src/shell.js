@@ -199,6 +199,7 @@ export function renderShell() {
       state.selectedStudent = null;
       state.staffStudent = null;
       state.staffStudentHome = null;
+      state.staffStudentChat = null;
       state.staffStudentId = '';
       state.notesOpen = false;
       state.status = '';
@@ -284,6 +285,7 @@ function bindHeaderContext() {
     state.staffHome = null;
     state.staffStudent = null;
     state.staffStudentHome = null;
+    state.staffStudentChat = null;
     state.staffStudentId = '';
     state.notesOpen = false;
     renderShell();
@@ -300,6 +302,7 @@ function bindHeaderContext() {
     state.staffHome = null;
     state.staffStudent = null;
     state.staffStudentHome = null;
+    state.staffStudentChat = null;
     state.staffStudentId = '';
     state.notesOpen = false;
     state.ticketBadgeFor = '';
