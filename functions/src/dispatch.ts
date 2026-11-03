@@ -88,6 +88,7 @@ import {
   reopenAllocations,
   saveAllocationChoices,
   saveAllocationConfig,
+  saveAllocationFlag,
   assignStaffSubjects,
   saveStaffQuotas,
   saveStaffSubjects,
@@ -187,7 +188,8 @@ export async function dispatch(app: App, method: string, args: unknown[]): Promi
     case 'sendNotificationRule': return sendNotificationRule(app, args[0]);
     case 'sendNotificationTest': return sendNotificationTest(app, args[0], args[1]);
     case 'getAllocationDesk': return getAllocationDesk(app, args[0]);
-    case 'draftAllocation': return draftAllocation(app, args[0], args[1], args[2], args[3], args[4]);
+    case 'draftAllocation': return draftAllocation(app, args[0], args[1], args[2], args[3], args[4], args[5], args[6]);
+    case 'saveAllocationFlag': return saveAllocationFlag(app, args[0], args[1], args[2], args[3]);
     case 'batchDraftAllocations': return batchDraftAllocations(app, args[0], args[1], args[2], args[3], args[4]);
     case 'reopenAllocation': return reopenAllocation(app, args[0], args[1]);
     case 'reopenAllocations': return reopenAllocations(app, args[0], args[1]);

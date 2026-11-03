@@ -19,6 +19,7 @@ export function releaseAllocationWatch() {
   state.allocationWatchCohort = '';
   state.allocationListenFallback = false;
   state.allocationPendingEdits = {};
+  state.allocationPendingFlags = {};
   state.allocationRevision = 0;
   state.allocationPaintDeferred = false;
   if (state.allocationSyncClock) {
@@ -105,12 +106,73 @@ export function reconcilePendingEdits(pending, remoteDesk, stamps) {
   return next;
 }
 
+export function overlayPendingFlags(desk, pending) {
+  const flags = pending || {};
+  const ids = Object.keys(flags);
+  if (!desk || !ids.length) return desk;
+  const students = (desk.students || []).map(function(student) {
+    const edit = flags[student.studentId];
+    if (!edit) return student;
+    return Object.assign({}, student, {
+      isFlagged: edit.isFlagged === true,
+      flagNote: edit.flagNote || '',
+    });
+  });
+  return Object.assign({}, desk, { students: students });
+}
+
+export function reconcilePendingFlags(pending, remoteDesk) {
+  const next = {};
+  const students = new Map(((remoteDesk && remoteDesk.students) || []).map(function(student) {
+    return [student.studentId, student];
+  }));
+  Object.keys(pending || {}).forEach(function(studentId) {
+    const edit = pending[studentId];
+    const student = students.get(studentId);
+    if (!student) {
+      next[studentId] = edit;
+      return;
+    }
+    const sameFlag = (student.isFlagged === true) === (edit.isFlagged === true);
+    const sameNote = String(student.flagNote || '') === String(edit.flagNote || '');
+    if (sameFlag && sameNote) return;
+    next[studentId] = edit;
+  });
+  return next;
+}
+
+export function presentAllocationDesk(remote) {
+  const edited = overlayPendingEdits(remote, state.allocationPendingEdits);
+  return overlayPendingFlags(edited, state.allocationPendingFlags);
+}
+
+function supervisorsAfterMoves(supervisors, beforeStudents, afterStudents) {
+  const before = new Map((beforeStudents || []).map(function(student) { return [student.studentId, student]; }));
+  const delta = {};
+  (afterStudents || []).forEach(function(student) {
+    const prior = before.get(student.studentId);
+    const from = prior && prior.token ? emailOf(prior.token.staffId) : '';
+    const to = student.token ? emailOf(student.token.staffId) : '';
+    if (from === to) return;
+    if (from) delta[from] = (delta[from] || 0) + 1;
+    if (to) delta[to] = (delta[to] || 0) - 1;
+  });
+  return (supervisors || []).map(function(person) {
+    const change = delta[emailOf(person.staffId)] || 0;
+    if (!change) return person;
+    const total = Number(person.total) || 0;
+    const available = Math.max(0, (Number(person.available) || 0) + change);
+    return Object.assign({}, person, { available: available, used: Math.max(0, total - available) });
+  });
+}
+
 export function overlayPendingEdits(desk, pending) {
   const edits = pending || {};
   const ids = Object.keys(edits);
   if (!desk || !ids.length) return desk;
   const supervisors = desk.supervisors || [];
-  const students = (desk.students || []).map(function(student) {
+  const remoteStudents = desk.students || [];
+  const students = remoteStudents.map(function(student) {
     const edit = edits[student.studentId];
     if (!edit) return student;
     if (!emailOf(edit.staffId)) {
@@ -142,7 +204,10 @@ export function overlayPendingEdits(desk, pending) {
       }),
     });
   });
-  return Object.assign({}, desk, { students: students });
+  return Object.assign({}, desk, {
+    students: students,
+    supervisors: supervisorsAfterMoves(supervisors, remoteStudents, students),
+  });
 }
 
 function withDrive(desk) {
@@ -163,7 +228,8 @@ export function receiveAllocationSources(cohortId, sources) {
   state.allocationRemoteDesk = remote;
   state.allocationRevision = (state.allocationRevision || 0) + 1;
   state.allocationPendingEdits = reconcilePendingEdits(state.allocationPendingEdits, remote, tokenUpdatedStamps(sources));
-  state.allocationDesk = overlayPendingEdits(remote, state.allocationPendingEdits);
+  state.allocationPendingFlags = reconcilePendingFlags(state.allocationPendingFlags, remote);
+  state.allocationDesk = presentAllocationDesk(remote);
   const view = state.allocationView || 'dashboard';
   if (state.section === 'allocation' && (view === 'dashboard' || (view === 'settings' && settingsChanged))) painter();
 }
@@ -196,7 +262,8 @@ function loadStaticDesk(cohortId) {
     };
     state.allocationRevision = (state.allocationRevision || 0) + 1;
     state.allocationPendingEdits = reconcilePendingEdits(state.allocationPendingEdits, desk, {});
-    state.allocationDesk = overlayPendingEdits(desk, state.allocationPendingEdits);
+    state.allocationPendingFlags = reconcilePendingFlags(state.allocationPendingFlags, desk);
+    state.allocationDesk = presentAllocationDesk(desk);
     painter();
   }).catch(function(error) {
     if (isStale(error)) return;
