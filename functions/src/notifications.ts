@@ -502,8 +502,8 @@ function localToday(now: Date, timeZone: string): string {
   return serializeDateOnly(new Date(Date.UTC(parts.year, parts.month - 1, parts.day)));
 }
 
-function summaryFrom(plan: SweepPlan, dryRun: boolean, statuses: Map<string, { status: string; error: string }>): SweepSummary {
-  const items = plan.sends.slice(0, ITEM_LIMIT).map((send) => {
+function summaryFrom(plan: SweepPlan, dryRun: boolean, statuses: Map<string, { status: string; error: string }>, includeItems = true): SweepSummary {
+  const items = includeItems ? plan.sends.slice(0, ITEM_LIMIT).map((send) => {
     const outcome = statuses.get(send.sendId);
     return {
       studentName: send.studentName,
@@ -516,7 +516,7 @@ function summaryFrom(plan: SweepPlan, dryRun: boolean, statuses: Map<string, { s
       status: outcome?.status || (dryRun ? 'dry-run' : 'pending'),
       error: outcome?.error || '',
     };
-  });
+  }) : [];
   let sent = 0;
   let failed = 0;
   statuses.forEach((outcome) => {
@@ -662,14 +662,17 @@ async function deliverSend(app: App, mailer: Mailer, send: PlannedSend): Promise
   return { status, error };
 }
 
-export async function executeSweep(app: App, options: { now?: Date; dryRun?: boolean; cohortId?: string; mailer?: Mailer | null }): Promise<SweepSummary> {
+export async function executeSweep(app: App, options: { now?: Date; dryRun?: boolean; cohortId?: string; mailer?: Mailer | null; persistDryRun?: boolean; includeItems?: boolean }): Promise<SweepSummary> {
   const now = options.now || new Date();
   const dryRun = !!options.dryRun;
+  const includeItems = options.includeItems !== false;
   const plan = await buildPlan(app, text(options.cohortId), now);
   const statuses = new Map<string, { status: string; error: string }>();
   if (dryRun) {
+    const persist = options.persistDryRun !== false;
     for (const send of plan.sends) {
       statuses.set(send.sendId, { status: 'dry-run', error: '' });
+      if (!persist) continue;
       const existing = await app.store.get(COLLECTIONS.notificationSends, send.sendId);
       if (existing && text(existing.status) === 'sent') continue;
       await app.store.set(COLLECTIONS.notificationSends, send.sendId, sendLog(send, {
@@ -679,7 +682,7 @@ export async function executeSweep(app: App, options: { now?: Date; dryRun?: boo
         sentAt: nowIso(now),
       }));
     }
-    return summaryFrom(plan, true, statuses);
+    return summaryFrom(plan, true, statuses, includeItems);
   }
   const mailer = options.mailer === undefined ? await createGmailMailer() : options.mailer;
   if (!mailer) throw new HubError(gmailNotConfiguredMessage());
@@ -692,7 +695,7 @@ export async function executeSweep(app: App, options: { now?: Date; dryRun?: boo
     const outcome = await deliverSend(app, mailer, send);
     statuses.set(send.sendId, outcome);
   }
-  return summaryFrom(plan, false, statuses);
+  return summaryFrom(plan, false, statuses, includeItems);
 }
 
 const RULE_PREVIEW_LIMIT = 200;
@@ -843,7 +846,8 @@ export async function runScheduledNotifications(app: App, now = new Date()): Pro
       items: [],
     };
   }
-  const summary = await executeSweep(app, { now, dryRun });
+  // Scheduled dry-run still sends nothing. It does not write a notificationSends row per message.
+  const summary = await executeSweep(app, { now, dryRun, persistDryRun: false, includeItems: false });
   console.log(`Notification sweep ${summary.today}: considered ${summary.considered}, sent ${summary.sent}, failed ${summary.failed}, skipped ${summary.skipped}, dryRun ${summary.dryRun}.`);
   return summary;
 }

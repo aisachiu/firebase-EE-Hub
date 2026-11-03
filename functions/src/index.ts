@@ -7,6 +7,7 @@ import { dispatch } from './dispatch';
 import { googleOAuthSecrets } from './googleAuth';
 import { verifiedGoogleEmail } from './identity';
 import { runScheduledNotifications } from './notifications';
+import { SWEEP_CRON, SWEEP_TIME_ZONE } from './schedules';
 import { App } from './session';
 import { Store } from './store';
 import { HubError, text } from './util';
@@ -49,11 +50,11 @@ export const eeHub = onCall({
   }
 });
 
-const timeZone = process.env.EE_TIMEZONE || 'Asia/Hong_Kong';
+const timeZone = process.env.EE_TIMEZONE || SWEEP_TIME_ZONE;
 
 export const notificationSweep = onSchedule({
-  schedule: '15 7 * * *',
-  timeZone,
+  schedule: SWEEP_CRON,
+  timeZone: SWEEP_TIME_ZONE,
   region: 'asia-east2',
   timeoutSeconds: 300,
   memory: '512MiB',
@@ -68,8 +69,8 @@ export const notificationSweep = onSchedule({
 });
 
 export const docCommentSweep = onSchedule({
-  schedule: 'every 30 minutes',
-  timeZone,
+  schedule: SWEEP_CRON,
+  timeZone: SWEEP_TIME_ZONE,
   region: 'asia-east2',
   timeoutSeconds: 300,
   memory: '512MiB',

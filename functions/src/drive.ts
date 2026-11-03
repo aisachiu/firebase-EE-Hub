@@ -9,7 +9,7 @@ import { requireCohort } from './roster';
 import { COLLECTIONS } from './schema';
 import { App, audited, requireAdmin } from './session';
 import { canonicalStudentEmail, canonicalStudentNumber } from './studentIdentity';
-import { Doc, driveNamePart, HubError, normalizeEmail, text, toBoolean, validateEmail } from './util';
+import { Doc, driveNamePart, HubError, normalizeEmail, parseDriveId, text, toBoolean, validateEmail } from './util';
 
 const NAME_LIMIT = 80;
 const BATCH_LIMIT = 8;
@@ -100,23 +100,7 @@ export interface ProvisionInput {
   persistMember?: (member: Doc) => Promise<void>;
 }
 
-export function parseDriveId(value: unknown): string {
-  const raw = text(value);
-  if (!raw) return '';
-  const patterns = [
-    /\/folders\/([a-zA-Z0-9_-]+)/,
-    /\/document\/d\/([a-zA-Z0-9_-]+)/,
-    /\/file\/d\/([a-zA-Z0-9_-]+)/,
-    /\/d\/([a-zA-Z0-9_-]+)/,
-    /[?&]id=([a-zA-Z0-9_-]+)/,
-  ];
-  for (const pattern of patterns) {
-    const match = pattern.exec(raw);
-    if (match) return match[1];
-  }
-  if (/^[a-zA-Z0-9_-]{10,}$/.test(raw)) return raw;
-  return '';
-}
+export { parseDriveId };
 
 export function parseDriveFolderId(value: unknown): string {
   return parseDriveId(value);
