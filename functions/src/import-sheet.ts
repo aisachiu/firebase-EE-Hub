@@ -116,6 +116,9 @@ export async function writePlan(db: FirebaseFirestore.Firestore, plan: SheetImpo
     ops.slice(index, index + 400).forEach((op) => batch.set(op.ref, cleanDoc(op.data)));
     await batch.commit();
   }
+  if (plan.members.length) {
+    await db.collection('meta').doc('docCommentSyncBackfill').set({ complete: false });
+  }
 }
 
 async function clearMembers(db: FirebaseFirestore.Firestore): Promise<void> {

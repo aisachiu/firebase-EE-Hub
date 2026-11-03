@@ -12,6 +12,25 @@ export function text(value: unknown): string {
   return String(value).trim();
 }
 
+/** File id from a Drive folder, document, or file URL. Bare ids of at least 10 characters pass through. */
+export function parseDriveId(value: unknown): string {
+  const raw = text(value);
+  if (!raw) return '';
+  const patterns = [
+    /\/folders\/([a-zA-Z0-9_-]+)/,
+    /\/document\/d\/([a-zA-Z0-9_-]+)/,
+    /\/file\/d\/([a-zA-Z0-9_-]+)/,
+    /\/d\/([a-zA-Z0-9_-]+)/,
+    /[?&]id=([a-zA-Z0-9_-]+)/,
+  ];
+  for (const pattern of patterns) {
+    const match = pattern.exec(raw);
+    if (match) return match[1];
+  }
+  if (/^[a-zA-Z0-9_-]{10,}$/.test(raw)) return raw;
+  return '';
+}
+
 /** Drive prefixes and suffixes keep leading and trailing spaces. Folder names are built from them. */
 export function driveNamePart(value: unknown): string {
   if (value === null || value === undefined) return '';

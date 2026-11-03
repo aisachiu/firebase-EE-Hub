@@ -1,6 +1,7 @@
 import { Firestore } from 'firebase-admin/firestore';
+import { nextDocCommentSyncWrite, pairRecordId } from './docCommentsPure';
 import { COLLECTIONS } from './schema';
-import { cleanDoc, Doc, text } from './util';
+import { cleanDoc, Doc, normalizeEmail, parseDriveId, text } from './util';
 
 export type AllocationOp =
   | { kind: 'member'; cohortId: string; id: string; data: Doc }
@@ -61,10 +62,48 @@ export class Store {
 
   async setMember(cohortId: string, email: string, data: Doc): Promise<void> {
     await this.members(cohortId).doc(email).set(cleanDoc(data));
+    await this.enrollDocCommentSync(cohortId, data);
   }
 
   async removeMember(cohortId: string, email: string): Promise<void> {
     await this.members(cohortId).doc(email).delete();
+    const studentId = normalizeEmail(email);
+    if (!studentId) return;
+    const rows = await this.whereEqual(COLLECTIONS.docCommentSync, 'StudentId', studentId);
+    for (const row of rows) {
+      if (text(row.Cohort) !== text(cohortId)) continue;
+      const id = text(row.Id);
+      if (id) await this.remove(COLLECTIONS.docCommentSync, id);
+    }
+  }
+
+  /** One small index row per essay Doc so the daily sweep can query due cursors. */
+  private async enrollDocCommentSync(cohortId: string, member: Doc): Promise<void> {
+    const studentId = normalizeEmail(member.StudentId);
+    const docUrl = text(member.EEDoc);
+    const fileId = parseDriveId(docUrl);
+    if (!studentId || !fileId) return;
+    const id = pairRecordId(studentId, fileId);
+    const existing = await this.get(COLLECTIONS.docCommentSync, id);
+    const next = nextDocCommentSyncWrite(existing, { studentId, cohortId, fileId, docUrl });
+    if (next) await this.set(COLLECTIONS.docCommentSync, id, next);
+  }
+
+  async listDueDocCommentSync(nowMs: number, limit: number): Promise<Doc[]> {
+    const cap = Math.max(0, Math.floor(limit));
+    if (!cap) return [];
+    const snap = await this.col(COLLECTIONS.docCommentSync)
+      .where('DueAt', '<=', nowMs)
+      .orderBy('DueAt')
+      .orderBy('LastAttemptAt')
+      .limit(cap)
+      .get();
+    return snap.docs.map((doc) => doc.data() as Doc);
+  }
+
+  async countFreshDocCommentSync(nowMs: number): Promise<number> {
+    const snap = await this.col(COLLECTIONS.docCommentSync).where('DueAt', '>', nowMs).count().get();
+    return snap.data().count;
   }
 
   cohortPhases(cohortId: string) {
@@ -172,7 +211,8 @@ export class Store {
     const size = 400;
     for (let index = 0; index < ops.length; index += size) {
       const batch = this.db.batch();
-      ops.slice(index, index + size).forEach((op) => {
+      const slice = ops.slice(index, index + size);
+      slice.forEach((op) => {
         if (op.kind === 'member') batch.set(this.members(op.cohortId).doc(op.id), cleanDoc(op.data));
         else if (op.kind === 'token') batch.set(this.tokens(op.cohortId).doc(op.id), cleanDoc(op.data));
         else if (op.kind === 'workspace') batch.set(this.workspace(op.cohortId).doc(op.id), cleanDoc(op.data));
@@ -180,6 +220,9 @@ export class Store {
         else batch.set(this.allocationConfig(op.cohortId), cleanDoc(op.data));
       });
       await batch.commit();
+      for (const op of slice) {
+        if (op.kind === 'member') await this.enrollDocCommentSync(op.cohortId, op.data);
+      }
     }
   }
 

@@ -215,6 +215,6 @@ EE_TIMEZONE=Asia/Hong_Kong
 # EE_NOTIFICATIONS_DRY_RUN=true
 ```
 
-`EE_NOTIFICATIONS_DRY_RUN=true` writes a dry-run log and does not send. Leave it unset once Gmail is ready. The scheduled function is `notificationSweep` (07:15 in `EE_TIMEZONE`). Mail is sent as the mailbox on the refresh token (`userId: me`). Confirm that address in Admin → Google account after deploy.
+`EE_NOTIFICATIONS_DRY_RUN=true` does not send. The scheduled job does not write a dry-run row per message; a coordinator dry-run from the hub still records that log. Leave the flag unset once Gmail is ready. `notificationSweep` and `docCommentSweep` both run daily at 04:00 Asia/Hong_Kong. Mail is sent as the mailbox on the refresh token (`userId: me`). Confirm that address in Admin → Google account after deploy. Redeploy both functions after this schedule change.
 
 Preview today does not send. Coordinators and admins can use Preview and send on one rule: it runs that rule’s check for today, shows each message, and emails only the ones they select. The rule has to be on, and Google has to be connected. Send test emails only the signed-in coordinator or supervisor.
