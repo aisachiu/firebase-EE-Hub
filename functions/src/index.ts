@@ -1,5 +1,6 @@
 import { initializeApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
+import { setGlobalOptions } from 'firebase-functions/v2';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { runDocCommentSweep } from './docComments';
@@ -12,15 +13,20 @@ import { App } from './session';
 import { Store } from './store';
 import { HubError, text } from './util';
 
+// Shared by eeHub and both sweeps. Timeouts stay on each function.
+// Concurrency is left unset so Cloud Run keeps the existing v2 default.
+setGlobalOptions({
+  region: 'asia-east2',
+  memory: '512MiB',
+});
+
 initializeApp();
 const store = new Store(getFirestore());
 
 export const eeHub = onCall({
-  region: 'asia-east2',
   cors: true,
   invoker: 'public',
   timeoutSeconds: 120,
-  memory: '512MiB',
   secrets: googleOAuthSecrets,
 }, async (request) => {
   let email: string;
@@ -55,9 +61,7 @@ const timeZone = process.env.EE_TIMEZONE || SWEEP_TIME_ZONE;
 export const notificationSweep = onSchedule({
   schedule: SWEEP_CRON,
   timeZone: SWEEP_TIME_ZONE,
-  region: 'asia-east2',
   timeoutSeconds: 300,
-  memory: '512MiB',
   secrets: googleOAuthSecrets,
 }, async () => {
   const app: App = {
@@ -71,9 +75,7 @@ export const notificationSweep = onSchedule({
 export const docCommentSweep = onSchedule({
   schedule: SWEEP_CRON,
   timeZone: SWEEP_TIME_ZONE,
-  region: 'asia-east2',
   timeoutSeconds: 300,
-  memory: '512MiB',
   secrets: googleOAuthSecrets,
 }, async () => {
   const app: App = {
