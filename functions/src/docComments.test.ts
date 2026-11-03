@@ -7,8 +7,13 @@ import {
   syncEssayDocComments,
 } from './docComments';
 import {
+  commentDueAt,
   commentListArgs,
   commentSyncIsStale,
+  DOC_COMMENT_STALE_MS,
+  docCommentSyncRecord,
+  dueCommentSyncRows,
+  nextDocCommentSyncWrite,
   normalizeThreadRecord,
   pairRecordId,
   presentDocComment,
@@ -34,7 +39,7 @@ const OTHER_DOC_URL = `https://docs.google.com/document/d/${OTHER_FILE_ID}/edit`
 const QUIET_DOC_URL = `https://docs.google.com/document/d/${QUIET_FILE_ID}/edit`;
 const NOW = new Date('2026-11-01T12:00:00.000Z');
 const FRESH = new Date(NOW.getTime() - 60 * 1000).toISOString();
-const STALE = new Date(NOW.getTime() - 2 * 60 * 60 * 1000).toISOString();
+const STALE = new Date(NOW.getTime() - DOC_COMMENT_STALE_MS - 60 * 60 * 1000).toISOString();
 
 class MemoryStore {
   docs: Record<string, Record<string, Doc>> = {};
@@ -77,8 +82,12 @@ class MemoryStore {
 
   chats: Record<string, Record<string, Doc>> = {};
   entries: Record<string, Record<string, Doc>> = {};
+  meta: Record<string, Doc> = {};
+  chatLists = 0;
+  chatReads = 0;
 
   async getChat(cohortId: string, studentId: string): Promise<Doc | null> {
+    this.chatReads += 1;
     const row = (this.chats[cohortId] || {})[studentId];
     return row ? { ...row } : null;
   }
@@ -93,6 +102,7 @@ class MemoryStore {
   }
 
   async listChatEntries(cohortId: string, studentId: string): Promise<Doc[]> {
+    this.chatLists += 1;
     const key = `${cohortId}\n${studentId}`;
     return Object.values(this.entries[key] || {}).map((row) => ({ ...row }));
   }
@@ -104,6 +114,22 @@ class MemoryStore {
   }
 
   async addAudit(): Promise<void> {}
+
+  async getMeta(id: string): Promise<Doc | null> {
+    return this.meta[id] ? { ...this.meta[id] } : null;
+  }
+
+  async setMeta(id: string, data: Doc): Promise<void> {
+    this.meta[id] = { ...data };
+  }
+
+  async listDueDocCommentSync(nowMs: number, limit: number): Promise<Doc[]> {
+    return dueCommentSyncRows(Object.values(this.docs.docCommentSync || {}), nowMs, limit).map((row) => ({ ...row }));
+  }
+
+  async countFreshDocCommentSync(nowMs: number): Promise<number> {
+    return Object.values(this.docs.docCommentSync || {}).filter((row) => typeof row.DueAt === 'number' && row.DueAt > nowMs).length;
+  }
 }
 
 function appFor(store: MemoryStore, email: string): App {
@@ -225,6 +251,37 @@ test('modified-time filter is omitted until a sync cursor exists', () => {
   assert.equal(commentSyncIsStale('', NOW), true);
   assert.equal(commentSyncIsStale(FRESH, NOW), false);
   assert.equal(commentSyncIsStale(STALE, NOW), true);
+  const dayAgo = new Date(NOW.getTime() - 24 * 60 * 60 * 1000).toISOString();
+  assert.equal(commentSyncIsStale(dayAgo, NOW), false);
+  assert.equal(commentDueAt(dayAgo) > NOW.getTime(), true);
+  assert.equal(commentSyncIsStale(new Date(NOW.getTime() - DOC_COMMENT_STALE_MS).toISOString(), NOW), true);
+  const kept = nextDocCommentSyncWrite({
+    Id: 'a@vsa.example.edu__file',
+    StudentId: 'a@vsa.example.edu',
+    Cohort: '2026',
+    FileId: 'file',
+    DocUrl: 'https://docs.google.com/document/d/file/edit',
+    DueAt: 10,
+    LastSuccessAt: FRESH,
+  }, {
+    studentId: 'a@vsa.example.edu',
+    cohortId: '2026',
+    fileId: 'file',
+    docUrl: 'https://docs.google.com/document/d/file/edit',
+  });
+  assert.equal(kept, null);
+  const enrolled = nextDocCommentSyncWrite(null, {
+    studentId: 'a@vsa.example.edu',
+    cohortId: '2026',
+    fileId: 'file',
+    docUrl: 'https://docs.google.com/document/d/file/edit',
+  });
+  assert.equal(enrolled?.DueAt, 0);
+  assert.equal(dueCommentSyncRows([
+    { StudentId: 'a@vsa.example.edu', FileId: 'fresh', DueAt: NOW.getTime() + 1000, LastAttemptAt: '' },
+    { StudentId: 'b@vsa.example.edu', FileId: 'due', DueAt: 0, LastAttemptAt: NOW.toISOString() },
+    { StudentId: 'c@vsa.example.edu', FileId: 'older', DueAt: 0, LastAttemptAt: '' },
+  ], NOW.getTime(), 1)[0].FileId, 'older');
   const picked = staleCommentPairs([
     { studentId: 'a@vsa.example.edu', cohortId: '2026', fileId: 'a', docUrl: '', lastSuccessAt: FRESH },
     { studentId: 'b@vsa.example.edu', cohortId: '2026', fileId: 'b', docUrl: '', lastSuccessAt: '', lastAttemptAt: NOW.toISOString() },
@@ -468,7 +525,7 @@ test('chat still shows stored comments when Drive is not connected', async () =>
   assert.equal((await store.listChatEntries('2026', studentEmail)).find((row) => row.ThreadId === 'sup-1')?.Body, 'Stored.');
 });
 
-test('the half-hourly sweep refreshes stale student files and leaves fresh ones alone', async () => {
+test('the daily sweep refreshes stale student files and leaves fresh ones alone', async () => {
   const store = new MemoryStore();
   await seed(store);
   await store.setChat('2026', otherStudentEmail, {
@@ -492,7 +549,9 @@ test('the half-hourly sweep refreshes stale student files and leaves fresh ones 
     [QUIET_FILE_ID]: [{ complete: true, comments: [thread('old-1', { authorName: 'Priya Shah', authorEmail: supervisorEmail, content: 'Caught up.', modifiedTime: '2026-11-01T04:00:00.000Z' })] }],
     [OTHER_FILE_ID]: [{ complete: true, comments: [thread('fresh-1', { authorName: 'Other', authorEmail: otherEmail, content: 'Should not load.', modifiedTime: '2026-11-01T04:00:00.000Z' })] }],
   });
+  store.chatLists = 0;
   const summary = await runDocCommentSweep(appFor(store, 'doc-comments@ee-hub'), depsFor(script.drive, NOW));
+  assert.equal(store.chatLists, 0);
   assert.equal(summary.synced, 2);
   assert.equal(summary.failed, 0);
   assert.equal(summary.skippedFresh, 1);
@@ -509,10 +568,103 @@ test('the half-hourly sweep refreshes stale student files and leaves fresh ones 
   });
   await store.setChat('2026', studentEmail, { StudentId: studentEmail, Cohort: '2026', DocFileId: FILE_ID, CommentCursor: '', CommentLastAttemptAt: '' });
   await store.setChat('2026', quietStudentEmail, { StudentId: quietStudentEmail, Cohort: '2026', DocFileId: QUIET_FILE_ID, CommentCursor: STALE, CommentLastAttemptAt: STALE });
+  await store.set('docCommentSync', pairRecordId(studentEmail, FILE_ID), docCommentSyncRecord({
+    studentId: studentEmail, cohortId: '2026', fileId: FILE_ID, docUrl: DOC_URL, lastSuccessAt: '', lastAttemptAt: '',
+  }));
+  await store.set('docCommentSync', pairRecordId(quietStudentEmail, QUIET_FILE_ID), docCommentSyncRecord({
+    studentId: quietStudentEmail, cohortId: '2026', fileId: QUIET_FILE_ID, docUrl: QUIET_DOC_URL, lastSuccessAt: STALE, lastAttemptAt: STALE,
+  }));
   const capped = await runDocCommentSweep(appFor(store, 'doc-comments@ee-hub'), { ...depsFor(limited.drive, NOW), limit: 1 });
   assert.equal(capped.considered, 1);
   assert.deepEqual(limited.calls.map((call) => call.fileId), [FILE_ID]);
 });
+
+test('a warm sweep reads due sync rows and does not list chat history', async () => {
+  const store = new MemoryStore();
+  await seed(store);
+  await store.setMeta('docCommentSyncBackfill', { complete: true });
+  await store.set('docCommentSync', pairRecordId(otherStudentEmail, OTHER_FILE_ID), docCommentSyncRecord({
+    studentId: otherStudentEmail,
+    cohortId: '2026',
+    fileId: OTHER_FILE_ID,
+    docUrl: OTHER_DOC_URL,
+    lastSuccessAt: FRESH,
+    lastAttemptAt: FRESH,
+  }));
+  await store.set('docCommentSync', pairRecordId(quietStudentEmail, QUIET_FILE_ID), docCommentSyncRecord({
+    studentId: quietStudentEmail,
+    cohortId: '2026',
+    fileId: QUIET_FILE_ID,
+    docUrl: QUIET_DOC_URL,
+    lastSuccessAt: STALE,
+    lastAttemptAt: STALE,
+  }));
+  await store.setChat('2026', quietStudentEmail, {
+    StudentId: quietStudentEmail,
+    Cohort: '2026',
+    DocFileId: QUIET_FILE_ID,
+    CommentCursor: STALE,
+  });
+  const script = scriptedDrive({
+    [QUIET_FILE_ID]: [{ complete: true, comments: [thread('old-1', { authorName: 'Priya Shah', authorEmail: supervisorEmail, content: 'Caught up.', modifiedTime: '2026-11-01T04:00:00.000Z' })] }],
+    [OTHER_FILE_ID]: [{ complete: true, comments: [thread('fresh-1', { authorName: 'Other', authorEmail: otherEmail, content: 'Should not load.', modifiedTime: '2026-11-01T04:00:00.000Z' })] }],
+    [FILE_ID]: [{ complete: true, comments: [thread('stu-1', { authorName: 'Jamie Wong', authorEmail: studentEmail, content: 'Not indexed.', modifiedTime: '2026-11-01T03:00:00.000Z' })] }],
+  });
+  store.chatReads = 0;
+  store.chatLists = 0;
+  const summary = await runDocCommentSweep(appFor(store, 'doc-comments@ee-hub'), depsFor(script.drive, NOW));
+  assert.equal(summary.synced, 1);
+  assert.equal(summary.skippedFresh, 1);
+  assert.equal(store.chatLists, 0);
+  assert.deepEqual(script.calls.map((call) => call.fileId), [QUIET_FILE_ID]);
+  assert.equal(script.calls[0].startModifiedTime, STALE);
+  assert.ok(store.chatReads > 0);
+  assert.ok(store.chatReads < 6);
+  assert.equal((await store.listChatEntries('2026', otherStudentEmail)).length, 0);
+});
+
+test('opening chat keeps a live comment sync index and still lists stored comments', async () => {
+  const store = new MemoryStore();
+  await seed(store);
+  const record = docCommentSyncRecord({
+    studentId: studentEmail,
+    cohortId: '2026',
+    fileId: FILE_ID,
+    docUrl: DOC_URL,
+    lastSuccessAt: FRESH,
+    lastAttemptAt: FRESH,
+  });
+  await store.set('docCommentSync', textId(record.Id), record);
+  await store.setChatEntry('2026', studentEmail, 'doc-seed', {
+    EntryId: 'doc-seed',
+    Kind: 'doc-comment',
+    FileId: FILE_ID,
+    ThreadId: 'sup-1',
+    Body: 'Stored.',
+    Deleted: false,
+    CreatedAt: '2026-11-01T01:00:00.000Z',
+  });
+  const result = await syncEssayDocComments(appFor(store, studentEmail), undefined, undefined, undefined, {
+    actorEmail: '',
+    keyConfigured: false,
+    driveForActor: async () => ({
+      async aboutEmail() { return actorEmail; },
+      async listComments() { return { comments: [], complete: true }; },
+    }),
+    now: NOW,
+  });
+  assert.equal(result.comments.length, 1);
+  assert.equal(result.comments[0].body, 'Stored.');
+  const kept = await store.get('docCommentSync', textId(record.Id));
+  assert.equal(typeof kept?.DueAt, 'number');
+  assert.equal(kept?.LastSuccessAt, FRESH);
+  const chat = await store.getChat('2026', studentEmail);
+  assert.equal(chat?.CommentCursor, FRESH);
+});
+
+function textId(value: unknown): string {
+  return String(value || '');
+}
 
 test('a missing essay doc does not call Drive', async () => {
   const store = new MemoryStore();

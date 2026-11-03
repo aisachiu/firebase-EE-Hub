@@ -46,6 +46,13 @@ async function staffNames(app: App): Promise<Record<string, string>> {
   return names;
 }
 
+function laterStamp(previous: string): string {
+  const now = Date.now();
+  const prior = Date.parse(text(previous));
+  if (Number.isNaN(prior)) return new Date(now).toISOString();
+  return new Date(Math.max(now, prior + 1)).toISOString();
+}
+
 function assertChatFresh(record: Doc, clientToken: unknown, openChat: boolean) {
   const token = clientToken === undefined || clientToken === null ? '' : String(clientToken);
   if (!token && openChat) return;
@@ -175,7 +182,10 @@ async function importLegacy(app: App, cohortId: string, studentId: string, chat:
         chat.CommentLastAttemptAt = text(cursor.LastAttemptAt);
         chat.CommentSyncStatus = text(cursor.Status);
         chat.CommentSyncError = text(cursor.Error).slice(0, 300);
-        if (typeof app.store.remove === 'function') await app.store.remove(COLLECTIONS.docCommentSync, syncId);
+        // Legacy cursor docs are copied once. Live sweep rows carry DueAt and stay in place.
+        if (typeof cursor.DueAt !== 'number' && typeof app.store.remove === 'function') {
+          await app.store.remove(COLLECTIONS.docCommentSync, syncId);
+        }
       }
     }
   }
@@ -304,7 +314,7 @@ export async function sendStudentChat(app: App, body: unknown, lastUpdated: unkn
     if (!current) throw new HubError('Chat is not available.');
     const stillOpen = !(await humanLines(app, placement.cohortId, placement.email)) && !text(current.LastActor);
     assertChatFresh(current, lastUpdated, stillOpen);
-    const now = nowIso();
+    const now = laterStamp(text(current.LastUpdated));
     const entryId = uuid();
     await app.store.setChatEntry(placement.cohortId, placement.email, entryId, {
       EntryId: entryId,
@@ -405,7 +415,7 @@ export async function sendStaffStudentChat(app: App, studentEmail: unknown, coho
     if (!current) throw new HubError('Chat is not available.');
     const existed = await humanLines(app, context.roster.cohortId, context.email);
     assertChatFresh(current, lastUpdated, !existed && !text(current.LastActor));
-    const now = nowIso();
+    const now = laterStamp(text(current.LastUpdated));
     const entryId = uuid();
     const kind = authorKind(user, context.view);
     await app.store.setChatEntry(context.roster.cohortId, context.email, entryId, {

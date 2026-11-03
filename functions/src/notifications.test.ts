@@ -7,6 +7,7 @@ import {
   executeSweep,
   listNotificationDesk,
   previewNotificationRule,
+  runScheduledNotifications,
   saveNotificationOverlay,
   saveNotificationRule,
   sendNotificationRule,
@@ -661,4 +662,57 @@ test('preview and send emails only the messages a coordinator selects', async ()
   if (previous === undefined) delete process.env.EE_NOTIFICATIONS_DRY_RUN;
   else process.env.EE_NOTIFICATIONS_DRY_RUN = previous;
   assert.deepEqual(sentTo, [student.email]);
+});
+
+test('the scheduled dry-run does not write a send log, and a real send still does', async () => {
+  const store = memoryStore();
+  await seedDesk(store);
+  const now = new Date('2026-10-15T04:00:00.000Z');
+  await store.set(COLLECTIONS.studentActionItems, 'task-1', {
+    TaskId: 'task-1',
+    StudentId: student.email,
+    TemplateId: 'm2',
+    DueDate: '2026-10-20',
+    Status: 'Pending',
+    CreatorType: 'System',
+    Title: 'Research question',
+  });
+  await store.set(COLLECTIONS.notificationRules, 'rule-1', {
+    ruleId: 'rule-1',
+    cohortId: '2026',
+    milestoneId: 'm2',
+    when: 'before',
+    days: 5,
+    audience: 'owner',
+    enabled: true,
+    note: 'Upload the question.',
+  });
+  const previous = process.env.EE_NOTIFICATIONS_DRY_RUN;
+  process.env.EE_NOTIFICATIONS_DRY_RUN = 'true';
+  try {
+    const scheduled = await runScheduledNotifications(appFor(store, 'notifications@ee-hub'), now);
+    assert.equal(scheduled.dryRun, true);
+    assert.equal(scheduled.sent, 0);
+    assert.ok(scheduled.considered > 0);
+    assert.equal(scheduled.items.length, 0);
+    assert.equal((await store.list(COLLECTIONS.notificationSends)).length, 0);
+
+    const manual = await executeSweep(appFor(store, coordinator.email), { now, dryRun: true });
+    assert.equal(manual.items.length > 0, true);
+    const logged = await store.list(COLLECTIONS.notificationSends);
+    assert.equal(logged.length, 1);
+    assert.equal(logged[0].status, 'dry-run');
+  } finally {
+    if (previous === undefined) delete process.env.EE_NOTIFICATIONS_DRY_RUN;
+    else process.env.EE_NOTIFICATIONS_DRY_RUN = previous;
+  }
+
+  const sentTo: string[] = [];
+  const sent = await executeSweep(appFor(store, coordinator.email), {
+    now,
+    mailer: { async send(mail) { sentTo.push(...mail.to); } },
+  });
+  assert.equal(sent.sent, 1);
+  assert.deepEqual(sentTo, [student.email]);
+  assert.equal((await store.list(COLLECTIONS.notificationSends))[0].status, 'sent');
 });

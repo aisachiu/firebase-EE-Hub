@@ -1,4 +1,13 @@
 {
-  "indexes": [],
+  "indexes": [
+    {
+      "collectionGroup": "docCommentSync",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "DueAt", "order": "ASCENDING" },
+        { "fieldPath": "LastAttemptAt", "order": "ASCENDING" }
+      ]
+    }
+  ],
   "fieldOverrides": []
 }
