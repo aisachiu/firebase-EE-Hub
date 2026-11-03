@@ -207,6 +207,24 @@ export class Store {
     await this.allocationConfig(cohortId).set(cleanDoc(data));
   }
 
+  allocationAudits(cohortId: string) {
+    return this.db.collection(COLLECTIONS.cohorts).doc(cohortId).collection('allocationAuditLogs');
+  }
+
+  async listAllocationAudits(cohortId: string): Promise<Doc[]> {
+    if (!cohortId) return [];
+    const snap = await this.allocationAudits(cohortId).get();
+    return snap.docs.map((doc) => ({ ...(doc.data() as Doc), id: doc.id }));
+  }
+
+  async setAllocationAudit(cohortId: string, id: string, data: Doc): Promise<void> {
+    await this.allocationAudits(cohortId).doc(id).set(cleanDoc(data));
+  }
+
+  async removeAllocationAudit(cohortId: string, id: string): Promise<void> {
+    await this.allocationAudits(cohortId).doc(id).delete();
+  }
+
   async applyAllocationOps(ops: AllocationOp[]): Promise<void> {
     const size = 400;
     for (let index = 0; index < ops.length; index += size) {
