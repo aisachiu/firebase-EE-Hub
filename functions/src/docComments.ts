@@ -1,6 +1,8 @@
 // Essay Doc comments join the student–supervisor chat.
 // Opening the chat panel syncs one student's file with Drive's modified-time
-// filter. A half-hourly sweep retries pairs that open path missed.
+// filter. That on-open sync is the incremental path. A daily 04:00
+// Asia/Hong_Kong sweep is the safety net for pairs the open path missed.
+// The sweep queries docCommentSync and does not list chat history.
 // The school Google account reads comments. Students and staff do not consent.
 
 import { ensureCohortChat } from './chat';
@@ -10,16 +12,19 @@ import { parseDriveId, RECONNECT, WRONG_ACCOUNT } from './drive';
 import {
   CommentPair,
   commentListArgs,
+  docCommentSyncRecord,
   DOC_COMMENT_PAGE_CAP,
   DOC_COMMENT_SWEEP_LIMIT,
+  dueCommentSyncRows,
   normalizeThreadRecord,
+  pairRecordId,
   presentDocComment,
   PublicDocComment,
   RawDriveComment,
-  staleCommentPairs,
 } from './docCommentsPure';
 import { DRIVE_SCOPE, getGoogleAuth, GoogleOAuthSource } from './googleAuth';
 import { findCurrentPlacement, findPlacement, listCohorts, staffStudentContext } from './roster';
+import { COLLECTIONS } from './schema';
 import { App, requireStaff, requireUser } from './session';
 import { Doc, HubError, normalizeEmail, text } from './util';
 
@@ -207,17 +212,35 @@ async function readCursor(app: App, target: SyncTarget): Promise<string> {
   return text(chat?.CommentCursor);
 }
 
+async function writeSyncIndex(app: App, target: SyncTarget, input: { lastSuccessAt: string; status: string; error: string; attempt: string }): Promise<void> {
+  if (typeof app.store.set !== 'function') return;
+  const record = docCommentSyncRecord({
+    studentId: target.studentId,
+    cohortId: target.cohortId,
+    fileId: target.fileId,
+    docUrl: target.docUrl,
+    lastSuccessAt: input.lastSuccessAt,
+    lastAttemptAt: input.attempt,
+    status: input.status,
+    error: input.error,
+  });
+  await app.store.set(COLLECTIONS.docCommentSync, text(record.Id), record);
+}
+
 async function writeCursor(app: App, target: SyncTarget, input: { lastSuccessAt: string; status: string; error: string; attempt: string }): Promise<void> {
-  if (typeof app.store.getChat !== 'function') return;
-  const chat = await app.store.getChat(target.cohortId, target.studentId);
-  if (!chat) return;
-  chat.DocFileId = target.fileId;
-  chat.DocUrl = target.docUrl;
-  chat.CommentCursor = input.lastSuccessAt;
-  chat.CommentLastAttemptAt = input.attempt;
-  chat.CommentSyncStatus = input.status;
-  chat.CommentSyncError = text(input.error).slice(0, 300);
-  await app.store.setChat(target.cohortId, target.studentId, chat);
+  if (typeof app.store.getChat === 'function') {
+    const chat = await app.store.getChat(target.cohortId, target.studentId);
+    if (chat) {
+      chat.DocFileId = target.fileId;
+      chat.DocUrl = target.docUrl;
+      chat.CommentCursor = input.lastSuccessAt;
+      chat.CommentLastAttemptAt = input.attempt;
+      chat.CommentSyncStatus = input.status;
+      chat.CommentSyncError = text(input.error).slice(0, 300);
+      await app.store.setChat(target.cohortId, target.studentId, chat);
+    }
+  }
+  await writeSyncIndex(app, target, input);
 }
 
 function emptyResult(target: SyncTarget | null, extra: Partial<DocCommentSyncResult>): DocCommentSyncResult {
@@ -235,7 +258,7 @@ function emptyResult(target: SyncTarget | null, extra: Partial<DocCommentSyncRes
   };
 }
 
-async function syncTarget(app: App, target: SyncTarget, drive: CommentDrive, now: Date): Promise<DocCommentSyncResult> {
+async function syncDriveComments(app: App, target: SyncTarget, drive: CommentDrive, now: Date): Promise<DocCommentSyncResult> {
   const started = now.toISOString();
   await ensureCohortChat(app, target.cohortId, target.studentId);
   const cursor = await readCursor(app, target);
@@ -264,7 +287,6 @@ async function syncTarget(app: App, target: SyncTarget, drive: CommentDrive, now
         synced: false,
         incremental: !!cursor,
         cursor,
-        comments: await storedComments(app, target),
         reason: 'partial',
         message: 'Comment list was incomplete.',
       });
@@ -278,7 +300,7 @@ async function syncTarget(app: App, target: SyncTarget, drive: CommentDrive, now
       fileId: target.fileId,
       docUrl: target.docUrl,
       studentId: target.studentId,
-      comments: await storedComments(app, target),
+      comments: [],
     };
   } catch (error) {
     const message = accessMessage(error);
@@ -287,11 +309,15 @@ async function syncTarget(app: App, target: SyncTarget, drive: CommentDrive, now
       ok: false,
       incremental: !!cursor,
       cursor,
-      comments: await storedComments(app, target),
       reason: isDriveAuthProblem(error) ? 'auth' : 'access',
       message,
     });
   }
+}
+
+async function syncTarget(app: App, target: SyncTarget, drive: CommentDrive, now: Date): Promise<DocCommentSyncResult> {
+  const result = await syncDriveComments(app, target, drive, now);
+  return { ...result, comments: await storedComments(app, target) };
 }
 
 async function resolveTarget(app: App, studentEmail: unknown, cohortId: unknown, viewAs: unknown): Promise<SyncTarget> {
@@ -344,47 +370,129 @@ export async function syncEssayDocComments(app: App, studentEmail?: unknown, coh
   return syncTarget(app, target, prepared.drive, deps?.now || new Date());
 }
 
-async function commentPairs(app: App): Promise<CommentPair[]> {
+const SYNC_BACKFILL_META = 'docCommentSyncBackfill';
+
+function cursorFromChat(chat: Doc | null, fileId: string): { lastSuccessAt: string; lastAttemptAt: string; status: string; error: string } {
+  const empty = { lastSuccessAt: '', lastAttemptAt: '', status: '', error: '' };
+  if (!chat) return empty;
+  const chatFile = text(chat.DocFileId);
+  if (chatFile && chatFile !== fileId) return empty;
+  return {
+    lastSuccessAt: text(chat.CommentCursor),
+    lastAttemptAt: text(chat.CommentLastAttemptAt),
+    status: text(chat.CommentSyncStatus),
+    error: text(chat.CommentSyncError),
+  };
+}
+
+/** One-time copy of chat cursors into docCommentSync. Later sweeps query due rows only. */
+async function ensureSyncIndex(app: App, now: Date): Promise<void> {
+  if (typeof app.store.getMeta !== 'function' || typeof app.store.setMeta !== 'function') return;
+  const meta = await app.store.getMeta(SYNC_BACKFILL_META);
+  if (meta?.complete === true) return;
   const cohorts = await listCohorts(app, false);
-  const pairs: CommentPair[] = [];
   for (const cohort of cohorts) {
     const members = await app.store.listMembers(cohort.id);
     for (const member of members) {
       const studentId = normalizeEmail(member.StudentId);
       const docUrl = text(member.EEDoc);
       const fileId = parseDriveId(docUrl);
-      if (!studentId || !fileId) continue;
+      if (!studentId || !fileId || typeof app.store.set !== 'function') continue;
+      const id = pairRecordId(studentId, fileId);
+      const existing = typeof app.store.get === 'function' ? await app.store.get(COLLECTIONS.docCommentSync, id) : null;
       const chat = typeof app.store.getChat === 'function' ? await app.store.getChat(cohort.id, studentId) : null;
-      pairs.push({
+      const fromChat = cursorFromChat(chat, fileId);
+      if (existing && typeof existing.DueAt === 'number' && (text(existing.LastSuccessAt) || !fromChat.lastSuccessAt)) continue;
+      await app.store.set(COLLECTIONS.docCommentSync, id, docCommentSyncRecord({
         studentId,
         cohortId: cohort.id,
         fileId,
         docUrl,
-        lastSuccessAt: text(chat?.CommentCursor),
-        lastAttemptAt: text(chat?.CommentLastAttemptAt),
-      });
+        lastSuccessAt: fromChat.lastSuccessAt || text(existing?.LastSuccessAt),
+        lastAttemptAt: fromChat.lastAttemptAt || text(existing?.LastAttemptAt),
+        status: fromChat.status || text(existing?.Status),
+        error: fromChat.error || text(existing?.Error),
+      }));
     }
   }
-  return pairs;
+  await app.store.setMeta(SYNC_BACKFILL_META, { complete: true, at: now.toISOString() });
+}
+
+async function dueIndexRows(app: App, nowMs: number, limit: number): Promise<Doc[]> {
+  if (typeof app.store.listDueDocCommentSync === 'function') {
+    try {
+      return await app.store.listDueDocCommentSync(nowMs, limit);
+    } catch (error) {
+      console.warn('docCommentSweep due query failed; reading the sync index without the composite order.', error);
+    }
+  }
+  if (typeof app.store.list !== 'function') return [];
+  return dueCommentSyncRows(await app.store.list(COLLECTIONS.docCommentSync), nowMs, limit);
+}
+
+async function freshIndexCount(app: App, nowMs: number): Promise<number> {
+  if (typeof app.store.countFreshDocCommentSync === 'function') {
+    try {
+      return await app.store.countFreshDocCommentSync(nowMs);
+    } catch (error) {
+      console.warn('docCommentSweep fresh count failed; counting the sync index in memory.', error);
+    }
+  }
+  if (typeof app.store.list !== 'function') return 0;
+  const rows = await app.store.list(COLLECTIONS.docCommentSync);
+  return rows.filter((row) => typeof row.DueAt === 'number' && row.DueAt > nowMs).length;
+}
+
+async function liveDuePairs(app: App, rows: Doc[]): Promise<CommentPair[]> {
+  const active = new Set((await listCohorts(app, false)).map((cohort) => cohort.id));
+  const stale: CommentPair[] = [];
+  for (const row of rows) {
+    const studentId = normalizeEmail(row.StudentId);
+    const cohortId = text(row.Cohort);
+    const id = text(row.Id) || pairRecordId(studentId, text(row.FileId));
+    if (!active.has(cohortId)) {
+      if (id && typeof app.store.remove === 'function') await app.store.remove(COLLECTIONS.docCommentSync, id);
+      continue;
+    }
+    const member = await app.store.getMember(cohortId, studentId);
+    const docUrl = text(member?.EEDoc);
+    const fileId = parseDriveId(docUrl);
+    if (!member || !fileId || fileId !== text(row.FileId)) {
+      if (id && typeof app.store.remove === 'function') await app.store.remove(COLLECTIONS.docCommentSync, id);
+      continue;
+    }
+    stale.push({
+      studentId,
+      cohortId,
+      fileId,
+      docUrl,
+      lastSuccessAt: text(row.LastSuccessAt),
+      lastAttemptAt: text(row.LastAttemptAt),
+    });
+  }
+  return stale;
 }
 
 export async function runDocCommentSweep(app: App, deps?: DocCommentDeps): Promise<DocCommentSweepResult> {
   const now = deps?.now || new Date();
-  const pairs = await commentPairs(app);
-  const picked = staleCommentPairs(pairs, now, deps?.limit === undefined ? DOC_COMMENT_SWEEP_LIMIT : deps.limit);
-  if (!picked.stale.length) {
-    return { considered: 0, synced: 0, failed: 0, skippedFresh: picked.fresh };
+  const limit = deps?.limit === undefined ? DOC_COMMENT_SWEEP_LIMIT : deps.limit;
+  await ensureSyncIndex(app, now);
+  const due = await dueIndexRows(app, now.getTime(), limit);
+  const fresh = await freshIndexCount(app, now.getTime());
+  const stale = await liveDuePairs(app, due);
+  if (!stale.length) {
+    return { considered: 0, synced: 0, failed: 0, skippedFresh: fresh };
   }
   const prepared = await prepareDrive(app, deps);
   if (!prepared.drive) {
-    return { considered: 0, synced: 0, failed: 0, skippedFresh: picked.fresh, reason: prepared.reason };
+    return { considered: 0, synced: 0, failed: 0, skippedFresh: fresh, reason: prepared.reason };
   }
   let synced = 0;
   let failed = 0;
-  for (const pair of picked.stale) {
-    const result = await syncTarget(app, pair, prepared.drive, now);
+  for (const pair of stale) {
+    const result = await syncDriveComments(app, pair, prepared.drive, now);
     if (result.synced) synced += 1;
     else failed += 1;
   }
-  return { considered: picked.stale.length, synced, failed, skippedFresh: picked.fresh };
+  return { considered: stale.length, synced, failed, skippedFresh: fresh };
 }

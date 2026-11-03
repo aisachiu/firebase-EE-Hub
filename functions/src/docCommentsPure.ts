@@ -1,10 +1,13 @@
 // One stored row per Drive comment thread. Replies stay inside that row.
 // Chat reads the row as a single card. Drive's startModifiedTime is the
 // cursor from the last successful sync, so a later open is not a full rescan.
+// The daily 04:00 Asia/Hong_Kong sweep uses docCommentSync.DueAt so a success
+// stays fresh through the next morning run.
 
 import { Doc, normalizeEmail, text, toBoolean } from './util';
 
-export const DOC_COMMENT_STALE_MS = 30 * 60 * 1000;
+/** Longer than the 24h between 04:00 runs, so yesterday's success is not due again this morning. */
+export const DOC_COMMENT_STALE_MS = 25 * 60 * 60 * 1000;
 export const DOC_COMMENT_SWEEP_LIMIT = 40;
 export const DOC_COMMENT_PAGE_SIZE = 100;
 export const DOC_COMMENT_PAGE_CAP = 10;
@@ -92,12 +95,95 @@ export function commentListArgs(fileId: string, startModifiedTime: string, pageT
   return args;
 }
 
+/** Epoch ms when this cursor becomes due. Never-synced and unreadable cursors are due immediately. */
+export function commentDueAt(lastSuccessAt: string, staleMs = DOC_COMMENT_STALE_MS): number {
+  const stamp = text(lastSuccessAt);
+  if (!stamp) return 0;
+  const parsed = Date.parse(stamp);
+  if (Number.isNaN(parsed)) return 0;
+  return parsed + staleMs;
+}
+
 export function commentSyncIsStale(lastSuccessAt: string, now: Date, staleMs = DOC_COMMENT_STALE_MS): boolean {
   const stamp = text(lastSuccessAt);
-  if (!stamp) return true;
-  const parsed = Date.parse(stamp);
-  if (Number.isNaN(parsed)) return true;
-  return now.getTime() - parsed >= staleMs;
+  if (!stamp || Number.isNaN(Date.parse(stamp))) return true;
+  return commentDueAt(stamp, staleMs) <= now.getTime();
+}
+
+export function docCommentSyncRecord(input: {
+  studentId: string;
+  cohortId: string;
+  fileId: string;
+  docUrl: string;
+  lastSuccessAt: string;
+  lastAttemptAt?: string;
+  status?: string;
+  error?: string;
+}): Doc {
+  const studentId = normalizeEmail(input.studentId);
+  const fileId = text(input.fileId);
+  return {
+    Id: pairRecordId(studentId, fileId),
+    StudentId: studentId,
+    Cohort: text(input.cohortId),
+    FileId: fileId,
+    DocUrl: text(input.docUrl),
+    LastSuccessAt: text(input.lastSuccessAt),
+    LastAttemptAt: text(input.lastAttemptAt),
+    Status: text(input.status),
+    Error: text(input.error).slice(0, 300),
+    DueAt: commentDueAt(text(input.lastSuccessAt)),
+  };
+}
+
+/** Null when the live index row already names this essay Doc. Legacy rows without DueAt are replaced in place. */
+export function nextDocCommentSyncWrite(existing: Doc | null, input: {
+  studentId: string;
+  cohortId: string;
+  fileId: string;
+  docUrl: string;
+}): Doc | null {
+  const studentId = normalizeEmail(input.studentId);
+  const fileId = text(input.fileId);
+  const cohortId = text(input.cohortId);
+  const docUrl = text(input.docUrl);
+  if (!studentId || !fileId || !cohortId) return null;
+  if (existing && typeof existing.DueAt === 'number'
+    && normalizeEmail(existing.StudentId) === studentId
+    && text(existing.Cohort) === cohortId
+    && text(existing.FileId) === fileId
+    && text(existing.DocUrl) === docUrl) {
+    return null;
+  }
+  if (existing && typeof existing.DueAt === 'number') {
+    return {
+      ...existing,
+      Id: pairRecordId(studentId, fileId),
+      StudentId: studentId,
+      Cohort: cohortId,
+      FileId: fileId,
+      DocUrl: docUrl,
+    };
+  }
+  return docCommentSyncRecord({
+    studentId,
+    cohortId,
+    fileId,
+    docUrl,
+    lastSuccessAt: text(existing?.LastSuccessAt),
+    lastAttemptAt: text(existing?.LastAttemptAt),
+    status: text(existing?.Status),
+    error: text(existing?.Error),
+  });
+}
+
+/** In-memory form of the DueAt query, used when the composite index is not ready yet. */
+export function dueCommentSyncRows(rows: Doc[], nowMs: number, limit: number): Doc[] {
+  const due = rows.filter((row) => typeof row?.DueAt === 'number' && row.DueAt <= nowMs && text(row.FileId) && normalizeEmail(row.StudentId));
+  due.sort((left, right) => Number(left.DueAt) - Number(right.DueAt)
+    || text(left.LastAttemptAt).localeCompare(text(right.LastAttemptAt))
+    || normalizeEmail(left.StudentId).localeCompare(normalizeEmail(right.StudentId)));
+  return due.slice(0, Math.max(0, limit));
 }
 
 export function staleCommentPairs(pairs: CommentPair[], now: Date, limit = DOC_COMMENT_SWEEP_LIMIT, staleMs = DOC_COMMENT_STALE_MS): { stale: CommentPair[]; fresh: number } {
