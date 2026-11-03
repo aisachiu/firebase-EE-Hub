@@ -98,10 +98,11 @@ export async function getAllocationDesk(app: App, cohortId: unknown): Promise<Al
   return { ...desk, driveReady: drive.ready, driveActor: drive.actorEmail, driveError: drive.ready ? '' : drive.error };
 }
 
-export async function draftAllocation(app: App, cohortId: unknown, studentId: unknown, staffId: unknown, subject: unknown, interdisciplinary?: unknown, interdisciplinarySubject?: unknown) {
+export async function draftAllocation(app: App, cohortId: unknown, studentId: unknown, staffId: unknown, subject: unknown, interdisciplinary?: unknown, interdisciplinarySubject?: unknown, options?: unknown) {
   const user = await requireAdmin(app, 'DRAFT_ALLOCATION');
   const cohort = await requireCohort(app, text(cohortId));
   const email = normalizeEmail(studentId);
+  const extra = options && typeof options === 'object' ? options as Doc : {};
   return audited(app, user, 'DRAFT_ALLOCATION', { cohortId: cohort.id, studentId: email, staffId: normalizeEmail(staffId) }, async () => {
     const member = await requireActiveMember(app, cohort.id, email);
     const tokens = tokensFrom(await app.store.listTokens(cohort.id), cohort.id);
@@ -115,6 +116,8 @@ export async function draftAllocation(app: App, cohortId: unknown, studentId: un
       pendingClear: workspace.pendingClear,
       interdisciplinary: interdisciplinary === true || text(interdisciplinary) === 'Yes',
       interdisciplinarySubject: text(interdisciplinarySubject),
+      bypassSubject: extra.bypassSubject === true,
+      tokenId: text(extra.tokenId),
     });
     if (plan.error) throw new HubError(plan.error);
     if (!plan.changed) return { changed: false, studentId: email };
@@ -332,6 +335,27 @@ export async function commitAllocations(app: App, cohortId: unknown, studentIds?
     });
     await app.store.applyAllocationOps(ops);
     return { published: plan.assignments.length, cleared: plan.clears.length };
+  });
+}
+
+export async function saveAllocationFlag(app: App, cohortId: unknown, studentId: unknown, isFlagged: unknown, flagNote: unknown) {
+  const user = await requireAdmin(app, 'SAVE_ALLOCATION_FLAG');
+  const cohort = await requireCohort(app, text(cohortId));
+  const email = normalizeEmail(studentId);
+  const flagged = isFlagged === true || text(isFlagged).toLowerCase() === 'true';
+  const note = text(flagNote).slice(0, 500);
+  return audited(app, user, 'SAVE_ALLOCATION_FLAG', { cohortId: cohort.id, studentId: email, isFlagged: flagged }, async () => {
+    await requireActiveMember(app, cohort.id, email);
+    const existing = workspaceFromDoc(await app.store.getWorkspace(cohort.id, email) || {}, email);
+    const now = nowIso();
+    await app.store.setWorkspace(cohort.id, email, {
+      ...existing,
+      studentId: email,
+      isFlagged: flagged,
+      flagNote: note,
+      updatedAt: now,
+    });
+    return { studentId: email, isFlagged: flagged, flagNote: note };
   });
 }
 

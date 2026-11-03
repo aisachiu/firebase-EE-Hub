@@ -488,9 +488,6 @@ main.plan-wide { max-width: none; padding-inline: clamp(12px, 2vw, 28px); }
 }
 @media (max-width: 720px) {
   .journey-panel.open { z-index: 40; width: min(100vw - 12px, 420px); }
-  .alloc-drawer.open { z-index: 40; width: min(100vw - 12px, 420px); }
-  .alloc-drawer.open .alloc-drawer-panel { width: min(100vw - 12px, 420px); }
-  body.has-alloc-drawer.alloc-drawer-open { padding-right: 0; }
   .journey-panel.open .journey-drawer { width: min(100vw - 12px, 420px); }
   body.has-journey.journey-open { padding-right: 0; }
   .notes-panel.open { z-index: 41; width: min(100vw - 12px, 420px); }
@@ -835,6 +832,19 @@ main.staff-list { max-width: 1480px; }
 .alloc-cues { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
 .supervisor-cue { margin: 0; padding: 2px 8px; border: 1px solid var(--subject, var(--line)); border-radius: 999px; background: var(--subject-bg, white); color: var(--subject-fg, #495057); font-size: 11px; font-weight: 700; cursor: pointer; }
 .supervisor-cue.is-chosen { font-weight: 800; outline: 3px solid var(--ink); outline-offset: 1px; box-shadow: 0 0 0 1px white; }
+.alloc-teacher-pick { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; font-size: 12px; }
+.alloc-teacher-select { width: 100%; min-width: 160px; padding: 7px 9px; color: var(--ink); background: white; border: 1px solid var(--line); border-radius: 3px; }
+.alloc-teacher-select option.alloc-teacher-empty,
+.alloc-batch select option.alloc-teacher-empty {
+  color: #8aa0b3;
+  background: #f4f6f8;
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.alloc-flag-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; }
+.alloc-flag-toggle { margin: 0; font-size: 12px; font-weight: 700; }
+.alloc-flag-note { min-width: 140px; flex: 1 1 140px; padding: 4px 6px; color: var(--ink); background: white; border: 1px solid var(--line); border-radius: 3px; }
+.alloc-desk tr.is-flagged td:first-child { box-shadow: inset 3px 0 0 #c1121f; }
 .alloc-cue-empty { margin: 6px 0 0; }
 .id-tag { display: inline-block; padding: 2px 8px; border-radius: 3px; background: #e7f1f8; color: var(--ink); font-size: 12px; font-weight: 800; letter-spacing: .04em; line-height: 1.3; }
 .alloc-legend { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; margin: 0 0 8px; }
@@ -874,6 +884,36 @@ main.staff-list { max-width: 1480px; }
 .alloc-drawer-panel footer { border-top: 1px solid var(--line); }
 body.has-alloc-drawer { padding-right: 36px; transition: padding-right .2s ease; }
 body.has-alloc-drawer.alloc-drawer-open { padding-right: clamp(300px, 34vw, 420px); }
+@media (max-width: 720px) {
+  .alloc-drawer.open {
+    z-index: 60;
+    inset: 0;
+    width: 100%;
+    height: 100vh;
+    height: 100svh;
+    max-height: 100svh;
+    border: 0;
+    box-shadow: none;
+  }
+  .alloc-drawer.open .alloc-drawer-panel { width: 100%; height: 100%; max-height: 100%; }
+  .alloc-drawer.open .alloc-drawer-bar {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    height: auto;
+    min-height: 48px;
+    padding: max(8px, env(safe-area-inset-top)) 12px 8px max(12px, env(safe-area-inset-left));
+    padding-right: max(12px, env(safe-area-inset-right));
+  }
+  .alloc-drawer.open .alloc-drawer-bar button { min-width: 44px; min-height: 44px; padding: 8px 12px; }
+  .alloc-drawer.open .alloc-drawer-scroll {
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  body.has-alloc-drawer.alloc-drawer-open { padding-right: 0; overflow: hidden; }
+}
 .alloc-subject-load { display: flex; flex-direction: column; }
 .alloc-subject-metrics, .alloc-subject-block { display: grid; grid-template-columns: minmax(100px, 1fr) repeat(4, minmax(32px, auto)); align-items: center; gap: 8px; }
 .alloc-subject-metrics { padding: 8px 12px 0; color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: .04em; }

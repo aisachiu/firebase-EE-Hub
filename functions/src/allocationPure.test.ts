@@ -13,6 +13,7 @@ import {
   colorScaleFill,
   columnScaleExtent,
   diplomaLevelFlag,
+  dashboardFieldKeys,
   emptySettings,
   findAllocationTab,
   isEeActive,
@@ -253,10 +254,10 @@ test('subject token load groups remaining slots by subject', () => {
   assert.equal(load.untied, 1);
   assert.equal(load.overlaps, true);
   assert.deepEqual(load.subjects, [
-    { subject: 'Art', remaining: 0, pool: 0, upool: 0, alloc: 0 },
-    { subject: 'Biology', remaining: 1, pool: 0, upool: 0, alloc: 0 },
-    { subject: 'Geography', remaining: 1, pool: 0, upool: 0, alloc: 0 },
-    { subject: 'History', remaining: 2, pool: 0, upool: 0, alloc: 0 },
+    { subject: 'Art', remaining: 0, pool: 0, upool: 0, alloc: 0, poolChoice1: 0, upoolChoice1: 0 },
+    { subject: 'Biology', remaining: 1, pool: 0, upool: 0, alloc: 0, poolChoice1: 0, upoolChoice1: 0 },
+    { subject: 'Geography', remaining: 1, pool: 0, upool: 0, alloc: 0, poolChoice1: 0, upoolChoice1: 0 },
+    { subject: 'History', remaining: 2, pool: 0, upool: 0, alloc: 0, poolChoice1: 0, upoolChoice1: 0 },
   ]);
   const single = subjectTokenLoad([{ status: 'available', eligibleSubjects: ['Chemistry'] }]);
   assert.equal(single.overlaps, false);
@@ -327,8 +328,8 @@ test('the desk marks first and second choice, HL and SL subjects, and support fl
   assert.equal(desk.supervisors[0].used, 1);
   assert.deepEqual(desk.tokenSlots, [{ status: 'draft', eligibleSubjects: ['History', 'Geography'] }]);
   assert.deepEqual(subjectTokenLoad(desk.tokenSlots).subjects, [
-    { subject: 'Geography', remaining: 0, pool: 0, upool: 0, alloc: 0 },
-    { subject: 'History', remaining: 0, pool: 0, upool: 0, alloc: 0 },
+    { subject: 'Geography', remaining: 0, pool: 0, upool: 0, alloc: 0, poolChoice1: 0, upoolChoice1: 0 },
+    { subject: 'History', remaining: 0, pool: 0, upool: 0, alloc: 0, poolChoice1: 0, upoolChoice1: 0 },
   ]);
   assert.deepEqual(desk.students[0].supportFlags, ['Needs support']);
   assert.equal(desk.summary.buffer, 0);
@@ -539,7 +540,7 @@ test('token load keeps a comma-joined subject string as one entry and still list
   assert.deepEqual(subjectLoadNames('["Theatre / Film","Biology"]'), ['Theatre / Film', 'Biology']);
   const joined = subjectTokenLoad([{ status: 'available', eligibleSubjects: 'Mathematics, Analysis and approaches' }]);
   assert.equal(joined.overlaps, false);
-  assert.deepEqual(joined.subjects, [{ subject: 'Mathematics, Analysis and approaches', remaining: 1, pool: 0, upool: 0, alloc: 0 }]);
+  assert.deepEqual(joined.subjects, [{ subject: 'Mathematics, Analysis and approaches', remaining: 1, pool: 0, upool: 0, alloc: 0, poolChoice1: 0, upoolChoice1: 0 }]);
   const stored = tokenFromDoc({
     id: 't1',
     staffId: SMITH,
@@ -577,6 +578,8 @@ test('a subject name that contains commas stays one requested subject and one to
     pool: 2,
     upool: 1,
     alloc: 1,
+    poolChoice1: 0,
+    upoolChoice1: 0,
   });
   const plain = 'Sports, Exercise, and Health Science';
   const fragments = ['Sports', 'Exercise', 'and Health Science'];
@@ -713,7 +716,7 @@ test('live sheet mappings merge choice data onto static auxiliary columns', () =
   assert.equal(parsed.rows[1].line, 4);
   assert.equal(parsed.rows[0].fields['Mentor note'], 'Bring sources');
   assert.equal(parsed.rows[0].fields['HL subjects'], 'Bio');
-  assert.equal(parsed.rows[0].fields['First choice'], undefined);
+  assert.equal(parsed.rows[0].fields['First choice'], 'Physics');
   assert.equal(parsed.rows[0].fields['Student Email'], undefined);
   const settings = settingsForLiveLink(emptySettings(), 'https://docs.google.com/spreadsheets/d/abc123_XYZ-000000000000/edit', 'abc123_XYZ-000000000000', 'Choices', mappings, headers);
   assert.equal(liveSheetLinked(settings), true);
@@ -722,8 +725,12 @@ test('live sheet mappings merge choice data onto static auxiliary columns', () =
   assert.equal(settings.sheetName, 'Choices');
   assert.ok(settings.detectedDynamicKeys.includes('Mentor note'));
   assert.ok(settings.detectedDynamicKeys.includes('HL subjects'));
-  assert.equal(settings.detectedDynamicKeys.includes('First choice'), false);
+  assert.equal(settings.detectedDynamicKeys.includes('First choice'), true);
   assert.equal(settings.detectedDynamicKeys.includes('Student Email'), false);
+  assert.ok(dashboardFieldKeys(settings).includes('First choice'));
+  assert.ok(dashboardFieldKeys(settings).includes('choice1'));
+  assert.equal(dashboardFieldKeys(settings).includes('Student Email'), false);
+  assert.equal(settings.columns.find((column) => column.key === 'First choice')?.source, 'live');
   assert.equal(settings.columns.find((column) => column.key === 'Mentor note')?.source, 'live');
   assert.equal(settings.columns.find((column) => column.key === 'HL subjects')?.source, 'live');
   assert.equal(settings.liveSheetTab, 'Choices');
@@ -751,6 +758,7 @@ test('live sheet mappings merge choice data onto static auxiliary columns', () =
   assert.equal(merged.dynamicData['Y10 GPA'], 'Weak');
   assert.equal(merged.dynamicData['HL subjects'], 'Bio');
   assert.equal(merged.dynamicData['Mentor note'], 'Bring sources');
+  assert.equal(merged.dynamicData['First choice'], 'Physics');
   assert.equal(merged.pendingClear, true);
   assert.equal(liveWorkspaceDirty(undefined, merged), true);
   assert.equal(liveWorkspaceDirty({ ...merged, updatedAt: 'earlier' }, { ...merged, updatedAt: 'later' }), false);
@@ -783,6 +791,60 @@ test('live sheet mappings merge choice data onto static auxiliary columns', () =
   assert.equal(staticAgain.dynamicData['Y10 GPA'], 'Strong');
   assert.equal(staticAgain.dynamicData['HL subjects'], 'Bio');
   assert.equal(staticAgain.dynamicData['Mentor note'], 'Bring sources');
+  assert.equal(staticAgain.dynamicData['First choice'], 'Physics');
+});
+
+test('pool and upool count first-choice requests separately from every request', () => {
+  const load = subjectTokenLoad([
+    { status: 'available', eligibleSubjects: ['History'] },
+  ], [
+    { subjects: ['History', 'Biology'], primary: 'History', allocated: false },
+    { subjects: ['History'], primary: 'Biology', allocated: false },
+    { subjects: ['History'], primary: 'History', allocated: true, assignedSubject: 'History' },
+    { subjects: ['Biology'], primary: 'Biology', allocated: true },
+  ]);
+  const history = load.subjects.find((item) => item.subject === 'History');
+  const biology = load.subjects.find((item) => item.subject === 'Biology');
+  assert.equal(history?.pool, 3);
+  assert.equal(history?.poolChoice1, 2);
+  assert.equal(history?.upool, 2);
+  assert.equal(history?.upoolChoice1, 1);
+  assert.equal(biology?.pool, 2);
+  assert.equal(biology?.poolChoice1, 1);
+  assert.equal(biology?.upool, 1);
+  assert.equal(biology?.upoolChoice1, 0);
+});
+
+test('an interdisciplinary draft can take any available token', () => {
+  const tokens = [token({ id: 'art', staffId: SMITH, status: 'available', eligibleSubjects: ['Art'] })];
+  const refused = planDraft({
+    studentId: JANE,
+    staffId: SMITH,
+    subject: 'History',
+    tokens,
+    memberSupervisorId: '',
+    pendingClear: false,
+    interdisciplinary: true,
+    interdisciplinarySubject: 'Biology',
+  });
+  assert.match(refused.error, /does not match/);
+  const allowed = planDraft({
+    studentId: JANE,
+    staffId: SMITH,
+    subject: 'History',
+    tokens,
+    memberSupervisorId: '',
+    pendingClear: false,
+    interdisciplinary: true,
+    interdisciplinarySubject: 'Biology',
+    bypassSubject: true,
+    tokenId: 'art',
+  });
+  assert.equal(allowed.changed, true);
+  assert.equal(allowed.tokens[0].id, 'art');
+  assert.equal(allowed.tokens[0].assignedSubject, 'History');
+  assert.equal(allowed.tokens[0].interdisciplinary, true);
+  assert.equal(allowed.tokens[0].interdisciplinarySubject, 'Biology');
 });
 
 function rgb(hex: string): [number, number, number] {
