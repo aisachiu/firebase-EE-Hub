@@ -45,6 +45,7 @@ export const state = {
   allocationWatchCohort: '',
   allocationListenFallback: false,
   allocationPendingEdits: {},
+  allocationPendingFlags: {},
   allocationRevision: 0,
   allocationPaintDeferred: false,
   allocationSyncClock: 0,

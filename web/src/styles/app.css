@@ -835,6 +835,19 @@ main.staff-list { max-width: 1480px; }
 .alloc-cues { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
 .supervisor-cue { margin: 0; padding: 2px 8px; border: 1px solid var(--subject, var(--line)); border-radius: 999px; background: var(--subject-bg, white); color: var(--subject-fg, #495057); font-size: 11px; font-weight: 700; cursor: pointer; }
 .supervisor-cue.is-chosen { font-weight: 800; outline: 3px solid var(--ink); outline-offset: 1px; box-shadow: 0 0 0 1px white; }
+.alloc-teacher-pick { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; font-size: 12px; }
+.alloc-teacher-select { width: 100%; min-width: 160px; padding: 7px 9px; color: var(--ink); background: white; border: 1px solid var(--line); border-radius: 3px; }
+.alloc-teacher-select option.alloc-teacher-empty,
+.alloc-batch select option.alloc-teacher-empty {
+  color: #8aa0b3;
+  background: #f4f6f8;
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.alloc-flag-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; }
+.alloc-flag-toggle { margin: 0; font-size: 12px; font-weight: 700; }
+.alloc-flag-note { min-width: 140px; flex: 1 1 140px; padding: 4px 6px; color: var(--ink); background: white; border: 1px solid var(--line); border-radius: 3px; }
+.alloc-desk tr.is-flagged td:first-child { box-shadow: inset 3px 0 0 #c1121f; }
 .alloc-cue-empty { margin: 6px 0 0; }
 .id-tag { display: inline-block; padding: 2px 8px; border-radius: 3px; background: #e7f1f8; color: var(--ink); font-size: 12px; font-weight: 800; letter-spacing: .04em; line-height: 1.3; }
 .alloc-legend { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; margin: 0 0 8px; }

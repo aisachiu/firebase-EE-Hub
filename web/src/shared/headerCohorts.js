@@ -86,6 +86,7 @@ export function replaceHeaderCohort(next) {
   state.allocationDataSelected = [];
   state.allocationInterdisciplinary = {};
   state.allocationInterdisciplinarySubject = {};
+  state.allocationPendingFlags = {};
   state.tokenEditId = '';
   state.memberProvisionFilter = 'all';
   state.staffSupervisor = '';

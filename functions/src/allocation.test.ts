@@ -18,6 +18,7 @@ import {
   listCohortTokens,
   saveAllocationChoices,
   saveAllocationConfig,
+  saveAllocationFlag,
   saveStaffQuotas,
   saveStaffSubjects,
   updateCohortToken,
@@ -510,8 +511,9 @@ test('a live sheet link merges choice rows onto static auxiliary data', async ()
   assert.equal(saved.columns.find((column) => column.key === 'Mentor note')?.source, 'live');
   assert.equal(saved.columns.find((column) => column.key === 'HL subjects')?.source, 'live');
   assert.equal(saved.columns.find((column) => column.key === 'Y10 GPA')?.source, 'static');
-  assert.equal(saved.detectedDynamicKeys.includes('First choice'), false);
+  assert.equal(saved.detectedDynamicKeys.includes('First choice'), true);
   assert.equal(saved.detectedDynamicKeys.includes('Student Number'), false);
+  assert.equal(saved.columns.find((column) => column.key === 'First choice')?.source, 'live');
 
   const synced = await resyncLiveChoiceData(app, '2026', { workbook: sheets });
   assert.equal(synced.updated, 1);
@@ -523,6 +525,7 @@ test('a live sheet link merges choice rows onto static auxiliary data', async ()
   assert.equal(jane?.dynamicData['Y10 GPA'], 'Weak');
   assert.equal(jane?.dynamicData['HL subjects'], 'Bio');
   assert.equal(jane?.dynamicData['Mentor note'], 'Bring sources');
+  assert.equal(jane?.dynamicData['First choice'], 'Physics');
   const syncedConfig = await app.store.getAllocationConfig('2026');
   assert.ok(syncedConfig?.lastLiveSync);
   assert.equal(syncedConfig?.lastSyncedAt, syncedConfig?.lastLiveSync);
@@ -554,6 +557,7 @@ test('a live sheet link merges choice rows onto static auxiliary data', async ()
   assert.equal(afterStatic?.dynamicData['Y10 GPA'], 'Strong');
   assert.equal(afterStatic?.dynamicData['HL subjects'], 'Bio');
   assert.equal(afterStatic?.dynamicData['Mentor note'], 'Bring sources');
+  assert.equal(afterStatic?.dynamicData['First choice'], 'Physics');
 
   const config = await app.store.getAllocationConfig('2026');
   await saveAllocationConfig(app, '2026', { primaryChoiceKey: 'choice1', secondaryChoiceKey: 'choice2', columns: config?.columns || [] });
@@ -587,4 +591,23 @@ test('auto apply colours writes a distinct hex onto every subject', async () => 
   const denied = appFor(SMITH);
   await seed(denied);
   await assert.rejects(autoApplySubjectColours(denied), /Access denied/);
+});
+
+test('a coordinator flag and note persist on the allocation workspace', async () => {
+  const app = appFor();
+  await seed(app);
+  const saved = await saveAllocationFlag(app, '2026', JANE, true, 'Check the proposal');
+  assert.equal(saved.isFlagged, true);
+  assert.equal(saved.flagNote, 'Check the proposal');
+  const workspace = await app.store.getWorkspace('2026', JANE);
+  assert.equal(workspace?.isFlagged, true);
+  assert.equal(workspace?.flagNote, 'Check the proposal');
+  const desk = await getAllocationDesk(app, '2026');
+  const jane = desk.students.find((student) => student.studentId === JANE);
+  assert.equal(jane?.isFlagged, true);
+  assert.equal(jane?.flagNote, 'Check the proposal');
+  await saveAllocationFlag(app, '2026', JANE, false, '');
+  const cleared = await app.store.getWorkspace('2026', JANE);
+  assert.equal(cleared?.isFlagged, false);
+  assert.equal(cleared?.flagNote, '');
 });

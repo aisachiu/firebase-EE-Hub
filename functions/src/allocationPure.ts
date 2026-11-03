@@ -27,6 +27,9 @@ export interface WorkspaceRecord {
   subjectChoices: Record<string, string | number | boolean>;
   dynamicData: Record<string, string | number | boolean>;
   pendingClear: boolean;
+  /** Coordinator flag on the allocation workspace. Survives draft and publish. */
+  isFlagged?: boolean;
+  flagNote?: string;
   updatedAt: string;
 }
 
@@ -189,6 +192,9 @@ export interface DeskStudent {
   /** Distinct tags parsed from a comma-separated support flag cell. */
   supportFlags: string[];
   choices: { primary: string; secondary: string; interdisciplinary: boolean };
+  /** Coordinator flag stored on the allocation workspace. */
+  isFlagged: boolean;
+  flagNote: string;
   flags: {
     drafted: boolean;
     committed: boolean;
@@ -428,13 +434,20 @@ export function planDraft(input: {
   interdisciplinarySubject?: string;
   /** Batch assign may place a teacher's own subject token when it does not match the student's request. */
   overrideSubject?: boolean;
+  /** Interdisciplinary assignment may place any available token, even when the subject does not match. */
+  bypassSubject?: boolean;
+  /** Take this token instead of the first eligible open slot. */
+  tokenId?: string;
 }): DraftPlan {
   const studentId = normalizeEmail(input.studentId);
-  const staffId = normalizeEmail(input.staffId);
+  const requestedToken = text(input.tokenId);
+  const tokenForRequest = requestedToken ? input.tokens.find((token) => token.id === requestedToken) : undefined;
+  const staffId = normalizeEmail(tokenForRequest?.staffId || input.staffId);
   const subject = text(input.subject);
   const interdisciplinary = input.interdisciplinary === true;
   const interdisciplinarySubject = interdisciplinary ? text(input.interdisciplinarySubject) : '';
   const overrideSubject = input.overrideSubject === true;
+  const bypassSubject = input.bypassSubject === true;
   const mine = input.tokens.filter((token) => token.allocatedTo === studentId && token.status !== 'available');
   if (mine.length > 1) {
     return { tokens: [], pendingClear: input.pendingClear, changed: false, error: `${studentId} has more than one token.`, code: 'conflict' };
@@ -466,13 +479,15 @@ export function planDraft(input: {
       code: '',
     };
   }
-  if (current && current.staffId === staffId) {
-    const mismatch = subjectMismatch(subject, current.eligibleSubjects);
+  if (current && current.staffId === staffId && (!requestedToken || requestedToken === current.id)) {
     let assignedSubject = subject;
-    if (mismatch) {
-      assignedSubject = overrideSubject ? (current.eligibleSubjects[0] || '') : '';
-      if (!assignedSubject || subjectMismatch(assignedSubject, current.eligibleSubjects)) {
-        return { tokens: [], pendingClear: input.pendingClear, changed: false, error: mismatch, code: 'conflict' };
+    if (!bypassSubject) {
+      const mismatch = subjectMismatch(subject, current.eligibleSubjects);
+      if (mismatch) {
+        assignedSubject = overrideSubject ? (current.eligibleSubjects[0] || '') : '';
+        if (!assignedSubject || subjectMismatch(assignedSubject, current.eligibleSubjects)) {
+          return { tokens: [], pendingClear: input.pendingClear, changed: false, error: mismatch, code: 'conflict' };
+        }
       }
     }
     const sameFlag = (current.interdisciplinary === true) === interdisciplinary;
@@ -488,18 +503,26 @@ export function planDraft(input: {
     };
   }
   const available = input.tokens.filter((token) => token.staffId === staffId && token.status === 'available');
+  if (requestedToken && !available.some((token) => token.id === requestedToken)) {
+    return { tokens: [], pendingClear: input.pendingClear, changed: false, error: 'That token is no longer available.', code: 'capacity' };
+  }
   if (!available.length) {
     return { tokens: [], pendingClear: input.pendingClear, changed: false, error: `${staffId} has no available slots.`, code: 'capacity' };
   }
-  let preferred = subject
-    ? available.find((token) => subjectsOverlap(subject, token.eligibleSubjects))
-    : available[0];
+  let preferred = requestedToken ? available.find((token) => token.id === requestedToken) : undefined;
   let assignedSubject = subject;
-  if (!preferred && overrideSubject) {
+  if (!preferred) {
+    preferred = subject
+      ? available.find((token) => bypassSubject || subjectsOverlap(subject, token.eligibleSubjects))
+      : available[0];
+  }
+  if (!preferred && overrideSubject && !bypassSubject) {
     preferred = available.find((token) => token.eligibleSubjects.length);
     assignedSubject = preferred ? preferred.eligibleSubjects[0] : subject;
   }
-  if (!preferred || (assignedSubject && !subjectsOverlap(assignedSubject, preferred.eligibleSubjects))) {
+  if (!preferred && bypassSubject) preferred = available[0];
+  if (bypassSubject) assignedSubject = subject;
+  if (!preferred || (!bypassSubject && assignedSubject && !subjectsOverlap(assignedSubject, preferred.eligibleSubjects))) {
     return {
       tokens: [],
       pendingClear: input.pendingClear,
@@ -962,12 +985,26 @@ export interface QuotaCapacity {
 
 export interface SubjectLoadDemand {
   subjects: string[];
+  /** Subject names the student picked as their first choice. */
+  primary?: unknown;
   allocated: boolean;
   assignedSubject?: string;
 }
 
+export interface SubjectLoadRow {
+  subject: string;
+  remaining: number;
+  pool: number;
+  upool: number;
+  alloc: number;
+  /** Students in `pool` who requested this subject as choice 1. */
+  poolChoice1: number;
+  /** Unallocated students in `upool` who requested this subject as choice 1. */
+  upoolChoice1: number;
+}
+
 export interface SubjectTokenLoad {
-  subjects: { subject: string; remaining: number; pool: number; upool: number; alloc: number }[];
+  subjects: SubjectLoadRow[];
   /** Available tokens with no eligible subject. */
   untied: number;
   /** An available token can be taken in more than one subject, so those remaining counts overlap. */
@@ -982,12 +1019,12 @@ export function subjectTokenLoad(
 ): SubjectTokenLoad {
   let untied = 0;
   let overlaps = false;
-  const groups = new Map<string, { subject: string; remaining: number; pool: number; upool: number; alloc: number }>();
+  const groups = new Map<string, SubjectLoadRow>();
   const bucket = (subject: string) => {
     const key = subject.toLowerCase();
     const current = groups.get(key);
     if (current) return current;
-    const created = { subject, remaining: 0, pool: 0, upool: 0, alloc: 0 };
+    const created = { subject, remaining: 0, pool: 0, upool: 0, alloc: 0, poolChoice1: 0, upoolChoice1: 0 };
     groups.set(key, created);
     return created;
   };
@@ -1008,14 +1045,20 @@ export function subjectTokenLoad(
   });
   demand.forEach((row) => {
     const seen = new Set<string>();
+    const primary = new Set(subjectNamesForLoad(row.primary, catalogue).map((name) => name.toLowerCase()));
     coalesceKnownSubjects(row.subjects, catalogue).forEach((subject) => {
       const name = text(subject);
       const key = name.toLowerCase();
       if (!name || seen.has(key)) return;
       seen.add(key);
       const current = bucket(name);
+      const firstChoice = primary.has(key);
       current.pool += 1;
-      if (!row.allocated) current.upool += 1;
+      if (firstChoice) current.poolChoice1 += 1;
+      if (!row.allocated) {
+        current.upool += 1;
+        if (firstChoice) current.upoolChoice1 += 1;
+      }
     });
     if (row.allocated && !tokens.some((token) => text(token.assignedSubject))) {
       const assigned = subjectNamesForLoad(row.assignedSubject, catalogue)[0] || '';
@@ -1138,8 +1181,31 @@ export function workspaceFromDoc(doc: Doc, id: string): WorkspaceRecord {
     subjectChoices: plainMap(doc.subjectChoices),
     dynamicData: plainMap(doc.dynamicData),
     pendingClear: doc.pendingClear === true,
+    isFlagged: doc.isFlagged === true,
+    flagNote: text(doc.flagNote),
     updatedAt: text(doc.updatedAt),
   };
+}
+
+/** Every column a coordinator can show on the allocation dashboard, including choice columns. */
+export function dashboardFieldKeys(settings: Pick<AllocationSettings, 'detectedDynamicKeys' | 'detectedChoiceKeys' | 'columnMappings'> | null | undefined): string[] {
+  const keys: string[] = [];
+  const seen = new Set<string>();
+  const add = (value: unknown) => {
+    const name = text(value);
+    if (!name || seen.has(name.toLowerCase())) return;
+    seen.add(name.toLowerCase());
+    keys.push(name);
+  };
+  (settings?.detectedDynamicKeys || []).forEach(add);
+  (settings?.detectedChoiceKeys || []).forEach(add);
+  const mapped = settings?.columnMappings?.subjectChoice;
+  if (mapped) {
+    add(mapped.primary);
+    add(mapped.secondary);
+    add(mapped.interdisciplinary);
+  }
+  return keys;
 }
 
 export function settingsFromDoc(doc: Doc | null): AllocationSettings {
@@ -1153,7 +1219,11 @@ export function settingsFromDoc(doc: Doc | null): AllocationSettings {
     interdisciplinaryKey: text(doc.interdisciplinaryKey),
     hlColumn: text(doc.hlColumn),
     supportColumn: text(doc.supportColumn),
-    columns: columnFlags(doc.columns, detectedDynamicKeys),
+    columns: columnFlags(doc.columns, dashboardFieldKeys({
+      detectedDynamicKeys,
+      detectedChoiceKeys,
+      columnMappings: columnMappingsFrom(doc.columnMappings),
+    })),
     detectedChoiceKeys,
     detectedDynamicKeys,
     lastWorkspaceSync: text(doc.lastWorkspaceSync),
@@ -1267,14 +1337,11 @@ export function settingsForLiveLink(
   return ingestLiveHeaders(next, headers);
 }
 
-/** Headers used as the merge key or as subject choices. They are not dashboard columns. */
+/** Identity columns stay off the dashboard. Choice columns are toggleable dashboard fields. */
 export function reservedLiveHeaders(mappings: LiveColumnMappings): Set<string> {
   return new Set([
     mappings.core.studentNumber,
     mappings.core.studentEmail,
-    mappings.subjectChoice.primary,
-    mappings.subjectChoice.secondary,
-    mappings.subjectChoice.interdisciplinary,
   ].map((header) => text(header)).filter(Boolean));
 }
 
@@ -1330,9 +1397,19 @@ function tagLiveColumnSources(settings: AllocationSettings, headerKeys: string[]
 }
 
 export function mergeDetected(settings: AllocationSettings, choiceKeys: string[], dynamicKeys: string[]): AllocationSettings {
-  const columns = dynamicKeys.map((key) => {
-    const prior = settings.columns.find((column) => column.key === key);
-    if (prior) return { ...prior, colorScale: prior.colorScale === true, expanded: prior.expanded === true, source: prior.source === 'live' ? 'live' as const : 'static' as const };
+  const columnKeys: string[] = [];
+  const seen = new Set<string>();
+  const pushKey = (key: string) => {
+    const name = text(key);
+    if (!name || seen.has(name.toLowerCase())) return;
+    seen.add(name.toLowerCase());
+    columnKeys.push(name);
+  };
+  dynamicKeys.forEach(pushKey);
+  choiceKeys.forEach(pushKey);
+  const columns = columnKeys.map((key) => {
+    const prior = settings.columns.find((column) => column.key.toLowerCase() === key.toLowerCase());
+    if (prior) return { ...prior, key, colorScale: prior.colorScale === true, expanded: prior.expanded === true, source: prior.source === 'live' ? 'live' as const : 'static' as const };
     return {
       key,
       showOnCard: true,
@@ -1743,8 +1820,9 @@ export function applySavedConfig(current: AllocationSettings, incoming: Doc): Al
   const choiceKeys = new Set(current.detectedChoiceKeys);
   const dynamicKeys = new Set(current.detectedDynamicKeys);
   const columns = Array.isArray(incoming.columns) ? incoming.columns : [];
-  const nextColumns = current.detectedDynamicKeys.length
-    ? current.detectedDynamicKeys.map((key) => {
+  const fieldKeys = dashboardFieldKeys(current);
+  const nextColumns = fieldKeys.length
+    ? fieldKeys.map((key) => {
       const prior = current.columns.find((column) => column.key === key);
       return flagFrom(key, columns.find((column) => text(column?.key) === key) || prior, prior);
     })
@@ -2114,6 +2192,8 @@ export function buildDesk(input: {
         subjectChoices: workspace?.subjectChoices || {},
         dynamicData: workspace?.dynamicData || {},
         pendingClear: !!workspace?.pendingClear,
+        isFlagged: workspace?.isFlagged === true,
+        flagNote: text(workspace?.flagNote),
         requestedSubjects,
         supportFlags,
         token: token ? {
