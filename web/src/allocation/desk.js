@@ -1660,6 +1660,10 @@ export function bindAllocation(target, desk) {
   if (drawerPeek) drawerPeek.addEventListener('click', function() {
     state.allocationDrawerOpen = true;
     paintAllocation();
+    if (window.matchMedia && window.matchMedia('(max-width: 720px)').matches) {
+      const close = document.getElementById('alloc-drawer-close');
+      if (close) close.focus();
+    }
   });
   const drawerClose = document.getElementById('alloc-drawer-close');
   if (drawerClose) drawerClose.addEventListener('click', function() {
