@@ -41,6 +41,14 @@ import {
   AllocationPreviewRow,
 } from './allocationPure';
 import { WORKSPACE_SHEET_HELP } from './workspaceSheetHelp';
+import {
+  logAllocationDrafts,
+  logCreatedTokens,
+  logRemovedToken,
+  logTokenWrites,
+  logUpdatedToken,
+  readAllocationAudits,
+} from './allocationAudit';
 import { Doc, HubError, normalizeEmail, nowIso, shortId, text } from './util';
 
 export interface AllocationIngestResult {
@@ -69,10 +77,10 @@ interface ExportDeps {
   now?: Date;
 }
 
-export async function getAllocationDesk(app: App, cohortId: unknown): Promise<AllocationDesk & { driveReady: boolean; driveActor: string; driveError: string }> {
+export async function getAllocationDesk(app: App, cohortId: unknown): Promise<AllocationDesk & { driveReady: boolean; driveActor: string; driveError: string; auditLogs: Doc[] }> {
   await requireAdmin(app, 'GET_ALLOCATION_DESK');
   const cohort = await requireCohort(app, text(cohortId));
-  const [members, workspaceDocs, tokenDocs, configDoc, staff, drive, subjectDocs] = await Promise.all([
+  const [members, workspaceDocs, tokenDocs, configDoc, staff, drive, subjectDocs, auditLogs] = await Promise.all([
     app.store.listMembers(cohort.id),
     app.store.listWorkspace(cohort.id),
     app.store.listTokens(cohort.id),
@@ -80,6 +88,7 @@ export async function getAllocationDesk(app: App, cohortId: unknown): Promise<Al
     app.store.list(COLLECTIONS.staffUsers),
     presentDriveAccount(app),
     app.store.list(COLLECTIONS.subjects),
+    readAllocationAudits(app, cohort.id),
   ]);
   const choiceSources = new Map<string, unknown>();
   workspaceDocs.forEach((doc) => {
@@ -95,7 +104,7 @@ export async function getAllocationDesk(app: App, cohortId: unknown): Promise<Al
     subjects: subjectDocs,
     choiceSources,
   });
-  return { ...desk, driveReady: drive.ready, driveActor: drive.actorEmail, driveError: drive.ready ? '' : drive.error };
+  return { ...desk, auditLogs, driveReady: drive.ready, driveActor: drive.actorEmail, driveError: drive.ready ? '' : drive.error };
 }
 
 export async function draftAllocation(app: App, cohortId: unknown, studentId: unknown, staffId: unknown, subject: unknown, interdisciplinary?: unknown, interdisciplinarySubject?: unknown, options?: unknown) {
@@ -135,6 +144,9 @@ export async function draftAllocation(app: App, cohortId: unknown, studentId: un
       data: { ...workspace, studentId: email, pendingClear: plan.pendingClear, updatedAt: now },
     });
     await app.store.applyAllocationOps(ops);
+    const before = tokens.find((token) => token.allocatedTo === email && token.status !== 'available');
+    const after = plan.tokens.find((token) => token.allocatedTo === email && token.status !== 'available');
+    await logAllocationDrafts(app, user, cohort.id, [{ studentId: email, before, after }]);
     return { changed: true, studentId: email, pendingClear: plan.pendingClear };
   });
 }
@@ -197,6 +209,11 @@ export async function batchDraftAllocations(app: App, cohortId: unknown, staffId
       });
     });
     if (ops.length) await app.store.applyAllocationOps(ops);
+    await logAllocationDrafts(app, user, cohort.id, plan.assigned.map((studentId) => ({
+      studentId,
+      before: tokens.find((token) => token.allocatedTo === studentId && token.status !== 'available'),
+      after: plan.tokenWrites.find((token) => token.allocatedTo === studentId && token.status !== 'available'),
+    })));
     return {
       assigned: plan.assigned,
       skipped: skippedInactive.concat(plan.skipped),
@@ -427,7 +444,9 @@ export async function applyAllocationIngest(app: App, cohortId: unknown, source:
   const cohort = text(cohortId);
   return audited(app, user, 'APPLY_ALLOCATION_INGEST', { cohortId: cohort, kind: text(kind) }, async () => {
     const prepared = await prepareIngest(app, cohortId, source, kind, deps);
+    const beforeTokens = tokensFrom(await app.store.listTokens(prepared.preview.cohortId), prepared.preview.cohortId);
     await app.store.applyAllocationOps(prepared.ops);
+    await logTokenWrites(app, user, prepared.preview.cohortId, beforeTokens, prepared.ops);
     return prepared.preview;
   });
 }
@@ -537,7 +556,9 @@ export async function applyStaffQuotaTokens(app: App, cohortId: unknown): Promis
   const cohort = text(cohortId);
   return audited(app, user, 'APPLY_STAFF_QUOTA_TOKENS', { cohortId: cohort }, async () => {
     const prepared = await prepareStaffQuota(app, cohort);
+    const beforeTokens = tokensFrom(await app.store.listTokens(prepared.preview.cohortId), prepared.preview.cohortId);
     await app.store.applyAllocationOps(prepared.ops);
+    await logTokenWrites(app, user, prepared.preview.cohortId, beforeTokens, prepared.ops);
     return prepared.preview;
   });
 }
@@ -644,6 +665,7 @@ export async function addCohortTokens(app: App, cohortId: unknown, staffId: unkn
       await app.store.setToken(cohort.id, id, token);
       created.push(token);
     }
+    await logCreatedTokens(app, user, cohort.id, created);
     return { created: created.length };
   });
 }
@@ -660,6 +682,7 @@ export async function updateCohortToken(app: App, cohortId: unknown, tokenId: un
     if (!existing) throw new HubError('Token not found.');
     if (existing.status === 'committed') throw new HubError('This token is published. Unpublish it on the allocation dashboard before editing it.');
     await app.store.setToken(cohort.id, existing.id, { ...existing, eligibleSubjects });
+    await logUpdatedToken(app, user, cohort.id, existing, eligibleSubjects);
     return { id: existing.id, eligibleSubjects };
   });
 }
@@ -674,6 +697,7 @@ export async function deleteCohortToken(app: App, cohortId: unknown, tokenId: un
     if (!existing) throw new HubError('Token not found.');
     if (existing.status === 'committed') throw new HubError('This token is published. Return it to draft on the allocation dashboard before deleting it.');
     await app.store.removeToken(cohort.id, existing.id);
+    await logRemovedToken(app, user, cohort.id, existing);
     return { deleted: true, id: existing.id };
   });
 }

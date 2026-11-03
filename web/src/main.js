@@ -57,6 +57,7 @@ window.eeWatchAllocation = function(cohortId, handlers) {
     settings: null,
     staff: null,
     subjects: null,
+    auditLogs: null,
   };
   const seen = {};
   function emit(key, value) {
@@ -72,6 +73,7 @@ window.eeWatchAllocation = function(cohortId, handlers) {
       settings: bucket.settings,
       staff: bucket.staff,
       subjects: bucket.subjects,
+      auditLogs: bucket.auditLogs,
     });
   }
   function fail(error) {
@@ -88,6 +90,7 @@ window.eeWatchAllocation = function(cohortId, handlers) {
   }, fail));
   unsubs.push(onSnapshot(collection(db, 'staffUsers'), function(snap) { emit('staff', allocationDocs(snap)); }, fail));
   unsubs.push(onSnapshot(collection(db, 'subjects'), function(snap) { emit('subjects', allocationDocs(snap)); }, fail));
+  unsubs.push(onSnapshot(collection(db, 'cohorts', cohortId, 'allocationAuditLogs'), function(snap) { emit('auditLogs', allocationDocs(snap)); }, fail));
   return function() {
     stopped = true;
     unsubs.forEach(function(stop) { stop(); });

@@ -23,6 +23,7 @@ import {
   saveStaffSubjects,
   updateCohortToken,
 } from './allocation';
+import { undoAllocationAudit } from './allocationAudit';
 import { spectrumColours } from './allocationPure';
 import { autoApplySubjectColours, getAdminRecords, saveAdminRecord } from './admin';
 import { getStaffHome, getStudentHome } from './journey';
@@ -47,6 +48,7 @@ function memory() {
   const workspace = new Map<string, Doc>();
   const config = new Map<string, Doc>();
   const audits: Doc[] = [];
+  const allocationAudits = new Map<string, Doc>();
   const lastAllocationOps: AllocationOp[][] = [];
   const key = (name: string, id: string) => `${name}\u0000${id}`;
   const copy = (row: Doc | undefined) => (row ? { ...row } : null);
@@ -89,6 +91,15 @@ function memory() {
       }
     },
     async addAudit(entry: Doc) { audits.push(entry); },
+    async listAllocationAudits(cohortId: string) {
+      return [...allocationAudits.keys()].filter((key) => key.startsWith(`${cohortId}\u0000`)).map((key) => ({ ...allocationAudits.get(key)! }));
+    },
+    async setAllocationAudit(cohortId: string, id: string, data: Doc) {
+      allocationAudits.set(`${cohortId}\u0000${id}`, { ...data, id });
+    },
+    async removeAllocationAudit(cohortId: string, id: string) {
+      allocationAudits.delete(`${cohortId}\u0000${id}`);
+    },
   };
   return store;
 }
@@ -611,3 +622,77 @@ test('a coordinator flag and note persist on the allocation workspace', async ()
   assert.equal(cleared?.isFlagged, false);
   assert.equal(cleared?.flagNote, '');
 });
+
+test('allocation audit log records drafts and cohort token changes and undoes through a point', async () => {
+  const app = appFor();
+  await seed(app);
+  await applyAllocationIngest(app, '2026', SHEET, 'workspace', { workbook: workbook([workspaceGrid]) });
+  await applyAllocationIngest(app, '2026', SHEET, 'tokens', { workbook: workbook([tokenGrid]) });
+  await app.store.setMember('2026', MARK, { StudentId: MARK, 'Display Name': 'Mark Lee', Surname: 'Lee', 'First Name': 'Mark', supervisorId: '', subject: '', eeActive: true });
+  const store = app.store as unknown as ReturnType<typeof memory>;
+  const beforeDrafts = (await store.listAllocationAudits('2026')).length;
+
+  await draftAllocation(app, '2026', JANE, SMITH, 'History');
+  await draftAllocation(app, '2026', MARK, SMITH, 'Geography');
+  await addCohortTokens(app, '2026', SMITH, ['English'], 1);
+  const logs = (await store.listAllocationAudits('2026')).slice().sort((left, right) => Number(left.seq) - Number(right.seq));
+  const jane = logs.find((row) => row.studentId === JANE && row.action === 'Allocated');
+  const mark = logs.find((row) => row.studentId === MARK && row.action === 'Allocated');
+  const added = logs.find((row) => row.action === 'Token added' && row.subject === 'English');
+  assert.ok(jane);
+  assert.equal(jane?.studentName, 'Doe, Jane');
+  assert.equal(jane?.subject, 'History');
+  assert.equal(jane?.teacher, 'Mr. Smith');
+  assert.equal(jane?.userName, 'Coordinator');
+  assert.ok(mark);
+  assert.ok(added);
+  assert.equal(added?.teacher, 'Mr. Smith');
+
+  const latest = await undoAllocationAudit(app, '2026', textId(added));
+  assert.equal(latest.undone, 1);
+  assert.equal((await app.store.listTokens('2026')).some((token) => (token.eligibleSubjects || []).join(', ') === 'English'), false);
+  assert.equal((await app.store.listTokens('2026')).filter((token) => token.allocatedTo).length, 2);
+
+  const afterLatest = await store.listAllocationAudits('2026');
+  assert.equal(afterLatest.some((row) => row.id === added?.id), false);
+  const throughJane = await undoAllocationAudit(app, '2026', textId(jane));
+  assert.equal(throughJane.undone, 2);
+  assert.equal((await app.store.listTokens('2026')).every((token) => token.status === 'available'), true);
+  const remaining = await store.listAllocationAudits('2026');
+  assert.equal(remaining.length, beforeDrafts);
+  assert.equal(remaining.some((row) => row.action === 'Allocated'), false);
+
+  const token = (await app.store.listTokens('2026'))[0];
+  await updateCohortToken(app, '2026', token.id, ['History']);
+  const updated = (await store.listAllocationAudits('2026')).find((row) => row.action === 'Token updated' && row.tokenId === token.id);
+  assert.ok(updated);
+  await undoAllocationAudit(app, '2026', textId(updated));
+  const restored = (await app.store.listTokens('2026')).find((item) => item.id === token.id);
+  assert.deepEqual(restored?.eligibleSubjects, token.eligibleSubjects);
+
+  await deleteCohortToken(app, '2026', token.id);
+  const removed = (await store.listAllocationAudits('2026')).find((row) => row.action === 'Token removed' && row.tokenId === token.id);
+  assert.ok(removed);
+  assert.equal((await app.store.listTokens('2026')).some((item) => item.id === token.id), false);
+  await undoAllocationAudit(app, '2026', textId(removed));
+  assert.equal((await app.store.listTokens('2026')).some((item) => item.id === token.id), true);
+});
+
+test('undo refuses a published allocation and leaves the log in place', async () => {
+  const app = appFor();
+  await seed(app);
+  await applyAllocationIngest(app, '2026', SHEET, 'workspace', { workbook: workbook([workspaceGrid]) });
+  await applyAllocationIngest(app, '2026', SHEET, 'tokens', { workbook: workbook([tokenGrid]) });
+  await draftAllocation(app, '2026', JANE, SMITH, 'History');
+  await commitAllocations(app, '2026');
+  const store = app.store as unknown as ReturnType<typeof memory>;
+  const jane = (await store.listAllocationAudits('2026')).find((row) => row.studentId === JANE && row.action === 'Allocated');
+  assert.ok(jane);
+  await assert.rejects(undoAllocationAudit(app, '2026', textId(jane)), /Unpublish/);
+  assert.equal((await app.store.listTokens('2026')).find((token) => token.allocatedTo === JANE)?.status, 'committed');
+  assert.equal((await store.listAllocationAudits('2026')).some((row) => row.id === jane?.id), true);
+});
+
+function textId(row: Doc | undefined): string {
+  return String(row?.id || '');
+}
