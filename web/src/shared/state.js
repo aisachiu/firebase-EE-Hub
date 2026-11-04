@@ -33,6 +33,7 @@ export const state = {
   adminHeaderOpen: {},
   allocationSelected: [],
   allocationSubjects: {},
+  allocationSubjectPicker: {},
   allocationSheetUrl: '',
   allocationLiveUrl: '',
   allocationLiveTab: '',

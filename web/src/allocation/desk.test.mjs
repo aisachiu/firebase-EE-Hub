@@ -141,7 +141,10 @@ test('allocation desk tags, filter, column order, supervisor cues, and token loa
     assert.doesNotMatch(chosenRow, /Pat Open/);
     assert.match(chosenRow, /<select/);
     assert.match(chosenRow, /class="subject-chip on"[^>]*data-subject="Psychology"/);
+    assert.match(chosenRow, /data-alloc-subject="jane@school.edu" data-subject="Psychology" checked/);
+    assert.match(chosenRow, /data-alloc-subject-add="jane@school.edu"/);
     assert.doesNotMatch(chosenRow, /class="subject-chip on"[^>]*data-subject="Theater"/);
+    assert.doesNotMatch(chosenRow, /data-subject="Theater" checked/);
     const subjectCell = chosenRow.split('</td>')[2];
     const supervisorCell = chosenRow.split('</td>')[3];
     assert.match(subjectCell, /Interdisciplinary EE/);
@@ -152,6 +155,26 @@ test('allocation desk tags, filter, column order, supervisor cues, and token loa
 
     const plain = deskMod.allocationRowMarkup(student({}), supervisors(), [], {});
     assert.doesNotMatch(plain, /subject-chip on/);
+    assert.match(plain, /data-alloc-subject-add="jane@school.edu"/);
+    assert.doesNotMatch(plain, /data-alloc-extra-subject/);
+    state.allocationSubjectPicker = { 'jane@school.edu': true };
+    state.allocationDesk = { subjects: [
+      { name: 'Psychology', shortName: 'Psy', colour: '#6b4c9a', department: 'Humanities' },
+      { name: 'Theater', shortName: 'The', colour: '#0e8a6a', department: 'Arts' },
+      { name: 'Biology', shortName: 'Bio', colour: '#1d4e89', department: 'Science' },
+    ] };
+    const opened = deskMod.allocationRowMarkup(student({}), supervisors(), [], {});
+    assert.match(opened, /data-alloc-extra-subject="jane@school.edu"/);
+    assert.match(opened, /<option value="Biology">Biology<\/option>/);
+    assert.ok(opened.indexOf('data-subject="Theater"') < opened.indexOf('data-alloc-subject-add'));
+    assert.ok(opened.indexOf('data-alloc-subject-add') < opened.indexOf('data-alloc-extra-subject'));
+    const otherSubject = deskMod.allocationRowMarkup(student({ selectedSubject: 'Biology' }), supervisors(), [], {});
+    state.allocationSubjectPicker = {};
+    const otherChip = deskMod.allocationRowMarkup(student({ selectedSubject: 'Biology' }), supervisors(), [], {});
+    assert.match(otherChip, /class="subject-chip on"[^>]*data-subject="Biology"/);
+    assert.match(otherChip, /data-subject="Biology" checked/);
+    assert.doesNotMatch(otherChip, /class="subject-chip on"[^>]*data-subject="Psychology"/);
+    assert.doesNotMatch(otherSubject, /class="subject-chip on"[^>]*data-subject="Biology"/);
     assert.equal(deskMod.allocationSubjectAction(student({}), 'Theater').type, 'select');
     assert.equal(deskMod.allocationSubjectAction(student({ selectedSubject: 'Psychology', token: { assignedSubject: 'Psychology', staffId: 'psy@school.edu' } }), 'Psychology').type, 'select');
     assert.equal(deskMod.allocationSubjectAction(student({ selectedSubject: 'Psychology', token: { assignedSubject: 'Psychology', staffId: 'psy@school.edu' } }), 'Theater').type, 'select');
