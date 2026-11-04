@@ -292,16 +292,18 @@ export function preserveEeActive(incoming: Doc, previous: Doc | undefined): Doc 
   return { ...incoming, eeActive: previous.eeActive };
 }
 
-export function allocationTab(title: string): { kind: 'workspace' | 'tokens'; cohortId: string } | null {
+export function allocationTab(title: string): { kind: 'workspace' | 'tokens' | 'drafts'; cohortId: string } | null {
   const trimmed = title.trim().replace(/\s+/g, ' ');
   const data = /^cohortdata\s*:?\s*(\d{4})$/i.exec(trimmed);
   if (data) return { kind: 'workspace', cohortId: data[1] };
   const tokens = /^supervisortokens\s*:?\s*(\d{4})$/i.exec(trimmed);
   if (tokens) return { kind: 'tokens', cohortId: tokens[1] };
+  const drafts = /^allocations\s*:?\s*(\d{4})$/i.exec(trimmed);
+  if (drafts) return { kind: 'drafts', cohortId: drafts[1] };
   return null;
 }
 
-export function findAllocationTab(grids: Grid[], cohortId: string, kind: 'workspace' | 'tokens'): Grid | null {
+export function findAllocationTab(grids: Grid[], cohortId: string, kind: 'workspace' | 'tokens' | 'drafts'): Grid | null {
   return grids.find((grid) => {
     const parsed = allocationTab(grid.title);
     return !!parsed && parsed.kind === kind && parsed.cohortId === cohortId;
@@ -2572,9 +2574,23 @@ export function buildDesk(input: {
   };
 }
 
+const ALLOCATION_DRAFT_HEADERS = [
+  'StudentId',
+  'Display Name',
+  'Status',
+  'SupervisorEmail',
+  'AssignedSubject',
+  'SelectedSubject',
+  'SuggestedStaffEmail',
+  'SuggestedSubject',
+] as const;
+
 export function allocationExportRows(students: DeskStudent[], settings: AllocationSettings): (string | number | boolean)[][] {
-  const cards = settings.columns.filter((column) => column.showOnCard).map((column) => column.key);
-  const header = ['StudentId', 'Display Name', 'Status', 'SupervisorEmail', 'AssignedSubject', ...cards];
+  const reserved = new Set(ALLOCATION_DRAFT_HEADERS.map((header) => header.toLowerCase()));
+  const cards = settings.columns
+    .filter((column) => column.showOnCard && !reserved.has(column.key.toLowerCase()))
+    .map((column) => column.key);
+  const header = [...ALLOCATION_DRAFT_HEADERS, ...cards];
   const body = students.map((student) => {
     const status = student.flags.committed ? 'Committed' : student.flags.drafted ? 'Draft' : 'Unallocated';
     const row: (string | number | boolean)[] = [
@@ -2583,6 +2599,9 @@ export function allocationExportRows(students: DeskStudent[], settings: Allocati
       status,
       student.token?.staffId || '',
       student.token?.assignedSubject || '',
+      student.selectedSubject || '',
+      student.suggestedStaffId || '',
+      student.suggestedSubject || '',
     ];
     cards.forEach((key) => {
       const value = student.dynamicData[key];
@@ -2591,6 +2610,445 @@ export function allocationExportRows(students: DeskStudent[], settings: Allocati
     return row;
   });
   return [header, ...body];
+}
+
+export interface AllocationDraftSheetRow {
+  studentId: string;
+  /** Sheet text. Undefined when the Status column is absent. */
+  status?: string;
+  /** Undefined when that column is absent. A present blank cell is ''. */
+  supervisorEmail?: string;
+  assignedSubject?: string;
+  selectedSubject?: string;
+  suggestedStaffEmail?: string;
+  suggestedSubject?: string;
+}
+
+export function parseAllocationDraftGrid(grid: Grid): { rows: AllocationDraftSheetRow[]; warnings: string[] } {
+  const headers = headerRow(grid);
+  const studentIndex = headerIndex(headers, ['studentid']);
+  if (studentIndex < 0) throw new HubError(`${grid.title} needs a StudentId column.`);
+  const statusIndex = headerIndex(headers, ['status']);
+  const supervisorIndex = headerIndex(headers, ['supervisoremail', 'supervisor email']);
+  const assignedIndex = headerIndex(headers, ['assignedsubject', 'assigned subject']);
+  const selectedIndex = headerIndex(headers, ['selectedsubject', 'selected subject']);
+  const suggestedStaffIndex = headerIndex(headers, ['suggestedstaffemail', 'suggested staff email']);
+  const suggestedSubjectIndex = headerIndex(headers, ['suggestedsubject', 'suggested subject']);
+  const warnings: string[] = [];
+  const seen = new Set<string>();
+  const rows: AllocationDraftSheetRow[] = [];
+  const cell = (row: unknown[], index: number): string | undefined => (index < 0 ? undefined : text(row[index]).trim());
+  grid.rows.slice(1).filter(rowHasValue).forEach((row, index) => {
+    const line = index + 2;
+    const studentId = normalizeEmail(row[studentIndex]);
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(studentId)) {
+      warnings.push(`${grid.title} row ${line} needs a student email.`);
+      return;
+    }
+    const entry: AllocationDraftSheetRow = { studentId };
+    const status = cell(row, statusIndex);
+    const supervisorEmail = cell(row, supervisorIndex);
+    const assignedSubject = cell(row, assignedIndex);
+    const selectedSubject = cell(row, selectedIndex);
+    const suggestedStaffEmail = cell(row, suggestedStaffIndex);
+    const suggestedSubject = cell(row, suggestedSubjectIndex);
+    if (status !== undefined) entry.status = status;
+    if (supervisorEmail !== undefined) entry.supervisorEmail = supervisorEmail;
+    if (assignedSubject !== undefined) entry.assignedSubject = assignedSubject;
+    if (selectedSubject !== undefined) entry.selectedSubject = selectedSubject;
+    if (suggestedStaffEmail !== undefined) entry.suggestedStaffEmail = suggestedStaffEmail;
+    if (suggestedSubject !== undefined) entry.suggestedSubject = suggestedSubject;
+    if (seen.has(studentId)) warnings.push(`${grid.title} repeats ${studentId}. The last row is kept.`);
+    seen.add(studentId);
+    const existing = rows.findIndex((item) => item.studentId === studentId);
+    if (existing >= 0) rows[existing] = entry;
+    else rows.push(entry);
+  });
+  return { rows, warnings };
+}
+
+export interface DraftBackfillPlan {
+  writes: WorkspaceRecord[];
+  warnings: string[];
+  rows: AllocationPreviewRow[];
+  drafts: number;
+  writing: number;
+  skipped: number;
+}
+
+/**
+ * Copy each drafted token into an empty selected subject and an empty suggestion.
+ * A published token is ignored. A value that is already stored is left in place.
+ */
+export function planDraftTokenBackfill(input: {
+  tokens: TokenRecord[];
+  workspaces: WorkspaceRecord[];
+  roster: { studentId: string }[];
+  activeSubjects: string[];
+  now: string;
+}): DraftBackfillPlan {
+  const roster = new Set(input.roster.map((member) => normalizeEmail(member.studentId)).filter(Boolean));
+  const workspaces = new Map(input.workspaces.map((workspace) => [normalizeEmail(workspace.studentId), workspace]));
+  const held = new Map<string, TokenRecord[]>();
+  input.tokens.forEach((token) => {
+    const studentId = normalizeEmail(token.allocatedTo);
+    if (!studentId || token.status === 'available') return;
+    const list = held.get(studentId) || [];
+    list.push(token);
+    held.set(studentId, list);
+  });
+  const writes: WorkspaceRecord[] = [];
+  const warnings: string[] = [];
+  const rows: AllocationPreviewRow[] = [];
+  let drafts = 0;
+  held.forEach((list, studentId) => {
+    const draft = list.filter((token) => token.status === 'draft');
+    if (!draft.length) return;
+    drafts += 1;
+    const prior = workspaces.get(studentId);
+    const hub = allocationDraftSummary(prior, list.find((token) => token.status === 'draft') || list[0]);
+    if (!roster.has(studentId)) {
+      rows.push({ id: studentId, action: 'Skip', incoming: hub, hub: 'Not on the roster' });
+      warnings.push(`${studentId} is not on the roster.`);
+      return;
+    }
+    if (list.length > 1) {
+      rows.push({ id: studentId, action: 'Skip', incoming: hub, hub: 'More than one token' });
+      warnings.push(`${studentId} has more than one token.`);
+      return;
+    }
+    const token = draft[0];
+    const canonical = namedActiveSubject(token.assignedSubject, input.activeSubjects);
+    if (!text(token.assignedSubject).trim()) {
+      rows.push({ id: studentId, action: 'Skip', incoming: hub, hub: 'Draft token has no subject' });
+      warnings.push(`${studentId} has a draft token with no subject.`);
+      return;
+    }
+    if (!canonical) {
+      rows.push({ id: studentId, action: 'Skip', incoming: hub, hub: `${token.assignedSubject} is not an active subject` });
+      warnings.push(`${studentId}: ${token.assignedSubject} is not an active subject.`);
+      return;
+    }
+    const currentSubject = text(prior?.selectedSubject);
+    if (currentSubject && !sameLabel(currentSubject, canonical)) {
+      rows.push({ id: studentId, action: 'Skip', incoming: `Selected ${canonical}`, hub: `Selected subject is already ${currentSubject}` });
+      warnings.push(`${studentId} already has selected subject ${currentSubject}.`);
+      return;
+    }
+    const next = prior ? copyWorkspace(prior, input.now) : emptyWorkspaceRecord(studentId, input.now);
+    if (!currentSubject) next.selectedSubject = canonical;
+    const suggested = normalizeEmail(prior?.suggestedStaffId);
+    const teacher = normalizeEmail(token.staffId);
+    if (!suggested) {
+      next.suggestedStaffId = teacher;
+      next.suggestedSubject = canonical;
+    } else if (!sameLabel(suggested, teacher)) {
+      warnings.push(`${studentId} already has a suggestion for ${suggested}. The drafted teacher was left in place.`);
+    } else if (!text(prior?.suggestedSubject)) {
+      next.suggestedSubject = canonical;
+    }
+    const incoming = allocationDraftSummary(next, token);
+    if (!draftFieldsChanged(prior, next)) {
+      rows.push({ id: studentId, action: 'Unchanged', incoming, hub });
+      return;
+    }
+    writes.push(next);
+    rows.push({ id: studentId, action: prior ? 'Update' : 'Add', incoming, hub });
+  });
+  const skipped = rows.filter((row) => row.action === 'Skip').length;
+  const writing = rows.filter((row) => row.action === 'Add' || row.action === 'Update').length;
+  return { writes, warnings, rows, drafts, writing, skipped };
+}
+
+export interface AllocationDraftIngestPlan {
+  workspaceWrites: WorkspaceRecord[];
+  tokenWrites: TokenRecord[];
+  draftChanges: { studentId: string; before?: TokenRecord; after?: TokenRecord }[];
+  warnings: string[];
+  rows: AllocationPreviewRow[];
+  writing: number;
+  skipped: number;
+}
+
+/** Restore selected subject, suggestion, and draft tokens from an ALLOCATIONS sheet. Published tokens stay put. */
+export function planAllocationDraftIngest(input: {
+  rows: AllocationDraftSheetRow[];
+  tokens: TokenRecord[];
+  workspaces: WorkspaceRecord[];
+  roster: { studentId: string; supervisorId?: string }[];
+  activeSubjects: string[];
+  now: string;
+}): AllocationDraftIngestPlan {
+  const roster = new Map(input.roster.map((member) => [normalizeEmail(member.studentId), normalizeEmail(member.supervisorId)]));
+  const tokens = input.tokens.map((token) => ({ ...token, eligibleSubjects: token.eligibleSubjects.slice() }));
+  const original = new Map(input.tokens.map((token) => [token.id, token]));
+  const workspaces = new Map(input.workspaces.map((workspace) => [normalizeEmail(workspace.studentId), workspace]));
+  const warnings: string[] = [];
+  const rows: AllocationPreviewRow[] = [];
+  const workspaceWrites: WorkspaceRecord[] = [];
+  const draftChanges: AllocationDraftIngestPlan['draftChanges'] = [];
+  input.rows.forEach((row) => {
+    const studentId = normalizeEmail(row.studentId);
+    const prior = workspaces.get(studentId);
+    const beforeToken = heldToken(tokens, studentId);
+    const hubToken = beforeToken === 'conflict' ? beforeTokenList(tokens, studentId)[0] : beforeToken;
+    const hub = allocationDraftSummary(prior, hubToken);
+    if (!roster.has(studentId)) {
+      rows.push({ id: studentId, action: 'Skip', incoming: hub, hub: 'Not on the roster' });
+      warnings.push(`${studentId} is not on the roster.`);
+      return;
+    }
+    const next = prior ? copyWorkspace(prior, input.now) : emptyWorkspaceRecord(studentId, input.now);
+    applySheetSubject(row, next, input.activeSubjects, warnings);
+    applySheetSuggestion(row, prior, next, input.activeSubjects, warnings);
+    applySheetToken(row, studentId, tokens, roster.get(studentId) || '', next, warnings, draftChanges);
+    const after = heldToken(tokens, studentId);
+    const shown = after === 'conflict' ? beforeTokenList(tokens, studentId)[0] : after;
+    const incoming = allocationDraftSummary(next, shown);
+    const tokenMoved = draftChanges.some((change) => change.studentId === studentId);
+    if (!draftFieldsChanged(prior, next) && !tokenMoved) {
+      rows.push({ id: studentId, action: 'Unchanged', incoming, hub });
+      return;
+    }
+    if (draftFieldsChanged(prior, next)) workspaceWrites.push(next);
+    rows.push({ id: studentId, action: prior || hubToken ? 'Update' : 'Add', incoming, hub });
+  });
+  const tokenWrites = tokens.filter((token) => {
+    const before = original.get(token.id);
+    return !!before && tokenAssignmentChanged(before, token);
+  });
+  const skipped = rows.filter((row) => row.action === 'Skip').length;
+  const writing = rows.filter((row) => row.action === 'Add' || row.action === 'Update').length;
+  return { workspaceWrites, tokenWrites, draftChanges, warnings, rows, writing, skipped };
+}
+
+function applySheetSubject(row: AllocationDraftSheetRow, next: WorkspaceRecord, active: string[], warnings: string[]): void {
+  if (row.selectedSubject === undefined) return;
+  const raw = text(row.selectedSubject).trim();
+  if (!raw) {
+    next.selectedSubject = '';
+    return;
+  }
+  const canonical = namedActiveSubject(raw, active);
+  if (!canonical) {
+    warnings.push(`${row.studentId}: ${raw} is not an active subject. Selected subject was left unchanged.`);
+    return;
+  }
+  next.selectedSubject = canonical;
+}
+
+function applySheetSuggestion(
+  row: AllocationDraftSheetRow,
+  prior: WorkspaceRecord | undefined,
+  next: WorkspaceRecord,
+  active: string[],
+  warnings: string[],
+): void {
+  if (row.suggestedStaffEmail !== undefined) {
+    const raw = text(row.suggestedStaffEmail).trim();
+    if (!raw) {
+      next.suggestedStaffId = '';
+      next.suggestedSubject = '';
+      return;
+    }
+    const teacher = normalizeEmail(raw);
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(teacher)) {
+      warnings.push(`${row.studentId}: ${raw} is not a staff email. The suggestion was left unchanged.`);
+      return;
+    }
+    if (!next.selectedSubject) {
+      next.suggestedStaffId = '';
+      next.suggestedSubject = '';
+      warnings.push(`${row.studentId}: choose a subject before suggesting a teacher. The suggestion was cleared.`);
+      return;
+    }
+    let suggestedSubject = next.selectedSubject;
+    if (row.suggestedSubject !== undefined && text(row.suggestedSubject).trim()) {
+      const canonical = namedActiveSubject(row.suggestedSubject, active);
+      if (!canonical) {
+        warnings.push(`${row.studentId}: ${text(row.suggestedSubject)} is not an active subject. The suggestion was left unchanged.`);
+        return;
+      }
+      suggestedSubject = canonical;
+    }
+    next.suggestedStaffId = teacher;
+    next.suggestedSubject = suggestedSubject;
+    return;
+  }
+  if (row.selectedSubject === undefined) return;
+  if (!next.selectedSubject) {
+    next.suggestedStaffId = '';
+    next.suggestedSubject = '';
+    return;
+  }
+  const suggested = text(prior?.suggestedSubject);
+  if (!suggested || sameLabel(suggested, next.selectedSubject)) {
+    const staff = normalizeEmail(prior?.suggestedStaffId);
+    next.suggestedStaffId = staff;
+    next.suggestedSubject = staff ? next.selectedSubject : '';
+    return;
+  }
+  next.suggestedStaffId = '';
+  next.suggestedSubject = '';
+}
+
+function applySheetToken(
+  row: AllocationDraftSheetRow,
+  studentId: string,
+  tokens: TokenRecord[],
+  memberSupervisorId: string,
+  workspace: WorkspaceRecord,
+  warnings: string[],
+  draftChanges: { studentId: string; before?: TokenRecord; after?: TokenRecord }[],
+): void {
+  if (row.supervisorEmail === undefined) return;
+  const current = heldToken(tokens, studentId);
+  if (current === 'conflict') {
+    warnings.push(`${studentId} has more than one token.`);
+    return;
+  }
+  const sheetStatus = sheetDraftStatus(row.status);
+  if (row.status !== undefined && text(row.status) && !sheetStatus) {
+    warnings.push(`${studentId}: status "${text(row.status)}" was not recognised.`);
+  }
+  const requested = text(row.supervisorEmail).trim();
+  const subject = sheetAssignedSubject(row, current, requested);
+  if (sheetStatus === 'committed' || current?.status === 'committed') {
+    const same = !!current
+      && current.status === 'committed'
+      && (!requested || sameLabel(current.staffId, requested))
+      && (row.assignedSubject === undefined || sameLabel(current.assignedSubject, subject));
+    if (!same) warnings.push(`${studentId} has a published allocation. The token was left in place.`);
+    return;
+  }
+  if (sheetStatus === 'unallocated' || !requested) {
+    if (!current) return;
+    commitSheetDraft(studentId, '', '', tokens, memberSupervisorId, workspace, current, warnings, draftChanges);
+    return;
+  }
+  const teacher = normalizeEmail(requested);
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(teacher)) {
+    warnings.push(`${studentId}: ${requested} is not a staff email. The draft token was left unchanged.`);
+    return;
+  }
+  if (current && current.status === 'draft' && sameLabel(current.staffId, teacher) && sameLabel(current.assignedSubject, subject)) return;
+  commitSheetDraft(studentId, teacher, subject, tokens, memberSupervisorId, workspace, current, warnings, draftChanges);
+}
+
+function sheetAssignedSubject(row: AllocationDraftSheetRow, current: TokenRecord | undefined, requested: string): string {
+  if (row.assignedSubject !== undefined) return text(row.assignedSubject).trim();
+  if (current && requested && sameLabel(current.staffId, requested)) return current.assignedSubject;
+  return '';
+}
+
+function commitSheetDraft(
+  studentId: string,
+  staffId: string,
+  subject: string,
+  tokens: TokenRecord[],
+  memberSupervisorId: string,
+  workspace: WorkspaceRecord,
+  before: TokenRecord | undefined,
+  warnings: string[],
+  draftChanges: { studentId: string; before?: TokenRecord; after?: TokenRecord }[],
+): void {
+  const plan = planDraft({
+    studentId,
+    staffId,
+    subject,
+    tokens,
+    memberSupervisorId,
+    pendingClear: workspace.pendingClear,
+    interdisciplinary: before?.interdisciplinary === true,
+    interdisciplinarySubject: before?.interdisciplinarySubject || '',
+  });
+  if (plan.error) {
+    warnings.push(`${studentId}: ${plan.error}`);
+    return;
+  }
+  if (!plan.changed) return;
+  plan.tokens.forEach((token) => {
+    const index = tokens.findIndex((item) => item.id === token.id);
+    if (index >= 0) tokens[index] = token;
+  });
+  workspace.pendingClear = plan.pendingClear;
+  const after = heldToken(tokens, studentId);
+  draftChanges.push({ studentId, before, after: after && after !== 'conflict' ? after : undefined });
+}
+
+function sheetDraftStatus(value: string | undefined): '' | 'committed' | 'draft' | 'unallocated' {
+  if (value === undefined) return '';
+  const raw = value.trim().toLowerCase();
+  if (raw === 'committed' || raw === 'published') return 'committed';
+  if (raw === 'draft' || raw === 'drafted') return 'draft';
+  if (raw === 'unallocated' || raw === 'clear' || raw === 'none') return 'unallocated';
+  return '';
+}
+
+function heldToken(tokens: TokenRecord[], studentId: string): TokenRecord | undefined | 'conflict' {
+  const mine = beforeTokenList(tokens, studentId);
+  if (mine.length > 1) return 'conflict';
+  return mine[0];
+}
+
+function beforeTokenList(tokens: TokenRecord[], studentId: string): TokenRecord[] {
+  return tokens.filter((token) => normalizeEmail(token.allocatedTo) === studentId && token.status !== 'available');
+}
+
+function namedActiveSubject(subject: unknown, active: string[]): string {
+  const raw = text(subject).trim().toLowerCase();
+  if (!raw) return '';
+  return active.find((name) => name.toLowerCase() === raw) || '';
+}
+
+function sameLabel(left: unknown, right: unknown): boolean {
+  return text(left).trim().toLowerCase() === text(right).trim().toLowerCase();
+}
+
+function copyWorkspace(workspace: WorkspaceRecord, now: string): WorkspaceRecord {
+  return {
+    ...workspace,
+    studentId: normalizeEmail(workspace.studentId),
+    subjectChoices: { ...workspace.subjectChoices },
+    dynamicData: { ...workspace.dynamicData },
+    pendingClear: workspace.pendingClear === true,
+    isFlagged: workspace.isFlagged === true,
+    flagNote: text(workspace.flagNote),
+    selectedSubject: text(workspace.selectedSubject),
+    suggestedStaffId: normalizeEmail(workspace.suggestedStaffId),
+    suggestedSubject: text(workspace.suggestedSubject),
+    updatedAt: now,
+  };
+}
+
+function draftFieldsChanged(before: WorkspaceRecord | undefined, after: WorkspaceRecord): boolean {
+  if (!before) return !!(after.selectedSubject || after.suggestedStaffId || after.suggestedSubject || after.pendingClear);
+  return text(before.selectedSubject) !== after.selectedSubject
+    || normalizeEmail(before.suggestedStaffId) !== after.suggestedStaffId
+    || text(before.suggestedSubject) !== after.suggestedSubject
+    || (before.pendingClear === true) !== after.pendingClear;
+}
+
+function tokenAssignmentChanged(before: TokenRecord, after: TokenRecord): boolean {
+  return before.staffId !== after.staffId
+    || before.status !== after.status
+    || before.allocatedTo !== after.allocatedTo
+    || before.assignedSubject !== after.assignedSubject
+    || before.interdisciplinary !== after.interdisciplinary
+    || before.interdisciplinarySubject !== after.interdisciplinarySubject
+    || before.eligibleSubjects.join('\n') !== after.eligibleSubjects.join('\n');
+}
+
+function allocationDraftSummary(
+  workspace: { selectedSubject?: string; suggestedStaffId?: string } | undefined,
+  token: TokenRecord | undefined,
+): string {
+  const selected = text(workspace?.selectedSubject) || '—';
+  const suggested = normalizeEmail(workspace?.suggestedStaffId) || '—';
+  const assignment = !token
+    ? 'Unallocated'
+    : `${token.status === 'committed' ? 'Committed' : 'Draft'} ${token.staffId}${token.assignedSubject ? ` ${token.assignedSubject}` : ''}`;
+  return `Selected ${selected} · Suggested ${suggested} · ${assignment}`;
 }
 
 function headerRow(grid: Grid): string[] {

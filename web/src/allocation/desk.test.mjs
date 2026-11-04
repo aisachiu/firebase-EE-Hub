@@ -79,6 +79,18 @@ test('allocation desk tags, filter, column order, supervisor cues, and token loa
     state.allocationDataSelected = [];
     state.adminHeaderOpen = {};
     state.adminTableSort = { 'alloc-desk': { key: 'name', dir: 1 } };
+    state.allocationIngestKind = 'drafts';
+    const settingsHtml = deskMod.allocationSettingsMarkup({
+      driveReady: true,
+      settings: { columns: [], detectedDynamicKeys: [], detectedChoiceKeys: [] },
+      summary: { staffCount: 1, tokenCount: 1, activeStudents: 1, buffer: 0 },
+      students: [],
+    });
+    assert.match(settingsHtml, /value="drafts"[^>]*checked/);
+    assert.match(settingsHtml, /id="alloc-backfill-preview"/);
+    assert.match(settingsHtml, /Selected Subject/);
+    assert.match(deskMod.allocationConfirmCopy('drafts'), /Published tokens stay as they are/);
+    state.allocationIngestKind = 'workspace';
 
     const html = deskMod.allocationDashboardMarkup(desk());
     const head = html.slice(html.indexOf('<thead>'), html.indexOf('</thead>'));

@@ -4,6 +4,9 @@ import { WORKSPACE_SHEET_HELP } from './workspaceSheetHelp';
 import {
   allocationExportRows,
   allocationTab,
+  parseAllocationDraftGrid,
+  planAllocationDraftIngest,
+  planDraftTokenBackfill,
   applySavedConfig,
   buildDesk,
   choiceMatchFlag,
@@ -1053,6 +1056,205 @@ test('an interdisciplinary draft can take any available token', () => {
   assert.equal(allowed.tokens[0].assignedSubject, 'History');
   assert.equal(allowed.tokens[0].interdisciplinary, true);
   assert.equal(allowed.tokens[0].interdisciplinarySubject, 'Biology');
+});
+
+test('allocation draft sheets export and ingest selected subject, suggestion, and draft tokens', () => {
+  const rows = allocationExportRows([{
+    studentId: JANE,
+    displayName: 'Jane Doe',
+    selectedSubject: 'History',
+    suggestedStaffId: SMITH,
+    suggestedSubject: 'History',
+    token: { staffId: SMITH, assignedSubject: 'History', status: 'draft' },
+    flags: { drafted: true, committed: false },
+    dynamicData: { 'Y10 GPA': 3.4, SelectedSubject: 'ignore' },
+  } as never], {
+    ...emptySettings(),
+    columns: [
+      { key: 'Y10 GPA', showOnCard: true, filterable: false, sortable: true, colorScale: false, expanded: false, source: 'static' },
+      { key: 'SelectedSubject', showOnCard: true, filterable: false, sortable: false, colorScale: false, expanded: false, source: 'static' },
+    ],
+  });
+  assert.deepEqual(rows[0].slice(0, 8), ['StudentId', 'Display Name', 'Status', 'SupervisorEmail', 'AssignedSubject', 'SelectedSubject', 'SuggestedStaffEmail', 'SuggestedSubject']);
+  assert.equal(rows[0].includes('Y10 GPA'), true);
+  assert.equal(rows[0].filter((header) => header === 'SelectedSubject').length, 1);
+  assert.deepEqual(rows[1].slice(0, 8), [JANE, 'Jane Doe', 'Draft', SMITH, 'History', 'History', SMITH, 'History']);
+  assert.equal(allocationTab('ALLOCATIONS 2026')?.kind, 'drafts');
+  assert.equal(allocationTab('ALLOCATIONS: 2026')?.cohortId, '2026');
+
+  const parsed = parseAllocationDraftGrid({ title: 'ALLOCATIONS 2026', rows });
+  assert.equal(parsed.warnings.length, 0);
+  const open = token({ id: 'open', staffId: SMITH, status: 'available', eligibleSubjects: ['History'] });
+  const kept = {
+    studentId: JANE,
+    subjectChoices: { choice1: 'History' },
+    dynamicData: { 'Y10 GPA': 3.4 },
+    pendingClear: false,
+    isFlagged: true,
+    flagNote: 'keep',
+    selectedSubject: '',
+    suggestedStaffId: '',
+    suggestedSubject: '',
+    updatedAt: '',
+  };
+  const plan = planAllocationDraftIngest({
+    rows: parsed.rows,
+    tokens: [open],
+    workspaces: [kept],
+    roster: [{ studentId: JANE }],
+    activeSubjects: ['History'],
+    now: '2026-11-05T00:00:00.000Z',
+  });
+  assert.equal(plan.writing, 1);
+  assert.equal(plan.workspaceWrites[0].selectedSubject, 'History');
+  assert.equal(plan.workspaceWrites[0].suggestedStaffId, SMITH);
+  assert.equal(plan.workspaceWrites[0].suggestedSubject, 'History');
+  assert.equal(plan.workspaceWrites[0].isFlagged, true);
+  assert.equal(plan.workspaceWrites[0].flagNote, 'keep');
+  assert.equal(plan.workspaceWrites[0].dynamicData['Y10 GPA'], 3.4);
+  assert.equal(plan.tokenWrites[0].allocatedTo, JANE);
+  assert.equal(plan.tokenWrites[0].assignedSubject, 'History');
+  assert.equal(plan.tokenWrites[0].status, 'draft');
+  assert.equal(plan.draftChanges[0].after?.staffId, SMITH);
+
+  const again = planAllocationDraftIngest({
+    rows: parsed.rows,
+    tokens: plan.tokenWrites,
+    workspaces: plan.workspaceWrites,
+    roster: [{ studentId: JANE }],
+    activeSubjects: ['History'],
+    now: '2026-11-05T00:00:00.000Z',
+  });
+  assert.equal(again.writing, 0);
+  assert.equal(again.tokenWrites.length, 0);
+});
+
+test('draft ingest leaves a published token in place and can release a draft', () => {
+  const published = token({ id: 'pub', staffId: SMITH, status: 'committed', allocatedTo: JANE, assignedSubject: 'History' });
+  const blocked = planAllocationDraftIngest({
+    rows: [{ studentId: JANE, status: 'Draft', supervisorEmail: DAVIS, assignedSubject: 'History', selectedSubject: 'History' }],
+    tokens: [published, token({ id: 'other', staffId: DAVIS, status: 'available', eligibleSubjects: ['History'] })],
+    workspaces: [],
+    roster: [{ studentId: JANE }],
+    activeSubjects: ['History'],
+    now: '2026-11-05T00:00:00.000Z',
+  });
+  assert.equal(blocked.tokenWrites.length, 0);
+  assert.match(blocked.warnings.join(' '), /published allocation/);
+  assert.equal(blocked.workspaceWrites[0].selectedSubject, 'History');
+
+  const drafted = token({ id: 'draft', staffId: SMITH, status: 'draft', allocatedTo: JANE, assignedSubject: 'History' });
+  const released = planAllocationDraftIngest({
+    rows: [{ studentId: JANE, status: 'Unallocated', supervisorEmail: '', assignedSubject: '', selectedSubject: '' }],
+    tokens: [drafted],
+    workspaces: [{
+      studentId: JANE,
+      subjectChoices: {},
+      dynamicData: {},
+      pendingClear: false,
+      selectedSubject: 'History',
+      suggestedStaffId: SMITH,
+      suggestedSubject: 'History',
+      updatedAt: '',
+    }],
+    roster: [{ studentId: JANE, supervisorId: '' }],
+    activeSubjects: ['History'],
+    now: '2026-11-05T00:00:00.000Z',
+  });
+  assert.equal(released.tokenWrites[0].status, 'available');
+  assert.equal(released.tokenWrites[0].allocatedTo, '');
+  assert.equal(released.workspaceWrites[0].selectedSubject, '');
+  assert.equal(released.workspaceWrites[0].suggestedStaffId, '');
+});
+
+test('an older allocation sheet without the new columns still restores the draft token', () => {
+  const parsed = parseAllocationDraftGrid({
+    title: 'ALLOCATIONS 2026',
+    rows: [
+      ['StudentId', 'Display Name', 'Status', 'SupervisorEmail', 'AssignedSubject'],
+      [JANE, 'Jane Doe', 'Draft', SMITH, 'History'],
+    ],
+  });
+  assert.equal(parsed.rows[0].selectedSubject, undefined);
+  const plan = planAllocationDraftIngest({
+    rows: parsed.rows,
+    tokens: [token({ id: 'open', staffId: SMITH, status: 'available', eligibleSubjects: ['History'] })],
+    workspaces: [{
+      studentId: JANE,
+      subjectChoices: { choice1: 'Art' },
+      dynamicData: {},
+      pendingClear: false,
+      selectedSubject: 'Biology',
+      suggestedStaffId: '',
+      suggestedSubject: '',
+      updatedAt: '',
+    }],
+    roster: [{ studentId: JANE }],
+    activeSubjects: ['History', 'Biology'],
+    now: '2026-11-05T00:00:00.000Z',
+  });
+  assert.equal(plan.tokenWrites[0].allocatedTo, JANE);
+  assert.equal(plan.tokenWrites[0].assignedSubject, 'History');
+  assert.equal(plan.workspaceWrites.length, 0);
+});
+
+test('backfill copies a drafted token into an empty selected subject and suggestion', () => {
+  const prior = {
+    studentId: JANE,
+    subjectChoices: { choice1: 'History' },
+    dynamicData: { Note: 'keep' },
+    pendingClear: false,
+    isFlagged: true,
+    flagNote: 'watch',
+    selectedSubject: '',
+    suggestedStaffId: '',
+    suggestedSubject: '',
+    updatedAt: '',
+  };
+  const plan = planDraftTokenBackfill({
+    tokens: [
+      token({ id: 'draft', staffId: SMITH, status: 'draft', allocatedTo: JANE, assignedSubject: 'history' }),
+      token({ id: 'pub', staffId: DAVIS, status: 'committed', allocatedTo: MARK, assignedSubject: 'Biology' }),
+      token({ id: 'blank', staffId: DAVIS, status: 'draft', allocatedTo: 'ada@vsa.edu', assignedSubject: '' }),
+      token({ id: 'set', staffId: DAVIS, status: 'draft', allocatedTo: 'bea@vsa.edu', assignedSubject: 'Biology' }),
+    ],
+    workspaces: [
+      prior,
+      {
+        studentId: 'bea@vsa.edu',
+        subjectChoices: {},
+        dynamicData: {},
+        pendingClear: false,
+        selectedSubject: 'History',
+        suggestedStaffId: '',
+        suggestedSubject: '',
+        updatedAt: '',
+      },
+    ],
+    roster: [{ studentId: JANE }, { studentId: MARK }, { studentId: 'ada@vsa.edu' }, { studentId: 'bea@vsa.edu' }],
+    activeSubjects: ['History', 'Biology'],
+    now: '2026-11-05T00:00:00.000Z',
+  });
+  assert.equal(plan.writing, 1);
+  assert.equal(plan.writes[0].studentId, JANE);
+  assert.equal(plan.writes[0].selectedSubject, 'History');
+  assert.equal(plan.writes[0].suggestedStaffId, SMITH);
+  assert.equal(plan.writes[0].suggestedSubject, 'History');
+  assert.equal(plan.writes[0].isFlagged, true);
+  assert.equal(plan.writes[0].flagNote, 'watch');
+  assert.equal(plan.writes[0].dynamicData.Note, 'keep');
+  assert.equal(plan.rows.find((row) => row.id === MARK), undefined);
+  assert.equal(plan.rows.find((row) => row.id === 'ada@vsa.edu')?.action, 'Skip');
+  assert.equal(plan.rows.find((row) => row.id === 'bea@vsa.edu')?.action, 'Skip');
+  const second = planDraftTokenBackfill({
+    tokens: [token({ id: 'draft', staffId: SMITH, status: 'draft', allocatedTo: JANE, assignedSubject: 'History' })],
+    workspaces: plan.writes,
+    roster: [{ studentId: JANE }],
+    activeSubjects: ['History'],
+    now: '2026-11-05T00:00:00.000Z',
+  });
+  assert.equal(second.writing, 0);
+  assert.equal(second.rows[0].action, 'Unchanged');
 });
 
 function rgb(hex: string): [number, number, number] {

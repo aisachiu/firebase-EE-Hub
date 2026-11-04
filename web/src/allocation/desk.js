@@ -1746,15 +1746,16 @@ export function allocationSettingsMarkup(desk) {
   const columns = dashboardFieldKeys(settings);
   const flags = {};
   (settings.columns || []).forEach(function(column) { flags[column.key] = column; });
-  const kind = state.allocationIngestKind === 'tokens' ? 'tokens' : 'workspace';
+  const kind = allocationIngestKind();
   const flagLabels = [['showOnCard', 'Show in table'], ['filterable', 'Filterable'], ['sortable', 'Sortable'], ['colorScale', 'Color scale'], ['expanded', 'Expanded']];
   const collapsed = { open: false };
   return `<p class="muted">Showing student data for the cohort selected in the header.</p>
     ${allocationSection('alloc-sync', 'Google Sheets sync', `<section class="alloc-panel">
         ${desk.driveReady ? '' : `<p class="notice">${escapeHtml(desk.driveError || 'Connect Google in Admin → Google account before ingesting sheets.')}</p>`}
-        <p class="doc-hint">Choose workspace or tokens, export a workbook if you need one, paste the link, then preview. Workspace ingest reads <code>COHORTDATA: ${escapeHtml(state.cohortId)}</code> and upserts by StudentId. Token ingest reads <code>SUPERVISORTOKENS: ${escapeHtml(state.cohortId)}</code> and tops up quotas. Neither deletes rows that are missing from the sheet. When a live choice sheet is linked, a workspace ingest keeps the live choice values and live dashboard columns, and still updates the other auxiliary columns.</p>
+        <p class="doc-hint">Choose workspace, allocation drafts, or tokens, export a workbook if you need one, paste the link, then preview. Workspace ingest reads <code>COHORTDATA: ${escapeHtml(state.cohortId)}</code> and upserts by StudentId. Allocation draft ingest reads <code>ALLOCATIONS: ${escapeHtml(state.cohortId)}</code> and restores the selected subject, the suggested teacher, and draft tokens. Token ingest reads <code>SUPERVISORTOKENS: ${escapeHtml(state.cohortId)}</code> and tops up quotas. None of these deletes rows that are missing from the sheet. When a live choice sheet is linked, a workspace ingest keeps the live choice values and live dashboard columns, and still updates the other auxiliary columns.</p>
         <div class="sheet-choices" role="radiogroup" aria-label="Ingest kind">
           <label class="check-option"><input type="radio" name="alloc-ingest-kind" value="workspace" ${kind === 'workspace' ? 'checked' : ''}><span>Workspace data <span class="muted">COHORTDATA: ${escapeHtml(state.cohortId)}</span></span></label>
+          <label class="check-option"><input type="radio" name="alloc-ingest-kind" value="drafts" ${kind === 'drafts' ? 'checked' : ''}><span>Allocation drafts <span class="muted">ALLOCATIONS: ${escapeHtml(state.cohortId)}</span></span></label>
           <label class="check-option"><input type="radio" name="alloc-ingest-kind" value="tokens" ${kind === 'tokens' ? 'checked' : ''}><span>Supervisor tokens <span class="muted">SUPERVISORTOKENS: ${escapeHtml(state.cohortId)}</span></span></label>
         </div>
         <div class="toolbar">
@@ -1762,8 +1763,13 @@ export function allocationSettingsMarkup(desk) {
           <button type="button" class="button secondary" id="alloc-export-tokens">Export token sheet</button>
           <button type="button" class="button secondary" id="alloc-open-quotas">Open EE quotas</button>
         </div>
-        <p class="muted">Export allocation drafts writes an <code>ALLOCATIONS: ${escapeHtml(state.cohortId)}</code> tab. Export token sheet writes <code>SUPERVISORTOKENS: ${escapeHtml(state.cohortId)}</code> from the EE quotas already saved on staff. Set those quotas before exporting tokens.</p>
+        <p class="muted">Export allocation drafts writes an <code>ALLOCATIONS: ${escapeHtml(state.cohortId)}</code> tab with the drafted or published supervisor, Selected Subject, and the suggested teacher. Paste that spreadsheet back, choose Allocation drafts, and ingest to restore those fields. Published tokens are not changed. Export token sheet writes <code>SUPERVISORTOKENS: ${escapeHtml(state.cohortId)}</code> from the EE quotas already saved on staff. Set those quotas before exporting tokens.</p>
         <p id="alloc-export-result" class="muted">${settings.lastExport ? 'Last draft export: ' + escapeHtml(allocationWhen(settings.lastExport)) : 'Drafts not exported yet'}${settings.lastWorkspaceSync ? ' · Workspace: ' + escapeHtml(allocationWhen(settings.lastWorkspaceSync)) : ''}${settings.lastTokenSync ? ' · Tokens: ' + escapeHtml(allocationWhen(settings.lastTokenSync)) : ''}</p>
+        <div class="toolbar"><button type="button" class="button secondary" id="alloc-backfill-preview">Preview draft backfill</button></div>
+        <p class="muted">Backfill fills an empty Selected Subject from each student's drafted token and copies that teacher into an empty suggestion. Published tokens, and any selected subject or suggestion already stored, stay as they are.</p>
+        <label class="check-option"><input type="checkbox" id="alloc-backfill-confirm"><span>Apply this backfill to the current cohort.</span></label>
+        <div class="toolbar"><button class="button" id="alloc-backfill-apply" type="button" disabled>Apply draft backfill</button></div>
+        <div id="alloc-backfill-result"></div>
         <label class="field" for="alloc-sheet-url">Spreadsheet link</label>
         <input id="alloc-sheet-url" value="${escapeHtml(state.allocationSheetUrl)}" placeholder="https://docs.google.com/spreadsheets/d/...">
         <label class="check-option"><input type="checkbox" id="alloc-ingest-confirm"><span id="alloc-confirm-label">${escapeHtml(allocationConfirmCopy(kind))}</span></label>
@@ -2365,7 +2371,7 @@ export function bindAllocation(target, desk) {
   });
   target.querySelectorAll('input[name="alloc-ingest-kind"]').forEach(function(input) {
     input.addEventListener('change', function() {
-      state.allocationIngestKind = input.value === 'tokens' ? 'tokens' : 'workspace';
+      state.allocationIngestKind = input.value === 'tokens' || input.value === 'drafts' ? input.value : 'workspace';
       const label = document.getElementById('alloc-confirm-label');
       if (label) label.textContent = allocationConfirmCopy(state.allocationIngestKind);
       clearAllocationPreview();
@@ -2379,6 +2385,10 @@ export function bindAllocation(target, desk) {
   if (exportButton) exportButton.addEventListener('click', exportAllocations);
   const exportTokens = document.getElementById('alloc-export-tokens');
   if (exportTokens) exportTokens.addEventListener('click', exportAllocationTokens);
+  const backfillPreview = document.getElementById('alloc-backfill-preview');
+  if (backfillPreview) backfillPreview.addEventListener('click', previewAllocationBackfill);
+  const backfillApply = document.getElementById('alloc-backfill-apply');
+  if (backfillApply) backfillApply.addEventListener('click', applyAllocationBackfill);
   bindLiveSheet(target);
   ['alloc-save-config', 'alloc-save-config-fields'].forEach(function(id) {
     const save = document.getElementById(id);
@@ -2762,10 +2772,15 @@ export function unpublishSelectedAllocations() {
   }).catch(showError);
 }
 
+export function allocationIngestKind() {
+  if (state.allocationIngestKind === 'tokens' || state.allocationIngestKind === 'drafts') return state.allocationIngestKind;
+  return 'workspace';
+}
+
 export function allocationConfirmCopy(kind) {
-  return kind === 'tokens'
-    ? 'Apply this token top-up. Tokens missing from the sheet stay in the hub.'
-    : 'Apply this student upsert. Students missing from the sheet stay in the hub.';
+  if (kind === 'tokens') return 'Apply this token top-up. Tokens missing from the sheet stay in the hub.';
+  if (kind === 'drafts') return 'Apply selected subjects, suggestions, and draft tokens from this sheet. Students missing from the sheet stay in the hub. Published tokens stay as they are.';
+  return 'Apply this student upsert. Students missing from the sheet stay in the hub.';
 }
 
 export function clearAllocationPreview() {
@@ -2783,7 +2798,7 @@ export function allocationSheetUrl() {
 }
 
 export function previewAllocationSheet() {
-  const kind = state.allocationIngestKind === 'tokens' ? 'tokens' : 'workspace';
+  const kind = allocationIngestKind();
   const url = allocationSheetUrl();
   if (!url) { showError(new Error('Paste a spreadsheet link.')); return; }
   callServer('previewAllocationIngest', state.cohortId, { url: url }, kind).then(function(preview) {
@@ -2804,7 +2819,7 @@ export function previewAllocationSheet() {
 }
 
 export function applyAllocationSheet() {
-  const kind = state.allocationIngestKind === 'tokens' ? 'tokens' : 'workspace';
+  const kind = allocationIngestKind();
   const url = allocationSheetUrl();
   const confirm = document.getElementById('alloc-ingest-confirm');
   if (!url) { showError(new Error('Paste a spreadsheet link.')); return; }
@@ -2812,12 +2827,53 @@ export function applyAllocationSheet() {
   const button = document.getElementById('alloc-apply');
   if (button) button.disabled = true;
   callServer('applyAllocationIngest', state.cohortId, { url: url }, kind).then(function() {
-    showSuccess(kind === 'workspace' ? 'Student data ingested.' : 'Staff tokens ingested.');
+    const message = kind === 'tokens' ? 'Staff tokens ingested.' : kind === 'drafts' ? 'Allocation drafts ingested.' : 'Student data ingested.';
+    showSuccess(message);
     loadAllocation();
   }).catch(function(error) {
     if (button) button.disabled = false;
     showError(error);
   });
+}
+
+export function previewAllocationBackfill() {
+  callServer('previewAllocationBackfill', state.cohortId).then(function(preview) {
+    paintAllocationBackfill(preview);
+  }).catch(showError);
+}
+
+export function applyAllocationBackfill() {
+  const confirm = document.getElementById('alloc-backfill-confirm');
+  if (!confirm || confirm.checked !== true) {
+    showError(new Error('Confirm the backfill before applying it.'));
+    return;
+  }
+  const button = document.getElementById('alloc-backfill-apply');
+  if (button) button.disabled = true;
+  callServer('applyAllocationBackfill', state.cohortId).then(function(result) {
+    paintAllocationBackfill(result);
+    showSuccess('Filled ' + (result.writing || 0) + ' selected subject' + (result.writing === 1 ? '' : 's') + ' from draft tokens.');
+    loadAllocation();
+  }).catch(function(error) {
+    if (button) button.disabled = false;
+    showError(error);
+  });
+}
+
+function paintAllocationBackfill(preview) {
+  const host = document.getElementById('alloc-backfill-result');
+  if (!host) return;
+  host.innerHTML = renderSheetIngestPreview({
+    note: 'Draft tokens are copied into an empty Selected Subject and an empty suggestion. Nothing already stored is replaced.',
+    summaryColumns: ['Draft tokens', 'Rows to write', 'Rows skipped'],
+    summaryRows: [[preview.drafts || 0, preview.writing || 0, preview.skipped || 0]],
+    detailTitle: 'Draft tokens',
+    detailColumns: ['Student', 'Action', 'After', 'Now'],
+    detailRows: (preview.rows || []).map(function(row) { return [row.id, row.action, row.incoming, row.hub]; }),
+    warnings: preview.warnings,
+  });
+  const apply = document.getElementById('alloc-backfill-apply');
+  if (apply) apply.disabled = false;
 }
 
 export function exportAllocations() {
