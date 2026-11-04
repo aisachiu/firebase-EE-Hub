@@ -1042,8 +1042,12 @@ th .sort-button:hover, .alloc-head .sort-button:hover, .sort-button:hover { colo
 .reflection-doc a { font-weight: 700; }
 .reflection-link-error { margin: 4px 0 0; }
 .student-page-list { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 8px; max-width: 640px; }
-.student-page-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 12px; background: white; border: 1px solid var(--line); }
-.student-page-row p { margin: 2px 0 0; }
+.student-page-row, .server-setting { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 12px; background: white; border: 1px solid var(--line); }
+.student-page-row p, .server-setting p { margin: 2px 0 0; }
+.server-settings .field textarea { max-width: 640px; }
+.shell.maintenance-page { max-width: 40rem; padding-top: 56px; }
+.shell.maintenance-page h1 { margin-bottom: 12px; }
+.maintenance-note { margin: 0 0 12px; white-space: pre-wrap; font-size: 16px; line-height: 1.5; color: #263746; }
 @container (max-width: 800px) {
   .view-columns { grid-template-columns: minmax(0, 1fr); }
 }

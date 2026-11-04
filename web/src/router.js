@@ -29,6 +29,7 @@ const ADMIN_PANELS = {
   students: { adminEntity: 'cohortMembers', title: 'Students in cohorts' },
   pathway: { adminEntity: 'pathway', title: 'Phases & milestones' },
   email: { adminEntity: 'emailNotifications', title: 'Email notifications' },
+  server: { adminEntity: 'serverSettings', title: 'Server' },
   'student-tasks': { adminEntity: 'studentTasks', title: 'Student Tasks' },
   'student-pages': { adminEntity: 'studentPages', title: 'Student Pages' },
   'student-users': { adminEntity: 'studentUsers', title: 'Student users' },
@@ -68,6 +69,28 @@ export function sectionTabs(user, actingAs) {
   if (permissions.canAdmin) tabs.push(['allocation', 'Allocation'], ['admin', 'Admin']);
   else if (permissions.isHOD) tabs.push(['allocation', 'Allocation']);
   return tabs;
+}
+
+export function isHubAdmin(user) {
+  const permissions = (user && user.permissions) || {};
+  return !!(permissions.canAdmin || permissions.isAdmin);
+}
+
+/** Where to send the browser. Empty means stay on the current path. */
+export function maintenanceTarget(settings, user, pathname) {
+  if (!settings || !settings.loaded) return '';
+  const path = normalizePath(pathname);
+  const admin = isHubAdmin(user);
+  if (!settings.maintenanceMode && path === '/maintenance') return '/';
+  if (settings.maintenanceMode && admin && path === '/maintenance') return '/';
+  if (settings.maintenanceMode && !admin && path !== '/maintenance') return '/maintenance';
+  return '';
+}
+
+function maintenanceBlocksNavigation(appState) {
+  const settings = appState && appState.serverSettings;
+  if (!settings || !settings.loaded || !settings.maintenanceMode) return false;
+  return !isHubAdmin(appState.user);
 }
 
 export function normalizePath(pathname) {
@@ -296,14 +319,13 @@ export function installHistory(onNavigate) {
   historyInstalled = true;
   installProvisioningLeaveGuard();
   window.addEventListener('popstate', function() {
-    if (!state.user) return;
-    if (!confirmProvisioningLeave()) {
+    if (state.user && !confirmProvisioningLeave()) {
       const path = pathFromState(state);
       window.history.pushState({ eeHub: path }, '', path + searchForState(state) + window.location.hash);
       return;
     }
     historyMode = 'pop';
-    applyLocation();
+    if (state.user && !maintenanceBlocksNavigation(state)) applyLocation();
     onNavigate();
   });
 }

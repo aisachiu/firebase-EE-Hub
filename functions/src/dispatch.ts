@@ -45,6 +45,7 @@ import {
 } from './cohortPathway';
 import { getMyActivity, getStaffHome, getStaffStudentHome, getStudentActivity, getStudentHome, recordStudentView } from './journey';
 import { saveReflectionNote } from './reflectionNotes';
+import { getServerSettings, saveServerSettings } from './serverSettings';
 import { getStudentPageSettings, saveStudentPageSettings } from './studentPages';
 import {
   createStaffNote,
@@ -236,6 +237,8 @@ export async function dispatch(app: App, method: string, args: unknown[]): Promi
     case 'addSupervisorTodo': return addSupervisorTodo(app, args[0], args[1], args[2]);
     case 'setSupervisorTodoStatus': return setSupervisorTodoStatus(app, args[0], args[1]);
     case 'deleteSupervisorTodo': return deleteSupervisorTodo(app, args[0]);
+    case 'getServerSettings': return getServerSettings(app);
+    case 'saveServerSettings': return saveServerSettings(app, args[0]);
     case 'getStudentPageSettings': return getStudentPageSettings(app);
     case 'saveStudentPageSettings': return saveStudentPageSettings(app, args[0]);
     case 'saveReflectionNote': return saveReflectionNote(app, args[0], args[1]);

@@ -1,5 +1,8 @@
+import { emptyServerSettings } from './serverSettings.js';
+
 export const state = {
   user: null,
+  serverSettings: emptyServerSettings(),
   view: 'home',
   cohortId: '',
   selectedStudent: null,
