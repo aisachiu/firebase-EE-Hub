@@ -44,6 +44,7 @@ export async function currentUser(app: App): Promise<HubUser> {
         isCoordinator: toBoolean(staff.isCoordinator),
         isAdmin: toBoolean(staff.isAdmin),
         canAdmin: toBoolean(staff.isAdmin) || toBoolean(staff.isCoordinator),
+        isHOD: toBoolean(staff.isHOD),
       },
     };
     return app.user;

@@ -1,4 +1,4 @@
-import { choiceMatchFlag, coalesceKnownSubjects, colorScaleFill, columnMappingsFrom, columnScaleExtent, dashboardFieldKeys, diplomaLevelFlag, LIVE_SHEET_FIELDS, LIVE_SHEET_GROUPS, liveLinkProblems, liveSheetLinked, liveSyncAge, scaleNumber, subjectTokenLoad, subjectsOverlap } from '../../../functions/src/allocationPure.ts';
+import { choiceMatchFlag, coalesceKnownSubjects, colorScaleFill, columnMappingsFrom, columnScaleExtent, dashboardFieldKeys, departmentOfSubject, departmentsMatch, diplomaLevelFlag, hodSuggestionOverview, LIVE_SHEET_FIELDS, LIVE_SHEET_GROUPS, liveLinkProblems, liveSheetLinked, liveSyncAge, scaleNumber, subjectTokenLoad, subjectsOverlap, suggestionCapacity } from '../../../functions/src/allocationPure.ts';
 import { adminDialogKind, closeAdminDialog, openAdminDialog } from '../admin/records.js';
 import { openStaffQuotas } from '../admin/staff.js';
 import { callServer } from '../shared/api.js';
@@ -40,22 +40,42 @@ export function openAllocationTokens() {
   renderShell();
 }
 
+function allocationPermissions() {
+  const permissions = (state.user && state.user.permissions) || {};
+  return { canAdmin: !!permissions.canAdmin, isHOD: !!permissions.isHOD };
+}
+
+function pureHodUser() {
+  const permissions = allocationPermissions();
+  return permissions.isHOD && !permissions.canAdmin;
+}
+
 export function renderAllocation() {
   advanceScene();
   const main = document.getElementById('main');
   main.classList.add('plan-wide');
-  const view = state.allocationView === 'settings' || state.allocationView === 'tokens' ? state.allocationView : 'dashboard';
+  let view = state.allocationView;
+  if (pureHodUser()) view = 'hod';
+  else if (view !== 'settings' && view !== 'tokens' && view !== 'hod') view = 'dashboard';
   state.allocationView = view;
   syncAllocationDrawerChrome();
-  const heading = view === 'settings' ? 'Student data' : view === 'tokens' ? 'Cohort allocation tokens' : 'Supervisor allocation';
+  const heading = view === 'settings' ? 'Student data' : view === 'tokens' ? 'Cohort allocation tokens' : view === 'hod' ? 'Department suggestions' : 'Supervisor allocation';
   const lede = view === 'settings'
     ? 'Ingest student choices and staff tokens, then choose what the dashboard shows. The cohort follows the header.'
     : view === 'tokens'
       ? 'Add, edit, or remove the supervisor tokens already on a cohort. Generating tokens from EE quotas will not replace these. The cohort follows the header.'
-      : 'Draft a supervisor for each active student. Publish writes the supervisor and subject onto the live roster. The cohort follows the header.';
+      : view === 'hod'
+        ? 'Suggest a supervisor for students whose selected subject is in a department. Certify when the list is ready. Coordinators approve suggestions on the Dashboard.'
+        : 'Select a subject, then draft a supervisor. Publish writes the supervisor and assigned subject onto the live roster. The cohort follows the header.';
   const deskReady = !!(state.allocationDesk && state.allocationWatchCohort === state.cohortId);
+  const nav = (pureHodUser()
+    ? [['hod', 'Department']]
+    : [['dashboard', 'Dashboard'], ['hod', 'Department'], ['tokens', 'Cohort tokens'], ['settings', 'Student Data']]
+  ).map(function(item) {
+    return `<button type="button" data-alloc-view="${item[0]}" aria-current="${view === item[0] ? 'page' : 'false'}">${item[1]}</button>`;
+  }).join('');
   main.innerHTML = `<div class="page-head"><div><p class="eyebrow">Allocation</p><h1>${heading}</h1><p class="lede">${lede}</p></div></div>
-    <nav class="subnav" aria-label="Allocation"><button type="button" data-alloc-view="dashboard" aria-current="${view === 'dashboard' ? 'page' : 'false'}">Dashboard</button><button type="button" data-alloc-view="tokens" aria-current="${view === 'tokens' ? 'page' : 'false'}">Cohort tokens</button><button type="button" data-alloc-view="settings" aria-current="${view === 'settings' ? 'page' : 'false'}">Student Data</button></nav>
+    <nav class="subnav" aria-label="Allocation">${nav}</nav>
     <div id="alloc-body">${deskReady ? '' : loadingLine('Loading allocation...')}</div>`;
   main.querySelectorAll('[data-alloc-view]').forEach(function(button) {
     button.addEventListener('click', function() {
@@ -120,7 +140,11 @@ export function paintAllocation() {
   const top = wrap ? wrap.scrollTop : 0;
   const left = wrap ? wrap.scrollLeft : 0;
   const page = document.scrollingElement ? document.scrollingElement.scrollTop : 0;
-  target.innerHTML = state.allocationView === 'settings' ? allocationSettingsMarkup(desk) : allocationDashboardMarkup(desk);
+  target.innerHTML = state.allocationView === 'settings'
+    ? allocationSettingsMarkup(desk)
+    : state.allocationView === 'hod'
+      ? allocationHodMarkup(desk)
+      : allocationDashboardMarkup(desk);
   bindAllocation(target, desk);
   const next = document.querySelector('.alloc-desk-wrap');
   if (next) {
@@ -258,6 +282,7 @@ export function allocationDashboardMarkup(desk) {
         <span>Apply to selected</span>
         <select id="alloc-batch-supervisor"><option value="">Select supervisor...</option>${teacherOptions}</select>
         <button type="button" class="button" id="alloc-batch-assign">Assign</button>
+        <button type="button" class="button" id="alloc-batch-approve">Apply all suggested as supervisors to selected</button>
         <button type="button" class="button" id="alloc-batch-publish">Publish</button>
         <button type="button" class="button secondary" id="alloc-batch-unpublish" title="Send published allocations back to draft">Unpublish</button>
         <span class="muted">${state.allocationSelected.length} selected</span>
@@ -331,7 +356,6 @@ export function allocationDashboardMarkup(desk) {
 }
 
 export function allocationRowMarkup(student, supervisors, columns, extents) {
-  const requested = allocationRequestedSubjects(student);
   const locked = allocationIsPublished(student);
   const fields = (columns || []).map(function(column) {
     const value = allocationStoredField(student, column.key);
@@ -340,17 +364,8 @@ export function allocationRowMarkup(student, supervisors, columns, extents) {
     const style = scaleStyle(fill);
     return `<td${style ? ` class="alloc-scale" style="${style}"` : ''}>${escapeHtml(shown)}</td>`;
   }).join('');
-  const allocatedName = student.token && student.token.assignedSubject ? student.token.assignedSubject : '';
-  const dropdownSubject = state.allocationSubjects[student.studentId] || '';
-  const teacherPick = dropdownSubject ? allocationSupervisorCues(student, supervisors, state.allocationDesk) : '';
-  let placedPick = false;
-  const subjectTags = requested.map(function(choice) {
-    const on = sameSubjectName(choice.name, allocatedName) ? ' on' : '';
-    const colour = subjectChipStyle(choice.colour);
-    const showPick = teacherPick && !placedPick && sameSubjectName(choice.name, dropdownSubject);
-    if (showPick) placedPick = true;
-    return `<div class="alloc-subject-slot"><button type="button" class="subject-chip${on}" data-alloc-subject="${escapeHtml(student.studentId)}" data-subject="${escapeHtml(choice.name)}"${colour ? ` style="${colour}"` : ''}>${escapeHtml(choice.name)}</button>${showPick ? teacherPick : ''}</div>`;
-  }).join('');
+  const subjectTags = allocationSubjectChoiceMarkup(student, state.allocationDesk);
+  const suggestionLine = allocationSuggestionMarkup(student, locked);
   const open = state.allocationOpenStudent === student.studentId;
   const supportTags = allocationSupportMarkup(student);
   const interdisciplinaryOn = allocationInterdisciplinaryOn(student);
@@ -368,7 +383,7 @@ export function allocationRowMarkup(student, supervisors, columns, extents) {
   const flagOpen = !!(state.allocationFlagOpen && state.allocationFlagOpen[student.studentId]);
   const flagIcon = `<button type="button" class="alloc-flag-icon${flagged ? ' is-on' : ''}" data-alloc-flag-toggle="${escapeHtml(student.studentId)}" aria-expanded="${flagOpen ? 'true' : 'false'}" aria-label="${flagged ? 'Flagged' : 'Not flagged'}, flag notes for ${escapeHtml(student.displayName)}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 21V3.5h11.2L14.6 7.2 17.2 11H6"/></svg></button>`;
   const rowClass = [locked ? 'is-published' : '', flagged ? 'is-flagged' : ''].filter(Boolean).join(' ');
-  const orphanPick = teacherPick && !placedPick ? teacherPick : '';
+  const teacherPick = allocationSupervisorCues(student, supervisors, state.allocationDesk);
   return `<tr${rowClass ? ` class="${rowClass}"` : ''}>
     <td class="alloc-check"><input type="checkbox" data-alloc-pick="${escapeHtml(student.studentId)}" ${state.allocationSelected.indexOf(student.studentId) >= 0 ? 'checked' : ''} aria-label="Select ${escapeHtml(student.displayName)}"></td>
     <td>
@@ -376,8 +391,8 @@ export function allocationRowMarkup(student, supervisors, columns, extents) {
       <div class="alloc-marks">${flagIcon}${allocationMark(statusTitle, student.token ? 'on' : 'off', 'status')}${allocationChoiceMark(student)}${allocationLevelMark(student)}</div>
       <div class="alloc-flag-panel"${flagOpen ? '' : ' hidden'}><label class="check-option alloc-flag-toggle"><input type="checkbox" data-alloc-flag="${escapeHtml(student.studentId)}" ${flagged ? 'checked' : ''} aria-label="Flag ${escapeHtml(student.displayName)}"> Flag</label><input class="alloc-flag-note" type="text" data-alloc-flag-note="${escapeHtml(student.studentId)}" value="${escapeHtml(flagNote)}" placeholder="Flag note" aria-label="Flag note for ${escapeHtml(student.displayName)}" maxlength="500"></div>
     </td>
-    <td><div class="alloc-subject-list">${subjectTags || '<span class="muted">No subject choices</span>'}${orphanPick}</div><label class="check-option alloc-ee-flag ${interdisciplinaryChosen ? 'is-chosen' : 'is-unset'}"><input type="checkbox" data-alloc-ee-inter="${escapeHtml(student.studentId)}" ${interdisciplinaryOn ? 'checked' : ''} ${locked ? 'disabled' : ''}> Interdisciplinary EE</label>${interdisciplinarySelect}</td>
-    <td><div class="alloc-supervisor-name${supervisorName ? '' : ' muted'}">${escapeHtml(supervisorName || 'Unassigned')}</div>${assignedSubject}</td>
+    <td><div class="alloc-subject-list">${subjectTags || '<span class="muted">No subject choices</span>'}</div>${suggestionLine}<label class="check-option alloc-ee-flag ${interdisciplinaryChosen ? 'is-chosen' : 'is-unset'}"><input type="checkbox" data-alloc-ee-inter="${escapeHtml(student.studentId)}" ${interdisciplinaryOn ? 'checked' : ''} ${locked ? 'disabled' : ''}> Interdisciplinary EE</label>${interdisciplinarySelect}</td>
+    <td><div class="alloc-supervisor-name${supervisorName ? '' : ' muted'}">${escapeHtml(supervisorName || 'Unassigned')}</div>${assignedSubject}${teacherPick}</td>
     ${fields}
   </tr>${open ? allocationExpandedMarkup(student, 4 + (columns || []).length) : ''}`;
 }
@@ -816,20 +831,24 @@ export function nextAllocationTeacher(student, subject, supervisors, desk) {
 }
 
 export function allocationSubjectAction(student, subject) {
-  const studentId = student && student.studentId;
-  const allocated = student && student.token && student.token.assignedSubject ? student.token.assignedSubject : '';
-  const openSubject = studentId && state.allocationSubjects ? (state.allocationSubjects[studentId] || '') : '';
-  const onAllocated = !!(allocated && sameSubjectName(allocated, subject));
-  const dropdownVisible = !!(openSubject && sameSubjectName(openSubject, subject));
-  if (!onAllocated) return { type: 'assign', subject: subject };
-  if (!dropdownVisible) return { type: 'reveal', subject: subject };
-  return { type: 'clear', subject: subject };
+  return { type: 'select', subject: subject };
+}
+
+export function allocationSuggestionMarkup(student, locked) {
+  const staffId = student && student.suggestedStaffId ? student.suggestedStaffId : '';
+  if (!staffId) return '';
+  const name = (student.suggestedStaffName || staffId);
+  const approve = locked ? '' : `<button type="button" class="button" data-alloc-approve="${escapeHtml(student.studentId)}">Approve</button>`;
+  return `<p class="alloc-suggestion">Suggested: ${escapeHtml(name)} ${approve}</p>`;
 }
 
 export function allocationSupervisorCues(student, supervisors, desk) {
-  const picked = state.allocationSubjects[student.studentId];
-  if (!picked) return '';
+  const picked = student && student.selectedSubject ? student.selectedSubject : '';
+  const locked = allocationIsPublished(student);
   const source = desk || state.allocationDesk;
+  if (!picked) {
+    return `<label class="alloc-teacher-pick">Teacher<select class="alloc-teacher-select" data-alloc-supervisor="${escapeHtml(student.studentId)}" aria-label="Teacher" disabled><option value="">Choose a subject first...</option></select></label>`;
+  }
   const match = allocationRequestedSubjects(student).filter(function(item) { return sameSubjectName(item.name, picked); })[0];
   const colour = subjectChipStyle(match ? match.colour : '');
   const current = student.token ? student.token.staffId : '';
@@ -847,7 +866,8 @@ export function allocationSupervisorCues(student, supervisors, desk) {
     const label = (person.displayName || person.staffId) + ' (' + counts.allocated + '/' + counts.total + ')';
     return `<option value="${escapeHtml(person.staffId)}"${disabled}${selected}>${escapeHtml(label)}</option>`;
   }).join('');
-  return `<label class="alloc-teacher-pick">Teacher<select class="alloc-teacher-select" data-alloc-supervisor="${escapeHtml(student.studentId)}" aria-label="Teacher for ${escapeHtml(picked)}"${colour ? ` style="${colour}"` : ''}><option value="">Choose teacher...</option>${options}</select></label>`;
+  const lock = locked ? ' disabled' : '';
+  return `<label class="alloc-teacher-pick">Teacher<select class="alloc-teacher-select" data-alloc-supervisor="${escapeHtml(student.studentId)}" aria-label="Teacher for ${escapeHtml(picked)}"${colour ? ` style="${colour}"` : ''}${lock}><option value="">Choose teacher...</option>${options}</select></label>`;
 }
 
 export function subjectChipStyle(colour) {
@@ -855,6 +875,38 @@ export function subjectChipStyle(colour) {
   if (!match) return '';
   const value = '#' + match[1].toLowerCase();
   return '--subject:' + value + ';--subject-bg:color-mix(in srgb, ' + value + ' 18%, white);--subject-fg:' + value;
+}
+
+function subjectChoiceChip(student, choice, selected) {
+  const on = selected ? ' on' : '';
+  const colour = subjectChipStyle(choice.colour);
+  const checked = selected ? ' checked' : '';
+  const who = student.displayName || student.studentId;
+  return `<label class="subject-chip${on}" data-subject="${escapeHtml(choice.name)}"${colour ? ` style="${colour}"` : ''}><input type="checkbox" data-alloc-subject="${escapeHtml(student.studentId)}" data-subject="${escapeHtml(choice.name)}"${checked} aria-label="Select ${escapeHtml(choice.name)} for ${escapeHtml(who)}">${escapeHtml(choice.name)}</label>`;
+}
+
+export function allocationSubjectChoiceMarkup(student, desk) {
+  const requested = allocationRequestedSubjects(student);
+  const selectedName = (student && student.selectedSubject) || '';
+  const catalogue = subjectCatalogue(desk || state.allocationDesk).filter(function(subject) { return subject.active !== false; });
+  const chips = requested.map(function(choice) {
+    return subjectChoiceChip(student, choice, sameSubjectName(choice.name, selectedName));
+  }).join('');
+  const extraMatch = selectedName && !requested.some(function(choice) { return sameSubjectName(choice.name, selectedName); });
+  const extra = extraMatch
+    ? (catalogue.find(function(subject) { return sameSubjectName(subject.name, selectedName); }) || { name: selectedName, colour: '', shortName: '' })
+    : null;
+  const pickerOpen = !!(state.allocationSubjectPicker && state.allocationSubjectPicker[student.studentId]);
+  const add = `<button type="button" class="alloc-subject-add" data-alloc-subject-add="${escapeHtml(student.studentId)}" aria-expanded="${pickerOpen ? 'true' : 'false'}" aria-label="Choose another subject for ${escapeHtml(student.displayName || student.studentId)}">+</button>`;
+  const options = catalogue.map(function(subject) {
+    const selected = sameSubjectName(subject.name, selectedName) ? ' selected' : '';
+    return `<option value="${escapeHtml(subject.name)}"${selected}>${escapeHtml(subject.name)}</option>`;
+  }).join('');
+  const known = catalogue.some(function(subject) { return sameSubjectName(subject.name, selectedName); });
+  const current = extra && !known ? `<option value="${escapeHtml(selectedName)}" selected>${escapeHtml(selectedName)}</option>` : '';
+  const picker = pickerOpen ? `<select class="alloc-extra-subject" data-alloc-extra-subject="${escapeHtml(student.studentId)}" aria-label="Other subject for ${escapeHtml(student.displayName || student.studentId)}"><option value="">Choose subject...</option>${options}${current}</select>` : '';
+  const extraChip = extra && !pickerOpen ? subjectChoiceChip(student, extra, true) : '';
+  return `${chips}${add}${picker}${extraChip}`;
 }
 
 export function allocationRequestedSubjects(student) {
@@ -880,8 +932,8 @@ export function subjectLabelHtml(name, shortName) {
 
 export function subjectCatalogue(desk) {
   return ((desk && desk.subjects) || []).map(function(subject) {
-    if (subject && typeof subject === 'object') return { name: String(subject.name || '').trim(), shortName: String(subject.shortName || '').trim(), colour: String(subject.colour || '').trim() };
-    return { name: String(subject || '').trim(), shortName: '', colour: '' };
+    if (subject && typeof subject === 'object') return { name: String(subject.name || '').trim(), shortName: String(subject.shortName || '').trim(), colour: String(subject.colour || '').trim(), department: String(subject.department || '').trim(), active: subject.active !== false };
+    return { name: String(subject || '').trim(), shortName: '', colour: '', department: '', active: true };
   }).filter(function(subject) { return subject.name; });
 }
 
@@ -1018,12 +1070,19 @@ function openAllocationInterdisciplinaryModal(student, desk, wasOn, seededNow) {
       return;
     }
     const chosenSubject = subjectSelect ? subjectSelect.value : '';
+    const assigned = student.selectedSubject || '';
+    if (!assigned) {
+      if (error) {
+        error.hidden = false;
+        error.textContent = 'Choose a subject before assigning a teacher.';
+      }
+      return;
+    }
     settled = true;
     document.removeEventListener('keydown', onEscape, true);
     state.allocationInterdisciplinary[student.studentId] = true;
     state.allocationInterdisciplinarySubject[student.studentId] = chosenSubject;
     closeAdminDialog();
-    const assigned = selectedAllocationSubject(student);
     const synthetic = option.getAttribute('data-synthetic') === 'true';
     saveAllocationDraft(student.studentId, option.getAttribute('data-staff') || '', assigned, true, 'Interdisciplinary assignment saved.', {
       bypassSubject: true,
@@ -1335,24 +1394,110 @@ function untiedTokenNote(count) {
 }
 
 export function allocationLoadPanel(desk, supervisors) {
+  const hod = state.allocationView === 'hod';
   const view = state.allocationLoadView === 'supervisor' || state.allocationLoadView === 'assigned' ? state.allocationLoadView : 'subject';
-  const heading = view === 'assigned' ? 'Assigned tokens' : view === 'supervisor' ? 'Supervisor token load' : 'Subject token load';
+  const heading = hod
+    ? (view === 'assigned' ? 'Suggested tokens' : view === 'supervisor' ? 'Suggestion load' : 'Subject suggestions')
+    : (view === 'assigned' ? 'Assigned tokens' : view === 'supervisor' ? 'Supervisor token load' : 'Subject token load');
+  const assignedLabel = hod ? 'Suggested taken' : 'Assigned Tokens';
   const tokens = desk && Array.isArray(desk.tokenRows) && desk.tokenRows.length ? desk.tokenRows : allocationTokenSlots(desk);
-  const body = view === 'assigned'
-    ? allocationAssignedMarkup(desk)
-    : view === 'subject'
-      ? subjectTokenLoadMarkup(subjectTokenLoad(tokens, allocationDemand(desk), catalogueNames(desk)), desk)
-      : (supervisors.length ? supervisors.map(allocationLoadMarkup).join('') : '<div class="empty">No tokens yet. Build them in Staff users → EE quotas, or ingest a token sheet from Student Data.</div>');
-  return `<header><h2>${heading}</h2><div class="view-toggle" role="group" aria-label="Token overview"><button type="button" data-alloc-load="subject" aria-pressed="${view === 'subject' ? 'true' : 'false'}">Subject</button><button type="button" data-alloc-load="supervisor" aria-pressed="${view === 'supervisor' ? 'true' : 'false'}">Supervisor</button><button type="button" data-alloc-load="assigned" aria-pressed="${view === 'assigned' ? 'true' : 'false'}">Assigned</button></div></header>${body}`;
+  const body = hod
+    ? hodLoadBody(desk, view)
+    : view === 'assigned'
+      ? allocationAssignedMarkup(desk)
+      : view === 'subject'
+        ? subjectTokenLoadMarkup(subjectTokenLoad(tokens, allocationDemand(desk), catalogueNames(desk)), desk)
+        : (supervisors.length ? supervisors.map(allocationLoadMarkup).join('') : '<div class="empty">No tokens yet. Build them in Staff users → EE quotas, or ingest a token sheet from Student Data.</div>');
+  return `<header><h2>${heading}</h2><div class="view-toggle" role="group" aria-label="Token overview"><button type="button" data-alloc-load="subject" aria-pressed="${view === 'subject' ? 'true' : 'false'}">Subject</button><button type="button" data-alloc-load="supervisor" aria-pressed="${view === 'supervisor' ? 'true' : 'false'}">Supervisor</button><button type="button" data-alloc-load="assigned" aria-pressed="${view === 'assigned' ? 'true' : 'false'}">${assignedLabel}</button></div></header>${body}`;
+}
+
+function hodLoadBody(desk, view) {
+  const overview = hodOverviewFor(desk);
+  if (view === 'assigned') return hodAssignedMarkup(overview);
+  if (view === 'supervisor') return hodSupervisorMarkup(overview);
+  return hodSubjectMarkup(overview);
+}
+
+function hodOverviewFor(desk) {
+  const department = viewedHodDepartment(desk);
+  const catalogue = subjectCatalogue(desk).map(function(subject) {
+    return { name: subject.name, department: subject.department || '' };
+  });
+  return hodSuggestionOverview({
+    department: department,
+    catalogue: catalogue,
+    tokens: ((desk && desk.tokenRows) || []).map(function(token) {
+      return {
+        staffId: token.staffId,
+        status: token.status,
+        eligibleSubjects: token.eligibleSubjects,
+        allocatedTo: token.studentId,
+      };
+    }),
+    students: ((desk && desk.students) || []).map(function(student) {
+      return {
+        studentId: student.studentId,
+        displayName: student.displayName,
+        suggestedStaffId: student.suggestedStaffId,
+        suggestedSubject: student.suggestedSubject,
+        tokenStaffId: student.token ? student.token.staffId : '',
+      };
+    }),
+    staff: ((desk && desk.directory) || (desk && desk.supervisors) || []).map(function(person) {
+      return { staffId: person.email || person.staffId, displayName: person.displayName };
+    }),
+  });
+}
+
+function hodSubjectMarkup(overview) {
+  const subjects = overview.subjects || [];
+  if (!subjects.length) return '<div class="empty">No subjects in this department.</div>';
+  const blocks = subjects.map(function(item) {
+    const taken = Number(item.taken) || 0;
+    const remaining = Number(item.remaining) || 0;
+    return `<div class="alloc-subject-block"><p class="alloc-subject-name">${escapeHtml(item.subject)}</p><span>Suggested taken ${taken}</span><span>Rem ${remaining}</span>${allocationMeterMarkup(taken, taken + remaining)}</div>`;
+  }).join('');
+  return `<div class="alloc-subject-load">${blocks}</div>`;
+}
+
+function hodSupervisorMarkup(overview) {
+  const people = overview.supervisors || [];
+  if (!people.length) return '<div class="empty">No supervisors in this department.</div>';
+  return people.map(function(person) {
+    const key = String(person.staffId || '').toLowerCase();
+    const open = state.allocationAssignedOpen[key] === true;
+    const students = (person.students || []).map(function(student) {
+      return `<li>${escapeHtml(student.displayName)} · ${escapeHtml(student.subject)}</li>`;
+    }).join('');
+    return `<div class="alloc-load"><button type="button" data-alloc-assigned="${escapeHtml(person.staffId)}" aria-expanded="${open ? 'true' : 'false'}"><strong>${escapeHtml(person.displayName)}</strong> <span class="muted">${person.taken} suggested · ${person.remaining} suggestable</span></button>${allocationMeterMarkup(person.taken, person.total)}${open ? `<ul>${students || '<li class="muted">No suggested students</li>'}<li class="muted">${person.remaining} suggestable slots left</li></ul>` : ''}</div>`;
+  }).join('');
+}
+
+function hodAssignedMarkup(overview) {
+  const groups = overview.groups || [];
+  if (!groups.length) return '<div class="empty">No suggestions in this department.</div>';
+  return groups.map(function(group) {
+    const key = group.subject.toLowerCase();
+    const open = state.allocationAssignedOpen[key] === true;
+    const taken = (group.taken || []).map(function(row) {
+      return `<li class="alloc-token-taken"><strong>${escapeHtml(row.staffName)}</strong> · ${escapeHtml(row.studentName)}</li>`;
+    }).join('');
+    const available = (group.available || []).map(function(row) {
+      return `<li class="alloc-token-open"><strong>${escapeHtml(row.staffName)}</strong> · ${row.slots} suggestable</li>`;
+    }).join('');
+    const takenCount = (group.taken || []).length;
+    const availableCount = (group.available || []).reduce(function(sum, row) { return sum + (Number(row.slots) || 0); }, 0);
+    return `<div class="alloc-assigned"><button type="button" data-alloc-assigned="${escapeHtml(group.subject)}" aria-expanded="${open ? 'true' : 'false'}"><span>${escapeHtml(group.subject)}</span><span class="muted">Suggested taken ${takenCount} · Suggested available ${availableCount}</span></button>${allocationMeterMarkup(takenCount, takenCount + availableCount)}${open ? `<ul>${taken}${available}</ul>` : ''}</div>`;
+  }).join('');
 }
 
 export function allocationDemand(desk) {
   return ((desk && desk.students) || []).map(function(student) {
     return {
-      subjects: allocationRequestedSubjects(student).map(function(item) { return item.name; }),
+      subjects: [],
+      selectedSubject: student.selectedSubject || '',
       primary: student.choices ? student.choices.primary : '',
       allocated: !!student.token,
-      assignedSubject: student.token ? student.token.assignedSubject || '' : '',
     };
   });
 }
@@ -1421,6 +1566,163 @@ export function allocationLoadMarkup(person) {
     return subjectLabelHtml(name, shortNameFor(name, state.allocationDesk));
   }).join(', ');
   return `<div class="alloc-load"><p><strong>${escapeHtml(person.displayName)}</strong> <span class="muted">${person.used}/${person.total} slots</span></p><p class="muted">Eligible: ${eligible || 'None'}</p>${allocationMeterMarkup(person.used, person.total)}</div>`;
+}
+
+function callerEmail() {
+  return String((state.user && (state.user.email || state.user.Email)) || '').trim().toLowerCase();
+}
+
+function callerDepartment(desk) {
+  const email = callerEmail();
+  const person = ((desk && desk.directory) || []).find(function(item) {
+    return String(item.email || '').toLowerCase() === email;
+  });
+  return person ? String(person.department || '').trim() : '';
+}
+
+export function hodDepartmentNames(desk) {
+  const seen = new Map();
+  subjectCatalogue(desk).forEach(function(subject) {
+    const department = String(subject.department || '').trim();
+    const key = department.toLowerCase();
+    if (!department || seen.has(key)) return;
+    seen.set(key, department);
+  });
+  return Array.from(seen.values()).sort(function(left, right) {
+    return left.localeCompare(right, undefined, { sensitivity: 'base' });
+  });
+}
+
+function catalogueForDepartment(desk) {
+  return subjectCatalogue(desk).map(function(subject) {
+    return { name: subject.name, department: subject.department || '' };
+  });
+}
+
+function viewedHodDepartment(desk) {
+  const departments = hodDepartmentNames(desk);
+  const current = state.allocationHodDepartment || '';
+  const currentMatch = departments.find(function(name) { return departmentsMatch(name, current); });
+  if (currentMatch) return currentMatch;
+  if (pureHodUser()) {
+    const own = departments.find(function(name) { return departmentsMatch(name, callerDepartment(desk)); });
+    if (own) return own;
+  }
+  return departments[0] || '';
+}
+
+function departmentStatus(department) {
+  const record = state.allocationHodStatus && state.allocationHodStatus.byDepartment;
+  if (!record) return null;
+  const key = Object.keys(record).find(function(id) {
+    const row = record[id] || {};
+    return departmentsMatch(row.department, department) || id === String(department || '').trim().toLowerCase();
+  });
+  return key ? record[key] : null;
+}
+
+function hodCanSuggest(desk, department) {
+  if (!allocationPermissions().isHOD) return false;
+  if (!departmentsMatch(callerDepartment(desk), department)) return false;
+  const status = departmentStatus(department);
+  return !(status && status.submitted);
+}
+
+function hodNamesFor(desk, department) {
+  const names = ((desk && desk.directory) || []).filter(function(person) {
+    return person.isHOD && departmentsMatch(person.department, department);
+  }).map(function(person) { return person.displayName || person.email; });
+  return names.length ? names.join(', ') : 'No HOD';
+}
+
+export function allocationHodStatusMarkup(desk) {
+  const departments = hodDepartmentNames(desk);
+  const rows = departments.map(function(department) {
+    const status = departmentStatus(department);
+    const submitted = !!(status && status.submitted);
+    const when = submitted && status.submittedAt ? allocationWhen(status.submittedAt) : '';
+    const by = submitted && status.submittedBy ? status.submittedBy : '';
+    const own = departmentsMatch(callerDepartment(desk), department);
+    const canReopen = submitted && (allocationPermissions().canAdmin || (allocationPermissions().isHOD && own));
+    const reopen = canReopen ? `<button type="button" class="button secondary" data-alloc-hod-reopen="${escapeHtml(department)}">Reopen</button>` : '';
+    return `<div class="alloc-hod-status-row"><strong>${escapeHtml(department)}</strong><span>${escapeHtml(hodNamesFor(desk, department))}</span><span>${submitted ? 'Submitted' : 'Pending'}</span>${when ? `<span class="muted">${escapeHtml(when)}</span>` : ''}${by ? `<span class="muted">${escapeHtml(by)}</span>` : ''}${reopen}</div>`;
+  }).join('');
+  const blank = subjectCatalogue(desk).filter(function(subject) { return !String(subject.department || '').trim(); });
+  const warning = blank.length ? '<p class="notice alloc-hod-warn">Subjects with no department</p>' : '';
+  return `<section class="alloc-hod-status" aria-label="Department submission status">${rows || '<p class="muted">No departments yet.</p>'}${warning}</section>`;
+}
+
+function hodStudents(desk, department) {
+  const catalogue = catalogueForDepartment(desk);
+  return ((desk && desk.students) || []).filter(function(student) {
+    return departmentsMatch(departmentOfSubject(student.selectedSubject, catalogue), department);
+  });
+}
+
+function hodSuggestOptions(student, desk) {
+  const subject = student.selectedSubject || '';
+  const suggestions = ((desk && desk.students) || []).map(function(item) {
+    return { studentId: item.studentId, suggestedStaffId: item.suggestedStaffId || '', suggestedSubject: item.suggestedSubject || '' };
+  });
+  const tokens = ((desk && desk.tokenRows) || []).map(function(token) {
+    return { staffId: token.staffId, status: token.status, eligibleSubjects: token.eligibleSubjects, allocatedTo: token.studentId };
+  });
+  const people = ((desk && desk.supervisors) || []).filter(function(person) {
+    return subjectsOverlap(subject, person.eligibleSubjects || []);
+  }).slice().sort(function(left, right) {
+    return String(left.displayName || '').localeCompare(String(right.displayName || ''), undefined, { sensitivity: 'base' });
+  });
+  return people.map(function(person) {
+    const capacity = suggestionCapacity({
+      staffId: person.staffId,
+      subject: subject,
+      tokens: tokens,
+      suggestions: suggestions,
+      exceptStudentId: student.studentId,
+    });
+    const selected = String(person.staffId).toLowerCase() === String(student.suggestedStaffId || '').toLowerCase();
+    const disabled = !selected && (!capacity.eligible || capacity.remaining <= 0);
+    const label = (person.displayName || person.staffId) + ' (' + capacity.remaining + ' suggestable)';
+    return `<option value="${escapeHtml(person.staffId)}"${disabled ? ' disabled' : ''}${selected ? ' selected' : ''}>${escapeHtml(label)}</option>`;
+  }).join('');
+}
+
+export function allocationHodRowMarkup(student, desk, enabled) {
+  const locked = allocationIsPublished(student) || !enabled;
+  const options = hodSuggestOptions(student, desk);
+  const assigned = allocationAssignedSupervisorName(student, (desk && desk.supervisors) || []);
+  const assignedLine = assigned ? `<div class="muted">Assigned: ${escapeHtml(assigned)}</div>` : '';
+  return `<tr class="${locked ? 'alloc-hod-lock' : ''}"><td>${escapeHtml(student.displayName || student.studentId)}</td><td>${escapeHtml(student.selectedSubject || '')}</td><td><select data-alloc-suggest="${escapeHtml(student.studentId)}" aria-label="Suggested teacher for ${escapeHtml(student.displayName || student.studentId)}"${locked ? ' disabled' : ''}><option value="">No suggestion</option>${options}</select>${assignedLine}</td></tr>`;
+}
+
+export function allocationHodMarkup(desk) {
+  const department = viewedHodDepartment(desk);
+  state.allocationHodDepartment = department;
+  const departments = hodDepartmentNames(desk);
+  const options = departments.map(function(name) {
+    return `<option value="${escapeHtml(name)}"${departmentsMatch(name, department) ? ' selected' : ''}>${escapeHtml(name)}</option>`;
+  }).join('');
+  const editable = hodCanSuggest(desk, department);
+  const status = departmentStatus(department);
+  const submitted = !!(status && status.submitted);
+  const own = departmentsMatch(callerDepartment(desk), department);
+  const students = sortedRows('alloc-hod', hodStudents(desk, department), function(student, key) {
+    if (key === 'subject') return String(student.selectedSubject || '').toLowerCase();
+    if (key === 'teacher') return String(student.suggestedStaffName || student.suggestedStaffId || '').toLowerCase();
+    return String(student.displayName || '').toLowerCase();
+  });
+  const certify = editable ? '<button type="button" class="button" id="alloc-hod-certify">Certify & Submit Suggestions</button>' : '';
+  const reopen = submitted && (allocationPermissions().canAdmin || (allocationPermissions().isHOD && own))
+    ? `<button type="button" class="button secondary" data-alloc-hod-reopen="${escapeHtml(department)}">Reopen suggestions</button>`
+    : '';
+  const body = students.length
+    ? students.map(function(student) { return allocationHodRowMarkup(student, desk, editable && !allocationIsPublished(student)); }).join('')
+    : '<tr><td class="empty" colspan="3">No students with a selected subject in this department.</td></tr>';
+  return `<div class="alloc-layout"><div>
+      ${allocationHodStatusMarkup(desk)}
+      <div class="alloc-filters"><label for="alloc-hod-department">Department</label><select id="alloc-hod-department">${options}</select>${certify}${reopen}</div>
+      <div class="table-wrap"><table class="alloc-desk"><thead><tr>${sortableHeader('alloc-hod', 'name', 'Student')}${sortableHeader('alloc-hod', 'subject', 'Selected subject')}${sortableHeader('alloc-hod', 'teacher', 'Suggested teacher')}</tr></thead><tbody>${body}</tbody></table></div>
+    </div></div>${allocationDrawerMarkup(desk, (desk && desk.supervisors) || [])}`;
 }
 
 export function allocationDrawerMarkup(desk, supervisors) {
@@ -1636,6 +1938,7 @@ export function bindAllocation(target, desk) {
     syncHeaderCohortSelect();
     state.allocationSelected = [];
     state.allocationSubjects = {};
+    state.allocationSubjectPicker = {};
     state.allocationSubjectFilter = [];
     state.allocationCustomFilters = {};
     state.allocationQuery = '';
@@ -1679,7 +1982,13 @@ export function bindAllocation(target, desk) {
       }
       state.allocationInterdisciplinarySubject[studentId] = select.value;
       if (student && student.token && allocationInterdisciplinaryOn(student)) {
-        saveAllocationDraft(studentId, student.token.staffId, selectedAllocationSubject(student), true, 'Interdisciplinary subject saved.');
+        const subject = student.selectedSubject || '';
+        if (!subject) {
+          showError(new Error('Choose a subject before assigning a teacher.'));
+          paintAllocation();
+          return;
+        }
+        saveAllocationDraft(studentId, student.token.staffId, subject, true, 'Interdisciplinary subject saved.');
       }
     });
   });
@@ -1852,42 +2161,101 @@ export function bindAllocation(target, desk) {
   });
   const batch = document.getElementById('alloc-batch-assign');
   if (batch) batch.addEventListener('click', assignAllocationBatch);
+  const approveBatch = document.getElementById('alloc-batch-approve');
+  if (approveBatch) approveBatch.addEventListener('click', approveSuggestedBatch);
+  const hodDepartment = document.getElementById('alloc-hod-department');
+  if (hodDepartment) hodDepartment.addEventListener('change', function() {
+    state.allocationHodDepartment = hodDepartment.value;
+    paintAllocation();
+  });
+  const certify = document.getElementById('alloc-hod-certify');
+  if (certify) certify.addEventListener('click', function() {
+    certify.disabled = true;
+    callServer('certifyHodSuggestions', state.cohortId).then(function() {
+      showSuccess('Suggestions submitted.');
+      if (state.allocationListenFallback) loadAllocation();
+      else paintAllocation();
+    }).catch(function(error) {
+      certify.disabled = false;
+      showError(error);
+    });
+  });
+  target.querySelectorAll('[data-alloc-hod-reopen]').forEach(function(button) {
+    button.addEventListener('click', function() {
+      const department = button.getAttribute('data-alloc-hod-reopen') || '';
+      button.disabled = true;
+      callServer('reopenHodSuggestions', state.cohortId, department).then(function() {
+        showSuccess('Suggestions reopened.');
+        if (state.allocationListenFallback) loadAllocation();
+        else paintAllocation();
+      }).catch(function(error) {
+        button.disabled = false;
+        showError(error);
+      });
+    });
+  });
+  target.querySelectorAll('[data-alloc-suggest]').forEach(function(select) {
+    select.addEventListener('change', function() {
+      const studentId = select.getAttribute('data-alloc-suggest');
+      const student = (desk.students || []).find(function(item) { return item.studentId === studentId; });
+      if (!student) return;
+      if (select.options[select.selectedIndex] && select.options[select.selectedIndex].disabled) {
+        paintAllocation();
+        return;
+      }
+      queueSuggestion(student, select.value);
+    });
+  });
   const publishSelected = document.getElementById('alloc-batch-publish');
   if (publishSelected) publishSelected.addEventListener('click', publishSelectedAllocations);
   const unpublishSelected = document.getElementById('alloc-batch-unpublish');
   if (unpublishSelected) unpublishSelected.addEventListener('click', unpublishSelectedAllocations);
-  target.querySelectorAll('[data-alloc-subject]').forEach(function(button) {
-    button.addEventListener('click', function() {
-      const studentId = button.getAttribute('data-alloc-subject');
-      const subject = button.getAttribute('data-subject') || '';
+  target.querySelectorAll('[data-alloc-subject]').forEach(function(box) {
+    box.addEventListener('click', function(event) {
+      const studentId = box.getAttribute('data-alloc-subject');
+      const subject = box.getAttribute('data-subject') || '';
       const student = (desk.students || []).find(function(item) { return item.studentId === studentId; });
-      if (!student) return;
-      const action = allocationSubjectAction(student, subject);
-      if (action.type === 'reveal') {
-        state.allocationSubjects[studentId] = subject;
+      if (student && sameSubjectName(student.selectedSubject, subject)) event.preventDefault();
+    });
+    box.addEventListener('change', function() {
+      const studentId = box.getAttribute('data-alloc-subject');
+      const subject = box.getAttribute('data-subject') || '';
+      const student = (desk.students || []).find(function(item) { return item.studentId === studentId; });
+      if (!student || !subject) return;
+      if (!box.checked || sameSubjectName(student.selectedSubject, subject)) {
+        box.checked = true;
+        return;
+      }
+      selectAllocationSubject(student, subject);
+    });
+  });
+  target.querySelectorAll('[data-alloc-subject-add]').forEach(function(button) {
+    button.addEventListener('click', function() {
+      const studentId = button.getAttribute('data-alloc-subject-add');
+      if (!state.allocationSubjectPicker) state.allocationSubjectPicker = {};
+      if (state.allocationSubjectPicker[studentId]) delete state.allocationSubjectPicker[studentId];
+      else state.allocationSubjectPicker[studentId] = true;
+      paintAllocation();
+    });
+  });
+  target.querySelectorAll('[data-alloc-extra-subject]').forEach(function(select) {
+    select.addEventListener('change', function() {
+      const studentId = select.getAttribute('data-alloc-extra-subject');
+      const subject = select.value;
+      const student = (desk.students || []).find(function(item) { return item.studentId === studentId; });
+      if (!student || !subject || sameSubjectName(student.selectedSubject, subject)) {
         paintAllocation();
         return;
       }
-      if (allocationIsPublished(student)) {
-        showError(new Error('This allocation is published. Unpublish it before changing the token.'));
-        return;
-      }
-      if (action.type === 'clear') {
-        delete state.allocationSubjects[studentId];
-        if (!student.token) {
-          paintAllocation();
-          return;
-        }
-        saveAllocationDraft(studentId, '', '', false, 'Assigned staff cleared.');
-        return;
-      }
-      state.allocationSubjects[studentId] = subject;
-      const teacher = nextAllocationTeacher(student, subject, desk.supervisors || [], state.allocationDesk || desk);
-      if (!teacher) {
-        paintAllocation();
-        return;
-      }
-      saveAllocationDraft(studentId, teacher.staffId, subject, allocationInterdisciplinaryOn(student), 'Draft saved.');
+      if (state.allocationSubjectPicker) delete state.allocationSubjectPicker[studentId];
+      selectAllocationSubject(student, subject);
+    });
+  });
+  target.querySelectorAll('[data-alloc-approve]').forEach(function(button) {
+    button.addEventListener('click', function() {
+      const studentId = button.getAttribute('data-alloc-approve');
+      const student = (desk.students || []).find(function(item) { return item.studentId === studentId; });
+      if (student) approveAllocationSuggestionRow(student);
     });
   });
   target.querySelectorAll('[data-alloc-ee-inter]').forEach(function(box) {
@@ -1915,7 +2283,13 @@ export function bindAllocation(target, desk) {
         paintAllocation();
         return;
       }
-      saveAllocationDraft(studentId, student.token.staffId, selectedAllocationSubject(student), false, 'Interdisciplinary mark cleared.');
+      const subject = student.selectedSubject || '';
+      if (!subject) {
+        showError(new Error('Choose a subject before assigning a teacher.'));
+        paintAllocation();
+        return;
+      }
+      saveAllocationDraft(studentId, student.token.staffId, subject, false, 'Interdisciplinary mark cleared.');
     });
   });
   target.querySelectorAll('[data-alloc-supervisor]').forEach(function(select) {
@@ -1933,7 +2307,12 @@ export function bindAllocation(target, desk) {
         paintAllocation();
         return;
       }
-      const subject = state.allocationSubjects[studentId] || (student ? selectedAllocationSubject(student) : '');
+      const subject = student && student.selectedSubject ? student.selectedSubject : '';
+      if (staffId && !subject) {
+        showError(new Error('Choose a subject before assigning a teacher.'));
+        paintAllocation();
+        return;
+      }
       if (staffId && !supervisorAcceptsSubject(desk, staffId, subject)) {
         showError(new Error(subject + ' does not match the supervisor\'s EE subjects.'));
         paintAllocation();
@@ -2174,12 +2553,117 @@ export function bindCohortTokens(board) {
   });
 }
 
+function selectAllocationSubject(student, subject) {
+  const studentId = student.studentId;
+  const edit = {
+    selectedSubject: subject,
+    clearSuggestion: !!(student.suggestedSubject && !sameSubjectName(student.suggestedSubject, subject)),
+  };
+  if (!state.allocationPendingSubjects) state.allocationPendingSubjects = {};
+  state.allocationPendingSubjects[studentId] = edit;
+  applyPendingDesk();
+  paintAllocationLive();
+  const cohortId = state.cohortId;
+  callServer('setAllocationSubject', cohortId, studentId, subject).then(function(result) {
+    if (state.cohortId !== cohortId || state.allocationPendingSubjects[studentId] !== edit) return;
+    const remote = ((state.allocationRemoteDesk && state.allocationRemoteDesk.students) || []).find(function(item) {
+      return item.studentId === studentId;
+    });
+    const saved = (result && result.selectedSubject) || subject;
+    if (remote && sameSubjectName(remote.selectedSubject, saved)) {
+      delete state.allocationPendingSubjects[studentId];
+      applyPendingDesk();
+      paintAllocationLive();
+    }
+  }).catch(function(error) {
+    if (state.cohortId === cohortId && state.allocationPendingSubjects[studentId] === edit) {
+      delete state.allocationPendingSubjects[studentId];
+      applyPendingDesk();
+      paintAllocationLive();
+    }
+    showError(error);
+  });
+}
+
+function queueSuggestion(student, staffId) {
+  const studentId = student.studentId;
+  const subject = student.selectedSubject || '';
+  const edit = {
+    suggestedStaffId: staffId || '',
+    suggestedSubject: staffId ? subject : '',
+    suggestedStaffName: '',
+  };
+  if (!state.allocationPendingSuggestions) state.allocationPendingSuggestions = {};
+  state.allocationPendingSuggestions[studentId] = edit;
+  applyPendingDesk();
+  paintAllocationLive();
+  const cohortId = state.cohortId;
+  callServer('suggestAllocation', cohortId, studentId, staffId || '').then(function() {
+    if (state.cohortId !== cohortId || state.allocationPendingSuggestions[studentId] !== edit) return;
+    const remote = ((state.allocationRemoteDesk && state.allocationRemoteDesk.students) || []).find(function(item) {
+      return item.studentId === studentId;
+    });
+    if (remote && String(remote.suggestedStaffId || '').toLowerCase() === String(staffId || '').toLowerCase()) {
+      delete state.allocationPendingSuggestions[studentId];
+      applyPendingDesk();
+      paintAllocationLive();
+    }
+  }).catch(function(error) {
+    if (state.cohortId === cohortId && state.allocationPendingSuggestions[studentId] === edit) {
+      delete state.allocationPendingSuggestions[studentId];
+      applyPendingDesk();
+      paintAllocationLive();
+    }
+    showError(error);
+  });
+}
+
+function approveAllocationSuggestionRow(student) {
+  if (allocationIsPublished(student)) {
+    showError(new Error('This allocation is published. Unpublish it before changing the token.'));
+    return;
+  }
+  if (!student.suggestedStaffId || !student.selectedSubject) return;
+  const studentId = student.studentId;
+  const edit = {
+    staffId: student.suggestedStaffId,
+    subject: student.selectedSubject,
+    interdisciplinary: allocationInterdisciplinaryOn(student),
+    interdisciplinarySubject: allocationInterdisciplinarySubject(student),
+    tokenId: '',
+    startedAt: new Date().toISOString(),
+    acked: false,
+  };
+  const suggestion = { suggestedStaffId: '', suggestedSubject: '', suggestedStaffName: '' };
+  if (!state.allocationRemoteDesk && state.allocationDesk) state.allocationRemoteDesk = state.allocationDesk;
+  state.allocationPendingEdits[studentId] = edit;
+  state.allocationPendingSuggestions[studentId] = suggestion;
+  applyPendingDesk();
+  paintAllocationLive();
+  const cohortId = state.cohortId;
+  callServer('approveAllocationSuggestion', cohortId, studentId).then(function() {
+    if (state.cohortId !== cohortId) return;
+    if (state.allocationPendingEdits[studentId] === edit) edit.acked = true;
+  }).catch(function(error) {
+    if (state.cohortId === cohortId && state.allocationPendingEdits[studentId] === edit) {
+      delete state.allocationPendingEdits[studentId];
+      delete state.allocationPendingSuggestions[studentId];
+      applyPendingDesk();
+      paintAllocationLive();
+    }
+    showError(error);
+  });
+}
+
 export function assignAllocationBatch() {
   const staffId = document.getElementById('alloc-batch-supervisor').value;
   if (!staffId) { showError(new Error('Choose a supervisor.')); return; }
   if (!state.allocationSelected.length) { showError(new Error('Select at least one student.')); return; }
   const subjects = {};
-  state.allocationSelected.forEach(function(id) { subjects[id] = state.allocationSubjects[id] || ''; });
+  state.allocationSelected.forEach(function(id) {
+    const student = ((state.allocationDesk && state.allocationDesk.students) || []).find(function(item) { return item.studentId === id; });
+    subjects[id] = (student && student.selectedSubject) || state.allocationSubjects[id] || '';
+  });
   callServer('batchDraftAllocations', state.cohortId, staffId, state.allocationSelected.slice(), subjects, true).then(function(result) {
     const skipped = (result.skipped || []).length;
     const locked = (result.skipped || []).filter(function(item) { return /published/i.test(item.reason || ''); }).length;
@@ -2189,6 +2673,55 @@ export function assignAllocationBatch() {
     state.allocationSelected = [];
     loadAllocation();
   }).catch(showError);
+}
+
+export function approveSuggestedBatch() {
+  if (!state.allocationSelected.length) { showError(new Error('Select at least one student.')); return; }
+  const ids = state.allocationSelected.slice();
+  const optimistic = [];
+  ids.forEach(function(studentId) {
+    const student = ((state.allocationDesk && state.allocationDesk.students) || []).find(function(item) { return item.studentId === studentId; });
+    if (!student || allocationIsPublished(student) || !student.suggestedStaffId || !student.selectedSubject) return;
+    state.allocationPendingEdits[studentId] = {
+      staffId: student.suggestedStaffId,
+      subject: student.selectedSubject,
+      interdisciplinary: allocationInterdisciplinaryOn(student),
+      interdisciplinarySubject: allocationInterdisciplinarySubject(student),
+      tokenId: '',
+      startedAt: new Date().toISOString(),
+      acked: false,
+    };
+    state.allocationPendingSuggestions[studentId] = { suggestedStaffId: '', suggestedSubject: '', suggestedStaffName: '' };
+    optimistic.push(studentId);
+  });
+  applyPendingDesk();
+  paintAllocationLive();
+  const cohortId = state.cohortId;
+  callServer('batchApproveAllocationSuggestions', cohortId, ids).then(function(result) {
+    if (state.cohortId !== cohortId) return;
+    const skipped = new Set((result.skipped || []).map(function(item) { return item.studentId; }));
+    optimistic.forEach(function(studentId) {
+      if (!skipped.has(studentId)) return;
+      delete state.allocationPendingEdits[studentId];
+      delete state.allocationPendingSuggestions[studentId];
+    });
+    applyPendingDesk();
+    paintAllocationLive();
+    const assigned = (result.assigned || []).length;
+    const left = (result.skipped || []).length;
+    showSuccess(assigned + ' drafted' + (left ? '. ' + left + ' left unchanged.' : '.'));
+    state.allocationSelected = [];
+  }).catch(function(error) {
+    if (state.cohortId === cohortId) {
+      optimistic.forEach(function(studentId) {
+        delete state.allocationPendingEdits[studentId];
+        delete state.allocationPendingSuggestions[studentId];
+      });
+      applyPendingDesk();
+      paintAllocationLive();
+    }
+    showError(error);
+  });
 }
 
 function selectedAllocationRows() {

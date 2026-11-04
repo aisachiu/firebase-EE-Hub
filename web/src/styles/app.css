@@ -827,14 +827,22 @@ main.staff-list { max-width: 1480px; }
 .alloc-meta { margin-top: 4px; color: var(--muted); font-size: 12px; }
 .alloc-select.draft { border-color: var(--gold); }
 .alloc-select.committed { border-color: var(--green); }
-.subject-chip { margin: 0 4px 4px 0; padding: 2px 8px; border: 1px solid var(--subject, var(--line)); border-radius: 3px; background: var(--subject-bg, white); color: var(--subject-fg, #495057); font-size: 12px; font-weight: 700; }
+.subject-chip { display: inline-flex; align-items: center; gap: 4px; margin: 0 4px 4px 0; padding: 2px 8px; border: 1px solid var(--subject, var(--line)); border-radius: 3px; background: var(--subject-bg, white); color: var(--subject-fg, #495057); font-size: 12px; font-weight: 700; cursor: pointer; }
+.subject-chip input { margin: 0; accent-color: currentColor; }
 .subject-chip.on { outline: 2px solid #c1121f; outline-offset: 1px; }
+.alloc-subject-add { margin: 0 4px 4px 0; min-width: 22px; height: 22px; padding: 0 6px; border: 1px dashed var(--line); border-radius: 3px; background: white; color: var(--ink); font-weight: 700; line-height: 1; }
+.alloc-extra-subject { margin: 0 4px 4px 0; max-width: 200px; }
 .alloc-subject-list { display: flex; flex-wrap: wrap; gap: 4px; align-items: flex-start; }
 .alloc-subject-slot { display: flex; flex-direction: column; align-items: flex-start; }
 .alloc-cues { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
 .supervisor-cue { margin: 0; padding: 2px 8px; border: 1px solid var(--subject, var(--line)); border-radius: 999px; background: var(--subject-bg, white); color: var(--subject-fg, #495057); font-size: 11px; font-weight: 700; cursor: pointer; }
 .supervisor-cue.is-chosen { font-weight: 800; outline: 3px solid var(--ink); outline-offset: 1px; box-shadow: 0 0 0 1px white; }
 .alloc-teacher-pick { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; font-size: 12px; }
+.alloc-suggestion { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 6px 0; font-size: 12px; }
+.alloc-hod-status { display: grid; gap: 8px; margin: 0 0 12px; }
+.alloc-hod-status-row { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; padding: 8px 10px; background: white; border: 1px solid var(--line); border-radius: 4px; }
+.alloc-hod-lock select { color: var(--muted); }
+.alloc-hod-warn { margin: 8px 0 0; }
 .alloc-teacher-select { width: 100%; min-width: 160px; padding: 7px 9px; color: var(--ink); background: white; border: 1px solid var(--line); border-radius: 3px; }
 .alloc-teacher-select option.alloc-teacher-empty,
 .alloc-batch select option.alloc-teacher-empty {

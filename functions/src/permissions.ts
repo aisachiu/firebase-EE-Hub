@@ -11,6 +11,8 @@ export interface HubUser {
     isCoordinator: boolean;
     isAdmin: boolean;
     canAdmin: boolean;
+    /** Head of department. Optional so existing permission objects stay valid. */
+    isHOD?: boolean;
   };
 }
 

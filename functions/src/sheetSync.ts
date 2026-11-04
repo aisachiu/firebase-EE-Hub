@@ -391,7 +391,7 @@ function normalizeIncoming(entity: string, data: Doc): Doc {
     }
   }
   if (entity === 'staffUsers') {
-    ['isSupervisor', 'isLead', 'isCoordinator', 'isAdmin'].forEach((name) => {
+    ['isSupervisor', 'isLead', 'isCoordinator', 'isAdmin', 'isHOD'].forEach((name) => {
       if (copy[name] !== '' && copy[name] !== undefined) copy[name] = toBoolean(copy[name]);
     });
   }

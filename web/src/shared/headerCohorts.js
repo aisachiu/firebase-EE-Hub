@@ -170,9 +170,10 @@ function fetchHeaderCohorts(force) {
 
 function startHeaderCohortWatch() {
   if (headerWatchFailed || headerWatchStarted || headerCohortsLive) return false;
-  // Rules allow coordinators (canAdmin) to read /cohorts. Other staff use getCohorts.
+  // Rules allow coordinators and heads of department to read /cohorts. Other staff use getCohorts.
   const watch = typeof window !== 'undefined' ? window.eeWatchCohorts : null;
-  const canListen = !!(state.user && state.user.permissions && state.user.permissions.canAdmin) && typeof watch === 'function';
+  const permissions = state.user && state.user.permissions;
+  const canListen = !!(permissions && (permissions.canAdmin || permissions.isHOD)) && typeof watch === 'function';
   if (!canListen) return false;
   headerWatchStarted = true;
   let stop = null;
