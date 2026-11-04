@@ -83,6 +83,8 @@ import {
   getStaffQuotaSheet,
   listCohortTokens,
   previewAllocationIngest,
+  previewAllocationBackfill,
+  applyAllocationBackfill,
   previewStaffQuotaTokens,
   reopenAllocation,
   reopenAllocations,
@@ -211,6 +213,8 @@ export async function dispatch(app: App, method: string, args: unknown[]): Promi
     case 'saveAllocationConfig': return saveAllocationConfig(app, args[0], args[1]);
     case 'previewAllocationIngest': return previewAllocationIngest(app, args[0], args[1], args[2]);
     case 'applyAllocationIngest': return applyAllocationIngest(app, args[0], args[1], args[2]);
+    case 'previewAllocationBackfill': return previewAllocationBackfill(app, args[0]);
+    case 'applyAllocationBackfill': return applyAllocationBackfill(app, args[0]);
     case 'exportAllocationDrafts': return exportAllocationDrafts(app, args[0]);
     case 'getStaffQuotaSheet': return getStaffQuotaSheet(app);
     case 'saveStaffQuotas': return saveStaffQuotas(app, args[0]);

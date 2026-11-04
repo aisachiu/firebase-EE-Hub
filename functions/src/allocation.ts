@@ -13,6 +13,9 @@ import {
   allocationExportRows,
   emptySettings,
   findAllocationTab,
+  parseAllocationDraftGrid,
+  planAllocationDraftIngest,
+  planDraftTokenBackfill,
   isEeActive,
   mergeStaticWorkspaceRow,
   settingsAfterWorkspaceIngest,
@@ -62,7 +65,7 @@ import { Doc, HubError, normalizeEmail, nowIso, shortId, text } from './util';
 
 export interface AllocationIngestResult {
   cohortId: string;
-  kind: 'workspace' | 'tokens';
+  kind: 'workspace' | 'tokens' | 'drafts';
   spreadsheetId: string;
   sheet: string;
   incoming: number;
@@ -736,7 +739,38 @@ export async function applyAllocationIngest(app: App, cohortId: unknown, source:
     const beforeTokens = tokensFrom(await app.store.listTokens(prepared.preview.cohortId), prepared.preview.cohortId);
     await app.store.applyAllocationOps(prepared.ops);
     await logTokenWrites(app, user, prepared.preview.cohortId, beforeTokens, prepared.ops);
+    if (prepared.draftChanges.length) await logAllocationDrafts(app, user, prepared.preview.cohortId, prepared.draftChanges);
     return prepared.preview;
+  });
+}
+
+export async function previewAllocationBackfill(app: App, cohortId: unknown) {
+  await requireAdmin(app, 'PREVIEW_ALLOCATION_BACKFILL');
+  const cohort = await requireCohort(app, text(cohortId));
+  return buildAllocationBackfill(app, cohort.id);
+}
+
+export async function applyAllocationBackfill(app: App, cohortId: unknown) {
+  const user = await requireAdmin(app, 'APPLY_ALLOCATION_BACKFILL');
+  const cohort = await requireCohort(app, text(cohortId));
+  return audited(app, user, 'APPLY_ALLOCATION_BACKFILL', { cohortId: cohort.id }, async () => {
+    const plan = await buildAllocationBackfill(app, cohort.id);
+    const now = nowIso();
+    const ops: AllocationOp[] = plan.writes.map((workspace) => ({
+      kind: 'workspace' as const,
+      cohortId: cohort.id,
+      id: workspace.studentId,
+      data: { ...workspace, updatedAt: now },
+    }));
+    if (ops.length) await app.store.applyAllocationOps(ops);
+    return {
+      cohortId: plan.cohortId,
+      drafts: plan.drafts,
+      writing: plan.writing,
+      skipped: plan.skipped,
+      warnings: plan.warnings,
+      rows: plan.rows,
+    };
   });
 }
 
@@ -1039,12 +1073,13 @@ async function prepareIngest(app: App, cohortId: unknown, source: unknown, kindV
   const grids = await workbook.read(spreadsheetId);
   const grid = findAllocationTab(grids, cohort.id, kind);
   if (!grid) {
-    const label = kind === 'workspace' ? 'COHORTDATA' : 'SUPERVISORTOKENS';
+    const label = kind === 'workspace' ? 'COHORTDATA' : kind === 'drafts' ? 'ALLOCATIONS' : 'SUPERVISORTOKENS';
     throw new HubError(`The spreadsheet has no ${label} tab for ${cohort.id}.`);
   }
   const now = nowIso();
   const settings = settingsFromDoc(await app.store.getAllocationConfig(cohort.id));
   if (kind === 'workspace') return prepareWorkspace(app, cohort.id, grid, spreadsheetId, settings, now);
+  if (kind === 'drafts') return prepareDraftSheet(app, cohort.id, grid, spreadsheetId, now);
   return prepareTokens(app, cohort.id, grid, spreadsheetId, settings, now);
 }
 
@@ -1075,6 +1110,7 @@ async function prepareWorkspace(app: App, cohortId: string, grid: SheetGrid, spr
   const roster = members.map((member) => ({ studentId: normalizeEmail(member.StudentId), eeActive: member.eeActive }));
   return {
     ops,
+    draftChanges: [] as { studentId: string; before?: TokenRecord; after?: TokenRecord }[],
     preview: ingestPreview({
       cohortId,
       kind: 'workspace',
@@ -1111,6 +1147,7 @@ async function prepareTokens(app: App, cohortId: string, grid: SheetGrid, spread
   ops.push({ kind: 'config', cohortId, data: { ...settings, lastTokenSync: now } });
   return {
     ops,
+    draftChanges: [] as { studentId: string; before?: TokenRecord; after?: TokenRecord }[],
     preview: ingestPreview({
       cohortId,
       kind: 'tokens',
@@ -1258,10 +1295,67 @@ async function activeSubjectNames(app: App): Promise<string[]> {
   return activeSubjectNamesFrom(await app.store.list(COLLECTIONS.subjects));
 }
 
-function ingestKind(value: unknown): 'workspace' | 'tokens' {
+function ingestKind(value: unknown): 'workspace' | 'tokens' | 'drafts' {
   const kind = text(value).toLowerCase();
-  if (kind === 'workspace' || kind === 'tokens') return kind;
-  throw new HubError('Choose student data or staff tokens.');
+  if (kind === 'workspace' || kind === 'tokens' || kind === 'drafts') return kind;
+  throw new HubError('Choose student data, allocation drafts, or staff tokens.');
+}
+
+async function prepareDraftSheet(app: App, cohortId: string, grid: SheetGrid, spreadsheetId: string, now: string) {
+  const parsed = parseAllocationDraftGrid(grid);
+  const [members, tokens, workspaceDocs, subjects] = await Promise.all([
+    app.store.listMembers(cohortId),
+    tokensFrom(await app.store.listTokens(cohortId), cohortId),
+    app.store.listWorkspace(cohortId),
+    app.store.list(COLLECTIONS.subjects),
+  ]);
+  const plan = planAllocationDraftIngest({
+    rows: parsed.rows,
+    tokens,
+    workspaces: workspaceDocs.map((doc) => workspaceFromDoc(doc, text(doc.id || doc.studentId))),
+    roster: members.map((member) => ({ studentId: normalizeEmail(member.StudentId), supervisorId: normalizeEmail(member.supervisorId) })),
+    activeSubjects: activeSubjectNamesFrom(subjects),
+    now,
+  });
+  const ops: AllocationOp[] = [
+    ...plan.tokenWrites.map((token) => ({ kind: 'token' as const, cohortId, id: token.id, data: { ...token, updatedAt: now } })),
+    ...plan.workspaceWrites.map((workspace) => ({ kind: 'workspace' as const, cohortId, id: workspace.studentId, data: workspace })),
+  ];
+  return {
+    ops,
+    draftChanges: plan.draftChanges,
+    preview: ingestPreview({
+      cohortId,
+      kind: 'drafts',
+      spreadsheetId,
+      sheet: grid.title,
+      incoming: parsed.rows.length,
+      existing: workspaceDocs.length,
+      writing: plan.writing,
+      skipped: plan.skipped,
+      creating: 0,
+      warnings: parsed.warnings.concat(plan.warnings),
+      rows: plan.rows,
+      note: WORKSPACE_SHEET_HELP.draftNote,
+    }),
+  };
+}
+
+async function buildAllocationBackfill(app: App, cohortId: string) {
+  const [members, tokens, workspaceDocs, subjects] = await Promise.all([
+    app.store.listMembers(cohortId),
+    tokensFrom(await app.store.listTokens(cohortId), cohortId),
+    app.store.listWorkspace(cohortId),
+    app.store.list(COLLECTIONS.subjects),
+  ]);
+  const plan = planDraftTokenBackfill({
+    tokens,
+    workspaces: workspaceDocs.map((doc) => workspaceFromDoc(doc, text(doc.id || doc.studentId))),
+    roster: members.map((member) => ({ studentId: normalizeEmail(member.StudentId) })),
+    activeSubjects: activeSubjectNamesFrom(subjects),
+    now: nowIso(),
+  });
+  return { cohortId, ...plan };
 }
 
 export { emptySettings };

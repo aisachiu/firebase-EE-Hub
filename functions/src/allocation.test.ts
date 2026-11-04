@@ -11,6 +11,8 @@ import {
   certifyHodSuggestions,
   draftAllocation,
   exportAllocationDrafts,
+  previewAllocationBackfill,
+  applyAllocationBackfill,
   exportStaffQuotaSheet,
   assignStaffSubjects,
   getAllocationDesk,
@@ -786,6 +788,85 @@ test('a head of department suggests and certifies, and a coordinator approves', 
   assert.equal(skipped.skipped.some((row) => row.studentId === JANE && /published/i.test(row.reason)), true);
   assert.equal(skipped.assigned.includes(MARK), true);
   assert.equal((await store.getWorkspace('2026', MARK))?.suggestedStaffId, '');
+});
+
+test('allocation draft export ingests selected subject, suggestion, and the draft token', async () => {
+  const app = appFor();
+  await seed(app);
+  const store = app.store as unknown as ReturnType<typeof memory>;
+  await store.set(COLLECTIONS.subjects, 'his', { 'Subject ID': 'his', Name: 'History', Active: true });
+  await applyAllocationIngest(app, '2026', SHEET, 'tokens', { workbook: workbook([tokenGrid]) });
+  await draftAllocation(app, '2026', JANE, SMITH, 'History');
+  await store.setWorkspace('2026', JANE, {
+    ...(await store.getWorkspace('2026', JANE) || {}),
+    selectedSubject: 'History',
+    suggestedStaffId: SMITH,
+    suggestedSubject: 'History',
+    isFlagged: true,
+    flagNote: 'keep',
+  });
+  let grids: SheetGrid[] = [];
+  await exportAllocationDrafts(app, '2026', {
+    workbook: {
+      async create(_title, created) { grids = created; return { spreadsheetId: 'abc123_XYZ-000000000000', url: SHEET }; },
+      async read() { return []; },
+      async share() { return; },
+    },
+    actorEmail: COORDINATOR,
+    now: new Date('2026-10-18T00:00:00.000Z'),
+  });
+  assert.equal(grids[0].title, 'ALLOCATIONS 2026');
+  const jane = grids[0].rows.find((row) => row[0] === JANE);
+  assert.ok(jane);
+  assert.equal(jane?.[2], 'Draft');
+  assert.equal(jane?.[5], 'History');
+  assert.equal(jane?.[6], SMITH);
+  await draftAllocation(app, '2026', JANE, '', '');
+  await store.setWorkspace('2026', JANE, {
+    ...(await store.getWorkspace('2026', JANE) || {}),
+    selectedSubject: '',
+    suggestedStaffId: '',
+    suggestedSubject: '',
+  });
+  const preview = await previewAllocationIngest(app, '2026', SHEET, 'drafts', { workbook: workbook(grids) });
+  assert.equal(preview.kind, 'drafts');
+  assert.equal(preview.writing, 1);
+  assert.equal((await store.getWorkspace('2026', JANE))?.selectedSubject, '');
+  await applyAllocationIngest(app, '2026', SHEET, 'drafts', { workbook: workbook(grids) });
+  const restored = await store.getWorkspace('2026', JANE);
+  assert.equal(restored?.selectedSubject, 'History');
+  assert.equal(restored?.suggestedStaffId, SMITH);
+  assert.equal(restored?.suggestedSubject, 'History');
+  assert.equal(restored?.isFlagged, true);
+  assert.equal(restored?.flagNote, 'keep');
+  const drafted = (await app.store.listTokens('2026')).find((token) => token.allocatedTo === JANE);
+  assert.equal(drafted?.status, 'draft');
+  assert.equal(drafted?.assignedSubject, 'History');
+  assert.equal(drafted?.staffId, SMITH);
+});
+
+test('backfill copies draft tokens into empty selected subjects once', async () => {
+  const app = appFor();
+  await seed(app);
+  const store = app.store as unknown as ReturnType<typeof memory>;
+  await store.set(COLLECTIONS.subjects, 'his', { 'Subject ID': 'his', Name: 'History', Active: true });
+  await applyAllocationIngest(app, '2026', SHEET, 'tokens', { workbook: workbook([tokenGrid]) });
+  await draftAllocation(app, '2026', JANE, SMITH, 'History');
+  await assert.rejects(previewAllocationBackfill(appFor(SMITH), '2026'), /Access denied/);
+  const preview = await previewAllocationBackfill(app, '2026');
+  assert.equal(preview.writing, 1);
+  assert.equal((await store.getWorkspace('2026', JANE))?.selectedSubject, '');
+  const applied = await applyAllocationBackfill(app, '2026');
+  assert.equal(applied.writing, 1);
+  const filled = await store.getWorkspace('2026', JANE);
+  assert.equal(filled?.selectedSubject, 'History');
+  assert.equal(filled?.suggestedStaffId, SMITH);
+  assert.equal(filled?.suggestedSubject, 'History');
+  const token = (await app.store.listTokens('2026')).find((item) => item.allocatedTo === JANE);
+  assert.equal(token?.status, 'draft');
+  assert.equal(token?.staffId, SMITH);
+  const again = await applyAllocationBackfill(app, '2026');
+  assert.equal(again.writing, 0);
 });
 
 function textId(row: Doc | undefined): string {
