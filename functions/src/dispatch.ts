@@ -94,6 +94,7 @@ import {
   saveStaffSubjects,
   updateCohortToken,
 } from './allocation';
+import { undoAllocationAudit } from './allocationAudit';
 import { getLiveSheetHeaders, listLiveSheetTabs, resyncLiveChoiceData, saveLiveSheetLink } from './liveSheet';
 import { applySheetIngest, exportSheetCollections, listSheetCollections, previewSheetIngest } from './sheetSync';
 import { deleteStudentTask, listStudentTasks, saveStudentTask } from './studentTasks';
@@ -210,6 +211,7 @@ export async function dispatch(app: App, method: string, args: unknown[]): Promi
     case 'addCohortTokens': return addCohortTokens(app, args[0], args[1], args[2], args[3]);
     case 'updateCohortToken': return updateCohortToken(app, args[0], args[1], args[2]);
     case 'deleteCohortToken': return deleteCohortToken(app, args[0], args[1]);
+    case 'undoAllocationAudit': return undoAllocationAudit(app, args[0], args[1]);
     case 'listLiveSheetTabs': return listLiveSheetTabs(app, args[0], args[1]);
     case 'getLiveSheetHeaders': return getLiveSheetHeaders(app, args[0], args[1], args[2]);
     case 'saveLiveSheetLink': return saveLiveSheetLink(app, args[0], args[1]);

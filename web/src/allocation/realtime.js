@@ -1,4 +1,4 @@
-import { buildDesk, choiceMatchFlag, diplomaLevelFlag, settingsFromDoc, tokenFromDoc, workspaceFromDoc } from '../../../functions/src/allocationPure.ts';
+import { buildDesk, choiceMatchFlag, diplomaLevelFlag, settingsFromDoc, subjectsOverlap, tokenFromDoc, workspaceFromDoc } from '../../../functions/src/allocationPure.ts';
 import { callServer } from '../shared/api.js';
 import { showError } from '../shared/feedback.js';
 import { isStale, sameScene } from '../shared/scene.js';
@@ -20,6 +20,7 @@ export function releaseAllocationWatch() {
   state.allocationListenFallback = false;
   state.allocationPendingEdits = {};
   state.allocationPendingFlags = {};
+  state.allocationAuditLogs = [];
   state.allocationRevision = 0;
   state.allocationPaintDeferred = false;
   if (state.allocationSyncClock) {
@@ -204,10 +205,79 @@ export function overlayPendingEdits(desk, pending) {
       }),
     });
   });
-  return Object.assign({}, desk, {
+  const presented = {
     students: students,
     supervisors: supervisorsAfterMoves(supervisors, remoteStudents, students),
+  };
+  if (Array.isArray(desk.tokenRows)) presented.tokenRows = tokenRowsAfterEdits(desk.tokenRows, remoteStudents, students);
+  return Object.assign({}, desk, presented);
+}
+
+function cloneTokenRow(row) {
+  return Object.assign({}, row, { eligibleSubjects: (row.eligibleSubjects || []).slice() });
+}
+
+function sameHeldToken(prior, next) {
+  if (!prior && !next) return true;
+  if (!prior || !next) return false;
+  return emailOf(prior.staffId) === emailOf(next.staffId)
+    && String(prior.assignedSubject || '').toLowerCase() === String(next.assignedSubject || '').toLowerCase()
+    && (prior.interdisciplinary === true) === (next.interdisciplinary === true)
+    && String(prior.status || '') === String(next.status || '');
+}
+
+function releaseTokenRow(rows, studentId, token) {
+  const row = rows.find(function(item) { return token.id && token.id !== 'pending' && item.id === token.id; })
+    || rows.find(function(item) {
+      return emailOf(item.staffId) === emailOf(token.staffId) && emailOf(item.studentId) === emailOf(studentId) && item.status !== 'available';
+    });
+  if (!row) return;
+  row.status = 'available';
+  row.studentId = '';
+  row.studentName = '';
+  row.assignedSubject = '';
+  row.interdisciplinary = false;
+  row.interdisciplinarySubject = '';
+}
+
+function takeTokenRow(rows, student, token) {
+  let row = token.id && token.id !== 'pending' ? rows.find(function(item) { return item.id === token.id; }) : null;
+  const heldByStudent = row && emailOf(row.studentId) === emailOf(student.studentId);
+  if (!row || (row.status !== 'available' && !heldByStudent)) {
+    row = rows.find(function(item) {
+      return emailOf(item.staffId) === emailOf(token.staffId)
+        && item.status === 'available'
+        && (!token.assignedSubject || subjectsOverlap(token.assignedSubject, item.eligibleSubjects || []));
+    }) || rows.find(function(item) {
+      return emailOf(item.staffId) === emailOf(token.staffId) && item.status === 'available';
+    });
+  }
+  if (!row) return;
+  row.status = token.status === 'committed' ? 'committed' : 'draft';
+  row.staffId = emailOf(token.staffId) || row.staffId;
+  row.studentId = student.studentId;
+  row.studentName = student.displayName || student.studentId;
+  row.assignedSubject = token.assignedSubject || '';
+  row.interdisciplinary = token.interdisciplinary === true;
+  row.interdisciplinarySubject = token.interdisciplinarySubject || '';
+}
+
+function tokenRowsAfterEdits(rows, beforeStudents, afterStudents) {
+  const next = (rows || []).map(cloneTokenRow);
+  const before = new Map((beforeStudents || []).map(function(student) { return [student.studentId, student]; }));
+  const frees = [];
+  const takes = [];
+  (afterStudents || []).forEach(function(student) {
+    const prior = before.get(student.studentId);
+    const priorToken = prior && prior.token;
+    const nextToken = student.token;
+    if (sameHeldToken(priorToken, nextToken)) return;
+    if (priorToken) frees.push({ studentId: student.studentId, token: priorToken });
+    if (nextToken && emailOf(nextToken.staffId)) takes.push({ student: student, token: nextToken });
   });
+  frees.forEach(function(item) { releaseTokenRow(next, item.studentId, item.token); });
+  takes.forEach(function(item) { takeTokenRow(next, item.student, item.token); });
+  return next;
 }
 
 function withDrive(desk) {
@@ -230,6 +300,7 @@ export function receiveAllocationSources(cohortId, sources) {
   state.allocationPendingEdits = reconcilePendingEdits(state.allocationPendingEdits, remote, tokenUpdatedStamps(sources));
   state.allocationPendingFlags = reconcilePendingFlags(state.allocationPendingFlags, remote);
   state.allocationDesk = presentAllocationDesk(remote);
+  state.allocationAuditLogs = Array.isArray(sources && sources.auditLogs) ? sources.auditLogs : [];
   const view = state.allocationView || 'dashboard';
   if (state.section === 'allocation' && (view === 'dashboard' || (view === 'settings' && settingsChanged))) painter();
 }
@@ -264,6 +335,7 @@ function loadStaticDesk(cohortId) {
     state.allocationPendingEdits = reconcilePendingEdits(state.allocationPendingEdits, desk, {});
     state.allocationPendingFlags = reconcilePendingFlags(state.allocationPendingFlags, desk);
     state.allocationDesk = presentAllocationDesk(desk);
+    state.allocationAuditLogs = Array.isArray(desk.auditLogs) ? desk.auditLogs : [];
     painter();
   }).catch(function(error) {
     if (isStale(error)) return;

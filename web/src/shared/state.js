@@ -46,6 +46,8 @@ export const state = {
   allocationListenFallback: false,
   allocationPendingEdits: {},
   allocationPendingFlags: {},
+  allocationAuditLogs: [],
+  allocationFlagOpen: {},
   allocationRevision: 0,
   allocationPaintDeferred: false,
   allocationSyncClock: 0,

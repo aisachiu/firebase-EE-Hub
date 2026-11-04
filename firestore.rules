@@ -57,6 +57,11 @@ service cloud.firestore {
         allow read: if isCoordinator();
         allow write: if false;
       }
+
+      match /allocationAuditLogs/{logId} {
+        allow read: if isCoordinator();
+        allow write: if false;
+      }
     }
 
     match /{document=**} {
