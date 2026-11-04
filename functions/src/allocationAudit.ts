@@ -1,4 +1,5 @@
 import {
+  emptyWorkspaceRecord,
   planDraft,
   studentLabel,
   subjectsOverlap,
@@ -55,7 +56,7 @@ function subjectList(value: unknown): string[] {
 }
 
 function emptyWorkspace(studentId: string, now: string): WorkspaceRecord {
-  return { studentId, subjectChoices: {}, dynamicData: {}, pendingClear: false, updatedAt: now };
+  return emptyWorkspaceRecord(studentId, now);
 }
 
 function tokensFrom(docs: Doc[], cohortId: string): TokenRecord[] {

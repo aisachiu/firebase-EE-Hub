@@ -835,6 +835,11 @@ main.staff-list { max-width: 1480px; }
 .supervisor-cue { margin: 0; padding: 2px 8px; border: 1px solid var(--subject, var(--line)); border-radius: 999px; background: var(--subject-bg, white); color: var(--subject-fg, #495057); font-size: 11px; font-weight: 700; cursor: pointer; }
 .supervisor-cue.is-chosen { font-weight: 800; outline: 3px solid var(--ink); outline-offset: 1px; box-shadow: 0 0 0 1px white; }
 .alloc-teacher-pick { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; font-size: 12px; }
+.alloc-suggestion { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 6px 0; font-size: 12px; }
+.alloc-hod-status { display: grid; gap: 8px; margin: 0 0 12px; }
+.alloc-hod-status-row { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; padding: 8px 10px; background: white; border: 1px solid var(--line); border-radius: 4px; }
+.alloc-hod-lock select { color: var(--muted); }
+.alloc-hod-warn { margin: 8px 0 0; }
 .alloc-teacher-select { width: 100%; min-width: 160px; padding: 7px 9px; color: var(--ink); background: white; border: 1px solid var(--line); border-radius: 3px; }
 .alloc-teacher-select option.alloc-teacher-empty,
 .alloc-batch select option.alloc-teacher-empty {

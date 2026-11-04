@@ -96,13 +96,14 @@ test('allocation desk tags, filter, column order, supervisor cues, and token loa
     const cells = row.split('</td>');
     assert.match(cells[2], /data-subject="Psychology"/);
     assert.match(cells[3], /Unassigned/);
-    assert.doesNotMatch(cells[3], /data-alloc-supervisor/);
-    assert.doesNotMatch(cells[3], /<select/);
+    assert.match(cells[3], /data-alloc-supervisor/);
+    assert.match(cells[3], /disabled/);
+    assert.doesNotMatch(cells[2], /data-alloc-supervisor/);
     assert.doesNotMatch(row, /class="supervisor-cue"/);
     assert.match(deskMod.allocationRowMarkup(desk().students[1], supervisors(), [], {}), /class="id-tag"[^>]*>ID</);
 
-    state.allocationSubjects = { 'jane@school.edu': 'Psychology' };
     const cues = deskMod.allocationSupervisorCues(student({
+      selectedSubject: 'Psychology',
       token: { staffId: 'psy@school.edu', assignedSubject: 'Psychology' },
     }), supervisors());
     assert.match(cues, /Dr Psy/);
@@ -116,17 +117,20 @@ test('allocation desk tags, filter, column order, supervisor cues, and token loa
       return person.staffId === 'psy@school.edu' ? Object.assign({}, person, { available: 0, used: 1 }) : person;
     });
     const grey = deskMod.allocationSupervisorCues(student({
+      selectedSubject: 'Psychology',
       token: { staffId: 'art@school.edu', assignedSubject: 'Psychology' },
     }), exhausted);
     assert.match(grey, /class="alloc-teacher-empty"/);
     assert.match(grey, /disabled/);
     assert.match(grey, /Dr Psy \(1\/1\)/);
     const restored = deskMod.allocationSupervisorCues(student({
+      selectedSubject: 'Psychology',
       token: { staffId: 'art@school.edu', assignedSubject: 'Psychology' },
     }), supervisors());
     assert.doesNotMatch(restored, /alloc-teacher-empty/);
     assert.doesNotMatch(restored, /0 remaining/);
     const chosenRow = deskMod.allocationRowMarkup(student({
+      selectedSubject: 'Psychology',
       token: { staffId: 'psy@school.edu', assignedSubject: 'Psychology' },
     }), supervisors(), [], {});
     assert.match(chosenRow, /class="alloc-supervisor-name"[^>]*>Dr Psy/);
@@ -138,32 +142,26 @@ test('allocation desk tags, filter, column order, supervisor cues, and token loa
     assert.match(chosenRow, /<select/);
     assert.match(chosenRow, /class="subject-chip on"[^>]*data-subject="Psychology"/);
     assert.doesNotMatch(chosenRow, /class="subject-chip on"[^>]*data-subject="Theater"/);
-    const psyAt = chosenRow.indexOf('data-subject="Psychology"');
-    const selectAt = chosenRow.indexOf('data-alloc-supervisor');
-    const theaterAt = chosenRow.indexOf('data-subject="Theater"');
-    assert.ok(psyAt >= 0 && psyAt < selectAt && selectAt < theaterAt);
     const subjectCell = chosenRow.split('</td>')[2];
     const supervisorCell = chosenRow.split('</td>')[3];
     assert.match(subjectCell, /Interdisciplinary EE/);
     assert.match(subjectCell, /alloc-ee-flag is-unset/);
+    assert.doesNotMatch(subjectCell, /data-alloc-supervisor/);
     assert.doesNotMatch(supervisorCell, /Interdisciplinary EE/);
-    assert.doesNotMatch(supervisorCell, /data-alloc-supervisor/);
+    assert.match(supervisorCell, /data-alloc-supervisor/);
 
-    state.allocationSubjects = {};
     const plain = deskMod.allocationRowMarkup(student({}), supervisors(), [], {});
     assert.doesNotMatch(plain, /subject-chip on/);
-    assert.equal(deskMod.allocationSubjectAction(student({}), 'Theater').type, 'assign');
-    assert.equal(deskMod.allocationSubjectAction(student({ token: { assignedSubject: 'Psychology', staffId: 'psy@school.edu' } }), 'Psychology').type, 'reveal');
-    state.allocationSubjects = { 'jane@school.edu': 'Psychology' };
-    assert.equal(deskMod.allocationSubjectAction(student({ token: { assignedSubject: 'Psychology', staffId: 'psy@school.edu' } }), 'Psychology').type, 'clear');
-    assert.equal(deskMod.allocationSubjectAction(student({ token: { assignedSubject: 'Psychology', staffId: 'psy@school.edu' } }), 'Theater').type, 'assign');
+    assert.equal(deskMod.allocationSubjectAction(student({}), 'Theater').type, 'select');
+    assert.equal(deskMod.allocationSubjectAction(student({ selectedSubject: 'Psychology', token: { assignedSubject: 'Psychology', staffId: 'psy@school.edu' } }), 'Psychology').type, 'select');
+    assert.equal(deskMod.allocationSubjectAction(student({ selectedSubject: 'Psychology', token: { assignedSubject: 'Psychology', staffId: 'psy@school.edu' } }), 'Theater').type, 'select');
     const scopedDesk = desk();
     scopedDesk.tokenRows = [
       { id: 'a', staffId: 'psy@school.edu', status: 'draft', eligibleSubjects: ['Psychology'], assignedSubject: 'Psychology', studentId: 'mark@school.edu' },
       { id: 'b', staffId: 'psy@school.edu', status: 'available', eligibleSubjects: ['Psychology'] },
       { id: 'c', staffId: 'psy@school.edu', status: 'available', eligibleSubjects: ['Biology'] },
     ];
-    const scoped = deskMod.allocationSupervisorCues(student({}), supervisors(), scopedDesk);
+    const scoped = deskMod.allocationSupervisorCues(student({ selectedSubject: 'Psychology' }), supervisors(), scopedDesk);
     assert.match(scoped, /Dr Psy \(1\/2\)/);
     assert.doesNotMatch(scoped, /disabled/);
     const fullDesk = desk();
@@ -172,7 +170,7 @@ test('allocation desk tags, filter, column order, supervisor cues, and token loa
       { id: 'b', staffId: 'psy@school.edu', status: 'committed', eligibleSubjects: ['Psychology'] },
       { id: 'c', staffId: 'psy@school.edu', status: 'available', eligibleSubjects: ['Theater'] },
     ];
-    const full = deskMod.allocationSupervisorCues(student({ token: { staffId: 'art@school.edu', assignedSubject: 'Psychology' } }), supervisors(), fullDesk);
+    const full = deskMod.allocationSupervisorCues(student({ selectedSubject: 'Psychology', token: { staffId: 'art@school.edu', assignedSubject: 'Psychology' } }), supervisors(), fullDesk);
     assert.match(full, /Dr Psy \(2\/2\)/);
     assert.match(full, /disabled/);
     assert.match(full, /class="alloc-teacher-empty"/);
@@ -235,8 +233,11 @@ test('allocation desk tags, filter, column order, supervisor cues, and token loa
     assert.match(html, /No allocation changes yet/);
     assert.match(html, /alloc-ee-flag is-unset/);
     assert.match(html, /alloc-ee-flag is-chosen/);
+    assert.match(html, /Apply all suggested as supervisors to selected/);
+    assert.match(html, /Assigned Tokens/);
     assert.ok(html.indexOf('data-alloc-ee-inter="jane@school.edu"') < html.indexOf('class="alloc-supervisor-name'));
-    assert.doesNotMatch(html, /data-alloc-supervisor/);
+    assert.match(html, /data-alloc-supervisor/);
+    assert.match(html, /Choose a subject first/);
     state.allocationStatus = 'flagged';
     const flaggedDesk = desk();
     flaggedDesk.students[1].isFlagged = true;
@@ -749,6 +750,72 @@ test('allocation listeners unsubscribe when the dashboard is left', async () => 
     if (previousWindow === undefined) delete globalThis.window;
     else globalThis.window = previousWindow;
     delete globalThis.document;
+    await server.close();
+  }
+});
+
+test('suggestions, department rows, and the HOD drawer', async () => {
+  const server = await createServer({ server: { middlewareMode: true }, appType: 'custom', logLevel: 'error' });
+  try {
+    const deskMod = await server.ssrLoadModule('/src/allocation/desk.js');
+    const stateMod = await server.ssrLoadModule('/src/shared/state.js');
+    const state = stateMod.state;
+    state.allocationView = 'dashboard';
+    state.allocationLoadView = 'subject';
+    state.allocationAssignedOpen = {};
+    state.allocationHodDepartment = '';
+    state.allocationHodStatus = { byDepartment: {} };
+    state.user = { email: 'hod@school.edu', permissions: { isHOD: true, canAdmin: false } };
+    state.adminTableSort = {};
+    const suggested = deskMod.allocationRowMarkup(student({
+      selectedSubject: 'Psychology',
+      suggestedStaffId: 'psy@school.edu',
+      suggestedStaffName: 'Dr Psy',
+    }), supervisors(), [], {});
+    assert.match(suggested.split('</td>')[2], /Suggested: Dr Psy/);
+    assert.match(suggested.split('</td>')[2], /data-alloc-approve="jane@school.edu"/);
+    assert.match(suggested.split('</td>')[2], /Approve/);
+    const published = deskMod.allocationRowMarkup(student({
+      selectedSubject: 'Psychology',
+      suggestedStaffId: 'psy@school.edu',
+      suggestedStaffName: 'Dr Psy',
+      flags: { committed: true, drafted: false, needsSupport: false, subjectMatch: 'none', hlMatch: 'none' },
+      token: { status: 'committed', staffId: 'psy@school.edu', assignedSubject: 'Psychology', staffName: 'Dr Psy' },
+    }), supervisors(), [], {});
+    assert.match(published, /Suggested: Dr Psy/);
+    assert.doesNotMatch(published, /data-alloc-approve/);
+
+    const hodDesk = desk();
+    hodDesk.subjects = [
+      { name: 'Psychology', shortName: 'Psy', colour: '#6b4c9a', department: 'Humanities' },
+      { name: 'Theater', shortName: 'The', colour: '#0e8a6a', department: 'Arts' },
+    ];
+    hodDesk.directory = [{ email: 'hod@school.edu', displayName: 'Dr Hod', department: 'Humanities', isHOD: true }];
+    hodDesk.tokenRows = [
+      { id: 't1', staffId: 'psy@school.edu', status: 'available', eligibleSubjects: ['Psychology'], studentId: '' },
+    ];
+    hodDesk.students = [
+      student({ selectedSubject: 'Psychology', suggestedStaffId: 'psy@school.edu', suggestedSubject: 'Psychology', suggestedStaffName: 'Dr Psy' }),
+      student({ studentId: 'mark@school.edu', displayName: 'Lee, Mark', sortName: 'lee, mark', selectedSubject: 'Theater', requestedSubjects: [theater] }),
+    ];
+    state.allocationView = 'hod';
+    state.allocationHodDepartment = 'Arts';
+    const other = deskMod.allocationHodMarkup(hodDesk);
+    assert.match(other, /data-alloc-suggest="mark@school.edu"[^>]*disabled/);
+    state.allocationHodDepartment = 'Humanities';
+    state.allocationHodStatus = { byDepartment: {} };
+    const own = deskMod.allocationHodMarkup(hodDesk);
+    const janeAt = own.indexOf('data-alloc-suggest="jane@school.edu"');
+    assert.doesNotMatch(own.slice(janeAt, janeAt + 220), /disabled/);
+    assert.match(own, /Certify & Submit Suggestions/);
+    state.allocationHodStatus = { byDepartment: { humanities: { department: 'Humanities', submitted: true, submittedAt: '2026-11-04T00:00:00.000Z', submittedBy: 'hod@school.edu' } } };
+    const locked = deskMod.allocationHodMarkup(hodDesk);
+    assert.match(locked, /data-alloc-suggest="jane@school.edu"[^>]*disabled/);
+    assert.match(locked, /Submitted/);
+    state.allocationLoadView = 'assigned';
+    const drawer = deskMod.allocationLoadPanel(hodDesk, supervisors());
+    assert.match(drawer, /Suggested taken/);
+  } finally {
     await server.close();
   }
 });

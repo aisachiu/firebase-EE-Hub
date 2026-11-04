@@ -17,6 +17,10 @@ service cloud.firestore {
       return data.isCoordinator == true || data.isAdmin == true;
     }
 
+    function hodFlag(data) {
+      return data.isHOD == true;
+    }
+
     // Allocation listeners are read-only. Mutations stay on Cloud Functions (admin SDK).
     function isCoordinator() {
       return signedIn()
@@ -24,37 +28,47 @@ service cloud.firestore {
         && coordinatorFlag(coordinatorDoc(request.auth.token.email.lower()));
     }
 
+    function isHOD() {
+      return signedIn()
+        && exists(staffPath(request.auth.token.email.lower()))
+        && hodFlag(coordinatorDoc(request.auth.token.email.lower()));
+    }
+
+    function allocationReader() {
+      return isCoordinator() || isHOD();
+    }
+
     match /staffUsers/{email} {
-      allow read: if isCoordinator();
+      allow read: if allocationReader();
       allow write: if false;
     }
 
     match /subjects/{subjectId} {
-      allow read: if isCoordinator();
+      allow read: if allocationReader();
       allow write: if false;
     }
 
     match /cohorts/{cohortId} {
-      allow read: if isCoordinator();
+      allow read: if allocationReader();
       allow write: if false;
 
       match /members/{memberId} {
-        allow read: if isCoordinator();
+        allow read: if allocationReader();
         allow write: if false;
       }
 
       match /allocationWorkspace/{studentId} {
-        allow read: if isCoordinator();
+        allow read: if allocationReader();
         allow write: if false;
       }
 
       match /supervisorTokens/{tokenId} {
-        allow read: if isCoordinator();
+        allow read: if allocationReader();
         allow write: if false;
       }
 
       match /allocationConfig/{docId} {
-        allow read: if isCoordinator();
+        allow read: if allocationReader();
         allow write: if false;
       }
 

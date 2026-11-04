@@ -142,3 +142,27 @@ test('staff keep Resources and do not see the student views in the tab bar', asy
   assert.equal(appState.section, 'resources');
   assert.equal(router.pathFromState(appState), '/resources');
 });
+
+test('a head of department opens Allocation on the department view', async () => {
+  installWindow();
+  const router = await import('./router.js');
+  const hod = { role: 'staff', email: 'hod@school.edu', permissions: { isHOD: true, canAdmin: false, isSupervisor: false } };
+  assert.deepEqual(router.sectionTabs(hod, 'staff').map((tab) => tab[0]), ['students', 'resources', 'allocation']);
+  const appState = { user: hod, actingAs: 'staff', section: '', view: '', studentFocus: '', allocationView: '' };
+  router.applyRoute(router.matchPath('/allocation'), appState);
+  assert.equal(appState.section, 'allocation');
+  assert.equal(appState.allocationView, 'hod');
+  assert.equal(router.pathFromState(appState), '/allocation/hod');
+  assert.equal(router.titleForState(appState), 'Department · EE Hub');
+  router.applyRoute(router.matchPath('/allocation/tokens'), appState);
+  assert.equal(appState.allocationView, 'hod');
+  const both = { role: 'staff', permissions: { isHOD: true, canAdmin: true } };
+  assert.ok(router.sectionTabs(both, 'coordinator').map((tab) => tab[0]).includes('admin'));
+  const coordinator = { user: both, actingAs: 'coordinator', section: '', view: '', studentFocus: '', allocationView: '' };
+  router.applyRoute(router.matchPath('/allocation'), coordinator);
+  assert.equal(coordinator.allocationView, 'dashboard');
+  assert.equal(router.pathFromState(coordinator), '/allocation');
+  router.applyRoute(router.matchPath('/allocation/hod'), coordinator);
+  assert.equal(coordinator.allocationView, 'hod');
+  assert.equal(router.pathFromState(coordinator), '/allocation/hod');
+});

@@ -123,7 +123,7 @@ export async function saveAdminRecord(app: App, entity: string, record: Doc, ori
   if (entity === 'staffUsers') {
     const email = validateEmail(values.EMAIL, 'Staff email');
     if (!keyName) values.EMAIL = email;
-    if (!toBoolean(values.isStaff) && !toBoolean(values.isSupervisor) && !toBoolean(values.isLead) && !toBoolean(values.isCoordinator) && !toBoolean(values.isAdmin)) {
+    if (!toBoolean(values.isStaff) && !toBoolean(values.isSupervisor) && !toBoolean(values.isLead) && !toBoolean(values.isCoordinator) && !toBoolean(values.isAdmin) && !toBoolean(values.isHOD)) {
       throw new HubError('Select at least one staff role.');
     }
     values.isStaff = true;
