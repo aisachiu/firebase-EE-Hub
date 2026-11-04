@@ -96,6 +96,7 @@ export const APP_TABLES: Record<string, TableDef> = {
       { name: 'LeadId', type: 'email', validator: 'email', label: 'EE Lead' },
       { name: 'isCoordinator', type: 'checkbox' },
       { name: 'isAdmin', type: 'checkbox' },
+      { name: 'isHOD', type: 'checkbox', label: 'HOD' },
       { name: 'EEQuota', type: 'number' },
       { name: 'EESubjects', type: 'checks', label: 'EE subjects', optionsFrom: 'subjects' },
       { name: 'bookingLink', type: 'url', label: 'Booking link', table: false },

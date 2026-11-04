@@ -6,6 +6,9 @@ import {
   applyStaffQuotaTokens,
   commitAllocations,
   deleteCohortToken,
+  approveAllocationSuggestion,
+  batchApproveAllocationSuggestions,
+  certifyHodSuggestions,
   draftAllocation,
   exportAllocationDrafts,
   exportStaffQuotaSheet,
@@ -15,6 +18,9 @@ import {
   previewAllocationIngest,
   previewStaffQuotaTokens,
   reopenAllocation,
+  reopenHodSuggestions,
+  setAllocationSubject,
+  suggestAllocation,
   listCohortTokens,
   saveAllocationChoices,
   saveAllocationConfig,
@@ -47,6 +53,7 @@ function memory() {
   const tokens = new Map<string, Doc>();
   const workspace = new Map<string, Doc>();
   const config = new Map<string, Doc>();
+  const hodStatus = new Map<string, Doc>();
   const audits: Doc[] = [];
   const allocationAudits = new Map<string, Doc>();
   const lastAllocationOps: AllocationOp[][] = [];
@@ -78,6 +85,8 @@ function memory() {
     async setWorkspace(cohortId: string, id: string, data: Doc) { workspace.set(`${cohortId}\u0000${id}`, { ...data }); },
     async getAllocationConfig(cohortId: string) { return copy(config.get(cohortId)); },
     async setAllocationConfig(cohortId: string, data: Doc) { config.set(cohortId, { ...data }); },
+    async getHodStatus(cohortId: string) { return copy(hodStatus.get(cohortId)); },
+    async setHodStatus(cohortId: string, data: Doc) { hodStatus.set(cohortId, { ...data }); },
     async applyAllocationOps(ops: AllocationOp[]) {
       lastAllocationOps.push(ops);
       for (const op of ops) {
@@ -691,6 +700,92 @@ test('undo refuses a published allocation and leaves the log in place', async ()
   await assert.rejects(undoAllocationAudit(app, '2026', textId(jane)), /Unpublish/);
   assert.equal((await app.store.listTokens('2026')).find((token) => token.allocatedTo === JANE)?.status, 'committed');
   assert.equal((await store.listAllocationAudits('2026')).some((row) => row.id === jane?.id), true);
+});
+
+test('a head of department suggests and certifies, and a coordinator approves', async () => {
+  const HOD = 'hod@vsa.edu';
+  const app = appFor();
+  await seed(app);
+  const store = app.store as unknown as ReturnType<typeof memory>;
+  await store.set(COLLECTIONS.subjects, 'his', { 'Subject ID': 'his', Name: 'History', Department: 'Humanities', Active: true });
+  await store.set(COLLECTIONS.subjects, 'bio', { 'Subject ID': 'bio', Name: 'Biology', Department: 'Science', Active: true });
+  await store.set(COLLECTIONS.staffUsers, HOD, {
+    EMAIL: HOD, DisplayName: 'Dr Hod', isStaff: true, isHOD: true, 'Primary Department': 'Humanities',
+  });
+  await store.set(COLLECTIONS.staffUsers, SMITH, {
+    EMAIL: SMITH, DisplayName: 'Mr. Smith', isStaff: true, isSupervisor: true, 'Primary Department': 'Humanities', EESubjects: ['History'],
+  });
+  await applyAllocationIngest(app, '2026', SHEET, 'workspace', { workbook: workbook([workspaceGrid]) });
+  await applyAllocationIngest(app, '2026', SHEET, 'tokens', { workbook: workbook([tokenGrid]) });
+  await store.setWorkspace('2026', JANE, {
+    ...(await store.getWorkspace('2026', JANE) || {}),
+    selectedSubject: 'History',
+    suggestedStaffId: '',
+    suggestedSubject: '',
+    isFlagged: true,
+    flagNote: 'Keep',
+  });
+
+  const hod = appFor(HOD);
+  hod.store = app.store;
+  await assert.rejects(draftAllocation(hod, '2026', JANE, SMITH, 'History'), /Access denied/);
+  await assert.rejects(commitAllocations(hod, '2026'), /Access denied/);
+  await store.setWorkspace('2026', JANE, { ...(await store.getWorkspace('2026', JANE) || {}), selectedSubject: 'Biology' });
+  await assert.rejects(suggestAllocation(hod, '2026', JANE, SMITH), /outside your department/);
+  await store.setWorkspace('2026', JANE, { ...(await store.getWorkspace('2026', JANE) || {}), selectedSubject: 'History' });
+  await assert.rejects(suggestAllocation(hod, '2026', JANE, COORDINATOR), /does not match/);
+  const suggested = await suggestAllocation(hod, '2026', JANE, SMITH);
+  assert.equal(suggested.suggestedStaffId, SMITH);
+  const saved = await store.getWorkspace('2026', JANE);
+  assert.equal(saved?.suggestedSubject, 'History');
+  assert.equal(saved?.selectedSubject, 'History');
+  assert.equal(saved?.isFlagged, true);
+  assert.equal(saved?.flagNote, 'Keep');
+
+  await certifyHodSuggestions(hod, '2026');
+  await assert.rejects(suggestAllocation(hod, '2026', JANE, ''), /Reopen/);
+  const hidden = await getAllocationDesk(hod, '2026');
+  assert.deepEqual(hidden.auditLogs, []);
+  assert.equal(hidden.hodStatus.byDepartment.humanities.submitted, true);
+  assert.equal(hidden.students.find((student) => student.studentId === JANE)?.suggestedStaffName, 'Mr. Smith');
+  assert.equal(hidden.students.find((student) => student.studentId === JANE)?.token, null);
+
+  await assert.rejects(reopenHodSuggestions(hod, '2026', 'Science'), /own department/);
+  await reopenHodSuggestions(app, '2026', 'Humanities');
+  await suggestAllocation(hod, '2026', JANE, SMITH);
+  const approved = await approveAllocationSuggestion(app, '2026', JANE);
+  assert.equal(approved.changed, true);
+  const after = await store.getWorkspace('2026', JANE);
+  assert.equal(after?.suggestedStaffId, '');
+  assert.equal(after?.suggestedSubject, '');
+  assert.equal(after?.selectedSubject, 'History');
+  assert.equal((await app.store.listTokens('2026')).find((token) => token.allocatedTo === JANE)?.status, 'draft');
+  assert.equal((await app.store.listTokens('2026')).find((token) => token.allocatedTo === JANE)?.assignedSubject, 'History');
+  assert.equal((await store.get(COLLECTIONS.studentUsers, JANE)), null);
+
+  await store.setWorkspace('2026', MARK, {
+    studentId: MARK,
+    subjectChoices: {},
+    dynamicData: {},
+    pendingClear: false,
+    selectedSubject: '',
+    suggestedStaffId: '',
+    suggestedSubject: '',
+  });
+  await store.setMember('2026', MARK, { StudentId: MARK, 'Display Name': 'Mark Lee', Surname: 'Lee', 'First Name': 'Mark', supervisorId: '', subject: '', eeActive: true });
+  await setAllocationSubject(app, '2026', MARK, 'history');
+  assert.equal((await store.getWorkspace('2026', MARK))?.selectedSubject, 'History');
+  await assert.rejects(setAllocationSubject(hod, '2026', MARK, 'History'), /Access denied/);
+  const bulk = await batchApproveAllocationSuggestions(app, '2026', [JANE, MARK]);
+  assert.equal(bulk.assigned.includes(JANE), false);
+  assert.equal(bulk.skipped.some((row) => row.studentId === MARK && /No suggestion/.test(row.reason)), true);
+  await suggestAllocation(hod, '2026', JANE, SMITH);
+  await suggestAllocation(hod, '2026', MARK, SMITH);
+  await commitAllocations(app, '2026', [JANE]);
+  const skipped = await batchApproveAllocationSuggestions(app, '2026', [JANE, MARK]);
+  assert.equal(skipped.skipped.some((row) => row.studentId === JANE && /published/i.test(row.reason)), true);
+  assert.equal(skipped.assigned.includes(MARK), true);
+  assert.equal((await store.getWorkspace('2026', MARK))?.suggestedStaffId, '');
 });
 
 function textId(row: Doc | undefined): string {

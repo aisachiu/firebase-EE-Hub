@@ -43,9 +43,15 @@ const ADMIN_PANELS = {
 
 const ALLOCATION_VIEWS = {
   dashboard: { title: 'Allocation' },
+  hod: { title: 'Department' },
   tokens: { title: 'Cohort tokens' },
   settings: { title: 'Student data' },
 };
+
+function pureHod(user) {
+  const permissions = (user && user.permissions) || {};
+  return !!permissions.isHOD && !permissions.canAdmin;
+}
 
 let historyMode = 'replace';
 let historyInstalled = false;
@@ -60,6 +66,7 @@ export function sectionTabs(user, actingAs) {
     tabs.splice(1, 0, ['notes', 'Notes']);
   }
   if (permissions.canAdmin) tabs.push(['allocation', 'Allocation'], ['admin', 'Admin']);
+  else if (permissions.isHOD) tabs.push(['allocation', 'Allocation']);
   return tabs;
 }
 
@@ -74,6 +81,7 @@ export function matchPath(pathname) {
   const path = normalizePath(pathname);
   if (path === '/') return null;
   if (path === '/allocation') return { section: 'allocation', allocationView: 'dashboard' };
+  if (path === '/allocation/hod') return { section: 'allocation', allocationView: 'hod' };
   if (path === '/allocation/tokens') return { section: 'allocation', allocationView: 'tokens' };
   if (path === '/allocation/settings') return { section: 'allocation', allocationView: 'settings' };
   if (path === '/admin/allocation-settings') return { section: 'allocation', allocationView: 'settings' };
@@ -114,6 +122,7 @@ export function pathFromState(appState) {
     return '/admin/cohorts';
   }
   if (section === 'allocation') {
+    if (appState.allocationView === 'hod' || pureHod(appState.user)) return '/allocation/hod';
     if (appState.allocationView === 'tokens') return '/allocation/tokens';
     if (appState.allocationView === 'settings') return '/allocation/settings';
     return '/allocation';
@@ -202,7 +211,10 @@ export function applyRoute(route, appState) {
     if (route.panel === 'quotas') appState.staffPane = 'quotas';
     else if (route.panel === 'staff-users') appState.staffPane = 'records';
   }
-  if (route.section === 'allocation') appState.allocationView = route.allocationView || 'dashboard';
+  if (route.section === 'allocation') {
+    const requested = route.allocationView || 'dashboard';
+    appState.allocationView = pureHod(appState.user) ? 'hod' : requested;
+  }
 }
 
 export function applyLocation() {

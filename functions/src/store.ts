@@ -207,6 +207,19 @@ export class Store {
     await this.allocationConfig(cohortId).set(cleanDoc(data));
   }
 
+  hodStatus(cohortId: string) {
+    return this.db.collection(COLLECTIONS.cohorts).doc(cohortId).collection('allocationConfig').doc('hodStatus');
+  }
+
+  async getHodStatus(cohortId: string): Promise<Doc | null> {
+    const snap = await this.hodStatus(cohortId).get();
+    return snap.exists ? (snap.data() as Doc) : null;
+  }
+
+  async setHodStatus(cohortId: string, data: Doc): Promise<void> {
+    await this.hodStatus(cohortId).set(cleanDoc(data));
+  }
+
   allocationAudits(cohortId: string) {
     return this.db.collection(COLLECTIONS.cohorts).doc(cohortId).collection('allocationAuditLogs');
   }

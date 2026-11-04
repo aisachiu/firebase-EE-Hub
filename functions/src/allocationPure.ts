@@ -30,6 +30,12 @@ export interface WorkspaceRecord {
   /** Coordinator flag on the allocation workspace. Survives draft and publish. */
   isFlagged?: boolean;
   flagNote?: string;
+  /** Subject the coordinator selected for allocation. Empty until a chip is clicked. */
+  selectedSubject?: string;
+  /** Staff email suggested by the head of department. A token is chosen only when a coordinator approves. */
+  suggestedStaffId?: string;
+  /** selectedSubject at the time of the suggestion. */
+  suggestedSubject?: string;
   updatedAt: string;
 }
 
@@ -195,6 +201,10 @@ export interface DeskStudent {
   /** Coordinator flag stored on the allocation workspace. */
   isFlagged: boolean;
   flagNote: string;
+  selectedSubject: string;
+  suggestedStaffId: string;
+  suggestedSubject: string;
+  suggestedStaffName: string;
   flags: {
     drafted: boolean;
     committed: boolean;
@@ -227,7 +237,9 @@ export interface AllocationDesk {
   choiceRows: AllocationChoiceRow[];
   settings: AllocationSettings;
   /** Registered subjects, used to keep comma-containing names whole and to show short names. */
-  subjects: { name: string; shortName: string; colour: string }[];
+  subjects: { name: string; shortName: string; colour: string; department: string }[];
+  /** Staff directory for department matching. Suggestions are not tokens. */
+  directory: { email: string; displayName: string; department: string; isHOD: boolean }[];
   summary: { staffCount: number; tokenCount: number; activeStudents: number; buffer: number };
   publish: { drafts: number; clears: number; blocked: number };
   warnings: string[];
@@ -977,6 +989,241 @@ export function canonicalSubjectAssignment(incoming: unknown, active: string[], 
   });
 }
 
+/** One active subject, matched whole so a comma inside the name is not a list. */
+export function canonicalSubjectName(subject: unknown, active: string[]): string {
+  const raw = text(subject).trim();
+  if (!raw) throw new HubError('Choose a subject.');
+  const match = active.find((name) => name.toLowerCase() === raw.toLowerCase());
+  if (!match) throw new HubError(`${raw} is not an active subject.`);
+  return match;
+}
+
+export function departmentKey(value: unknown): string {
+  return text(value).trim().toLowerCase();
+}
+
+/** Blank departments match nobody. Comparison is trim and case-insensitive. */
+export function departmentsMatch(left: unknown, right: unknown): boolean {
+  const a = departmentKey(left);
+  const b = departmentKey(right);
+  return a !== '' && a === b;
+}
+
+export function subjectCatalogueFrom(subjects: Doc[]): { name: string; department: string }[] {
+  const rows: { name: string; department: string }[] = [];
+  subjects.forEach((subject) => {
+    const name = text(subject.Name || subject.name);
+    if (!name) return;
+    rows.push({ name, department: text(subject.Department || subject.department).trim() });
+  });
+  return rows;
+}
+
+export function departmentOfSubject(subject: unknown, catalogue: { name: string; department: string }[]): string {
+  const name = text(subject).trim().toLowerCase();
+  if (!name) return '';
+  const match = catalogue.find((item) => item.name.toLowerCase() === name);
+  return match ? text(match.department).trim() : '';
+}
+
+/** Departments of a token's eligible subjects. A blank department is skipped. One token can count in two departments. */
+export function tokenDepartmentNames(eligible: unknown, catalogue: { name: string; department: string }[]): string[] {
+  const seen = new Set<string>();
+  const departments: string[] = [];
+  subjectLoadNames(eligible).forEach((name) => {
+    const department = departmentOfSubject(name, catalogue);
+    const key = departmentKey(department);
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    departments.push(department);
+  });
+  return departments;
+}
+
+export interface HodDepartmentStatus {
+  department: string;
+  submitted: boolean;
+  submittedAt: string;
+  submittedBy: string;
+}
+
+export interface HodStatusRecord {
+  byDepartment: Record<string, HodDepartmentStatus>;
+}
+
+export function hodStatusFromDoc(doc: Doc | null | undefined): HodStatusRecord {
+  const source = doc && doc.byDepartment && typeof doc.byDepartment === 'object' ? doc.byDepartment as Doc : {};
+  const byDepartment: Record<string, HodDepartmentStatus> = {};
+  Object.keys(source).forEach((key) => {
+    const row = source[key] && typeof source[key] === 'object' ? source[key] as Doc : {};
+    const department = text(row.department).trim();
+    const id = departmentKey(department || key);
+    if (!id) return;
+    byDepartment[id] = {
+      department: department || text(key),
+      submitted: row.submitted === true,
+      submittedAt: text(row.submittedAt),
+      submittedBy: normalizeEmail(row.submittedBy),
+    };
+  });
+  return { byDepartment };
+}
+
+export interface SuggestionCapacity {
+  eligible: boolean;
+  open: number;
+  held: number;
+  remaining: number;
+}
+
+/**
+ * Suggestable slots are this teacher's available tokens for the subject,
+ * minus other students who already suggest that teacher and are not already assigned to them.
+ */
+export function suggestionCapacity(input: {
+  staffId: string;
+  subject: string;
+  tokens: { staffId: string; status: string; eligibleSubjects?: unknown; allocatedTo?: string }[];
+  suggestions: { studentId: string; suggestedStaffId: string; suggestedSubject: string }[];
+  exceptStudentId?: string;
+}): SuggestionCapacity {
+  const staffId = normalizeEmail(input.staffId);
+  const subject = text(input.subject);
+  const except = normalizeEmail(input.exceptStudentId);
+  const mine = input.tokens.filter((token) => normalizeEmail(token.staffId) === staffId);
+  const overlaps = (eligible: unknown) => subjectsOverlap(subject, subjectLoadNames(eligible));
+  const eligible = mine.some((token) => overlaps(token.eligibleSubjects));
+  const open = mine.filter((token) => token.status === 'available' && overlaps(token.eligibleSubjects)).length;
+  const held = input.suggestions.filter((row) => {
+    const studentId = normalizeEmail(row.studentId);
+    if (!studentId || studentId === except) return false;
+    if (normalizeEmail(row.suggestedStaffId) !== staffId) return false;
+    if (!subjectsOverlap(text(row.suggestedSubject), [subject])) return false;
+    const assigned = mine.some((token) => token.status !== 'available' && normalizeEmail(token.allocatedTo) === studentId);
+    return !assigned;
+  }).length;
+  return { eligible, open, held, remaining: Math.max(0, open - held) };
+}
+
+export interface HodOverviewStudent {
+  studentId: string;
+  displayName: string;
+  subject: string;
+}
+
+export interface HodSuggestionOverview {
+  subjects: { subject: string; taken: number; remaining: number }[];
+  supervisors: { staffId: string; displayName: string; taken: number; remaining: number; total: number; students: HodOverviewStudent[] }[];
+  groups: {
+    subject: string;
+    taken: { staffId: string; staffName: string; studentId: string; studentName: string }[];
+    available: { staffId: string; staffName: string; slots: number }[];
+  }[];
+}
+
+/** Unrealized suggestions for one department. An approved assignment to the same teacher is not counted again. */
+export function hodSuggestionOverview(input: {
+  department: string;
+  catalogue: { name: string; department: string }[];
+  tokens: { staffId: string; status: string; eligibleSubjects?: unknown; allocatedTo?: string }[];
+  students: { studentId: string; displayName: string; suggestedStaffId?: string; suggestedSubject?: string; tokenStaffId?: string }[];
+  staff: { staffId: string; displayName: string }[];
+}): HodSuggestionOverview {
+  const department = text(input.department).trim();
+  const names = new Map(input.staff.map((person) => [normalizeEmail(person.staffId), person.displayName || person.staffId]));
+  const inDepartment = (subject: unknown) => departmentsMatch(departmentOfSubject(subject, input.catalogue), department);
+  const departmentSubjects = input.catalogue
+    .filter((item) => departmentsMatch(item.department, department))
+    .map((item) => item.name);
+  const unrealized = input.students.filter((student) => {
+    const staffId = normalizeEmail(student.suggestedStaffId);
+    const subject = text(student.suggestedSubject);
+    if (!staffId || !subject || !inDepartment(subject)) return false;
+    return normalizeEmail(student.tokenStaffId) !== staffId;
+  });
+  const subjectRows = departmentSubjects.map((subject) => {
+    const taken = unrealized.filter((student) => subjectsOverlap(text(student.suggestedSubject), [subject])).length;
+    const physical = input.tokens.filter((token) => token.status === 'available' && subjectsOverlap(subject, subjectLoadNames(token.eligibleSubjects))).length;
+    return { subject, taken, remaining: Math.max(0, physical - taken) };
+  }).filter((row) => row.taken || row.remaining || input.tokens.some((token) => subjectsOverlap(row.subject, subjectLoadNames(token.eligibleSubjects))));
+  const staffIds = new Set<string>();
+  input.tokens.forEach((token) => {
+    if (tokenDepartmentNames(token.eligibleSubjects, input.catalogue).some((name) => departmentsMatch(name, department))) {
+      staffIds.add(normalizeEmail(token.staffId));
+    }
+  });
+  unrealized.forEach((student) => staffIds.add(normalizeEmail(student.suggestedStaffId)));
+  const supervisors = [...staffIds].filter(Boolean).map((staffId) => {
+    const students = unrealized.filter((student) => normalizeEmail(student.suggestedStaffId) === staffId).map((student) => ({
+      studentId: normalizeEmail(student.studentId),
+      displayName: text(student.displayName) || normalizeEmail(student.studentId),
+      subject: text(student.suggestedSubject),
+    }));
+    const physical = input.tokens.filter((token) => {
+      if (normalizeEmail(token.staffId) !== staffId || token.status !== 'available') return false;
+      return tokenDepartmentNames(token.eligibleSubjects, input.catalogue).some((name) => departmentsMatch(name, department));
+    }).length;
+    const taken = students.length;
+    const remaining = Math.max(0, physical - taken);
+    return {
+      staffId,
+      displayName: names.get(staffId) || staffId,
+      taken,
+      remaining,
+      total: Math.max(physical, taken),
+      students,
+    };
+  }).sort((left, right) => left.displayName.localeCompare(right.displayName, undefined, { sensitivity: 'base' }));
+  const groups = subjectRows.map((row) => {
+    const taken = unrealized.filter((student) => subjectsOverlap(text(student.suggestedSubject), [row.subject])).map((student) => {
+      const staffId = normalizeEmail(student.suggestedStaffId);
+      return {
+        staffId,
+        staffName: names.get(staffId) || staffId,
+        studentId: normalizeEmail(student.studentId),
+        studentName: text(student.displayName) || normalizeEmail(student.studentId),
+      };
+    });
+    const available = supervisors.map((person) => {
+      const physical = input.tokens.filter((token) => normalizeEmail(token.staffId) === person.staffId && token.status === 'available' && subjectsOverlap(row.subject, subjectLoadNames(token.eligibleSubjects))).length;
+      const used = unrealized.filter((student) => normalizeEmail(student.suggestedStaffId) === person.staffId && subjectsOverlap(text(student.suggestedSubject), [row.subject])).length;
+      return { staffId: person.staffId, staffName: person.displayName, slots: Math.max(0, physical - used) };
+    }).filter((person) => person.slots > 0);
+    return { subject: row.subject, taken, available };
+  });
+  return {
+    subjects: subjectRows.sort((left, right) => left.subject.localeCompare(right.subject, undefined, { sensitivity: 'base' })),
+    supervisors,
+    groups: groups.sort((left, right) => left.subject.localeCompare(right.subject, undefined, { sensitivity: 'base' })),
+  };
+}
+
+export function emptyWorkspaceRecord(studentId: string, now: string): WorkspaceRecord {
+  return {
+    studentId,
+    subjectChoices: {},
+    dynamicData: {},
+    pendingClear: false,
+    isFlagged: false,
+    flagNote: '',
+    selectedSubject: '',
+    suggestedStaffId: '',
+    suggestedSubject: '',
+    updatedAt: now,
+  };
+}
+
+function carriedWorkspace(existing: WorkspaceRecord | undefined) {
+  return {
+    pendingClear: !!existing?.pendingClear,
+    isFlagged: existing?.isFlagged === true,
+    flagNote: text(existing?.flagNote),
+    selectedSubject: text(existing?.selectedSubject),
+    suggestedStaffId: normalizeEmail(existing?.suggestedStaffId),
+    suggestedSubject: text(existing?.suggestedSubject),
+  };
+}
+
 export interface QuotaCapacity {
   totalQuota: number;
   untiedQuota: number;
@@ -989,6 +1236,11 @@ export interface SubjectLoadDemand {
   primary?: unknown;
   allocated: boolean;
   assignedSubject?: string;
+  /**
+   * When present, this student counts once, in this subject only.
+   * An empty string drops them out of every pool. Assigned-token subjects do not feed the pool.
+   */
+  selectedSubject?: string;
 }
 
 export interface SubjectLoadRow {
@@ -1019,6 +1271,7 @@ export function subjectTokenLoad(
 ): SubjectTokenLoad {
   let untied = 0;
   let overlaps = false;
+  const selectionMode = demand.some((row) => Object.prototype.hasOwnProperty.call(row, 'selectedSubject'));
   const groups = new Map<string, SubjectLoadRow>();
   const bucket = (subject: string) => {
     const key = subject.toLowerCase();
@@ -1041,9 +1294,24 @@ export function subjectTokenLoad(
       if (open) current.remaining += 1;
     });
     const assigned = subjectNamesForLoad(token.assignedSubject, catalogue)[0] || '';
-    if (!open && assigned) bucket(assigned).alloc += 1;
+    if (!selectionMode && !open && assigned) bucket(assigned).alloc += 1;
   });
   demand.forEach((row) => {
+    if (selectionMode) {
+      const selected = subjectNamesForLoad(row.selectedSubject, catalogue)[0] || '';
+      if (!selected) return;
+      const current = bucket(selected);
+      const primary = new Set(subjectNamesForLoad(row.primary, catalogue).map((name) => name.toLowerCase()));
+      const firstChoice = primary.has(selected.toLowerCase());
+      current.pool += 1;
+      if (firstChoice) current.poolChoice1 += 1;
+      if (row.allocated) current.alloc += 1;
+      else {
+        current.upool += 1;
+        if (firstChoice) current.upoolChoice1 += 1;
+      }
+      return;
+    }
     const seen = new Set<string>();
     const primary = new Set(subjectNamesForLoad(row.primary, catalogue).map((name) => name.toLowerCase()));
     coalesceKnownSubjects(row.subjects, catalogue).forEach((subject) => {
@@ -1183,6 +1451,9 @@ export function workspaceFromDoc(doc: Doc, id: string): WorkspaceRecord {
     pendingClear: doc.pendingClear === true,
     isFlagged: doc.isFlagged === true,
     flagNote: text(doc.flagNote),
+    selectedSubject: text(doc.selectedSubject),
+    suggestedStaffId: normalizeEmail(doc.suggestedStaffId),
+    suggestedSubject: text(doc.suggestedSubject),
     updatedAt: text(doc.updatedAt),
   };
 }
@@ -1550,7 +1821,7 @@ export function mergeLiveChoiceRow(
     studentId,
     subjectChoices,
     dynamicData,
-    pendingClear: !!existing?.pendingClear,
+    ...carriedWorkspace(existing),
     updatedAt: now,
   };
 }
@@ -1592,7 +1863,7 @@ export function mergeStaticWorkspaceRow(
       studentId: row.studentId,
       subjectChoices: row.subjectChoices,
       dynamicData: row.dynamicData,
-      pendingClear: !!prior?.pendingClear,
+      ...carriedWorkspace(prior),
       updatedAt: now,
     };
   }
@@ -1610,7 +1881,7 @@ export function mergeStaticWorkspaceRow(
     studentId: row.studentId,
     subjectChoices,
     dynamicData,
-    pendingClear: prior.pendingClear,
+    ...carriedWorkspace(prior),
     updatedAt: now,
   };
 }
@@ -2140,14 +2411,25 @@ export function buildDesk(input: {
   members: Doc[];
   workspaces: WorkspaceRecord[];
   tokens: TokenRecord[];
-  staff: { email: string; displayName: string }[];
+  staff: { email: string; displayName: string; department?: string; isHOD?: boolean }[];
   settings: AllocationSettings;
   /** Subject records. Tag colours come from a stored hex, otherwise the shared subject palette. */
   subjects?: Doc[];
   /** Raw workspace choice values, before nested objects are flattened to text. */
   choiceSources?: Map<string, unknown>;
 }): AllocationDesk {
-  const subjectRows = subjectSwatches(input.subjects || []).map((row) => ({ name: row.name, shortName: row.shortName, colour: row.colour }));
+  const departmentByName = new Map<string, string>();
+  (input.subjects || []).forEach((subject) => {
+    const name = text(subject.Name).toLowerCase();
+    if (!name) return;
+    departmentByName.set(name, text(subject.Department).trim());
+  });
+  const subjectRows = subjectSwatches(input.subjects || []).map((row) => ({
+    name: row.name,
+    shortName: row.shortName,
+    colour: row.colour,
+    department: departmentByName.get(row.name.toLowerCase()) || '',
+  }));
   const catalogue = subjectRows.map((row) => row.name);
   const names = new Map(input.staff.map((person) => [normalizeEmail(person.email), person.displayName || person.email]));
   const studentNames = new Map(input.members.map((member) => [normalizeEmail(member.StudentId), studentLabel(member)]));
@@ -2194,6 +2476,10 @@ export function buildDesk(input: {
         pendingClear: !!workspace?.pendingClear,
         isFlagged: workspace?.isFlagged === true,
         flagNote: text(workspace?.flagNote),
+        selectedSubject: text(workspace?.selectedSubject),
+        suggestedStaffId: normalizeEmail(workspace?.suggestedStaffId),
+        suggestedSubject: text(workspace?.suggestedSubject),
+        suggestedStaffName: names.get(normalizeEmail(workspace?.suggestedStaffId)) || '',
         requestedSubjects,
         supportFlags,
         token: token ? {
@@ -2269,6 +2555,12 @@ export function buildDesk(input: {
     choiceRows: choiceRowsFrom(input.members, input.workspaces),
     settings: input.settings,
     subjects: subjectRows,
+    directory: input.staff.map((person) => ({
+      email: normalizeEmail(person.email),
+      displayName: person.displayName || person.email,
+      department: text(person.department).trim(),
+      isHOD: person.isHOD === true,
+    })).filter((person) => person.email).sort((left, right) => left.displayName.localeCompare(right.displayName, undefined, { sensitivity: 'base' })),
     summary: {
       staffCount: supervisors.length,
       tokenCount: input.tokens.length,

@@ -58,6 +58,13 @@ import {
   subjectsOverlap,
   tokenSheetRows,
   tokenFromDoc,
+  departmentKey,
+  departmentOfSubject,
+  departmentsMatch,
+  hodSuggestionOverview,
+  suggestionCapacity,
+  tokenDepartmentNames,
+  workspaceFromDoc,
   interdisciplinarySignal,
   requestedSubjectNames,
   resolveRequestedSubjects,
@@ -813,6 +820,207 @@ test('pool and upool count first-choice requests separately from every request',
   assert.equal(biology?.poolChoice1, 1);
   assert.equal(biology?.upool, 1);
   assert.equal(biology?.upoolChoice1, 0);
+});
+
+test('workspace fields round-trip and survive choice merges', () => {
+  const round = workspaceFromDoc({
+    selectedSubject: 'History',
+    suggestedStaffId: 'Smith@Vsa.edu',
+    suggestedSubject: 'History',
+    isFlagged: true,
+    flagNote: 'Check the proposal',
+  }, JANE);
+  assert.equal(round.studentId, JANE);
+  assert.equal(round.selectedSubject, 'History');
+  assert.equal(round.suggestedStaffId, SMITH);
+  assert.equal(round.suggestedSubject, 'History');
+  assert.equal(round.isFlagged, true);
+  assert.equal(round.flagNote, 'Check the proposal');
+  const legacy = workspaceFromDoc({}, JANE);
+  assert.equal(legacy.selectedSubject, '');
+  assert.equal(legacy.suggestedStaffId, '');
+  assert.equal(legacy.suggestedSubject, '');
+  assert.equal(legacy.isFlagged, false);
+  assert.equal(legacy.flagNote, '');
+  const settings = settingsForLiveLink(emptySettings(), 'https://docs.google.com/spreadsheets/d/abc123_XYZ-000000000000/edit', 'abc123_XYZ-000000000000', 'Choices', columnMappingsFrom({
+    core: { studentNumber: 'Student Number' },
+    subjectChoice: { primary: 'First choice' },
+  }), ['Student Number', 'First choice']);
+  const prior: WorkspaceRecord = {
+    ...legacy,
+    subjectChoices: { choice1: 'History' },
+    isFlagged: true,
+    flagNote: 'Keep me',
+    selectedSubject: 'History',
+    suggestedStaffId: SMITH,
+    suggestedSubject: 'History',
+  };
+  const live = mergeLiveChoiceRow(prior, {
+    line: 2,
+    studentNumber: '20260001',
+    studentEmail: '',
+    primary: 'Physics',
+    secondary: '',
+    interdisciplinary: '',
+    hl: '',
+    support: '',
+    fields: {},
+  }, settings, JANE, '2026-11-04T00:00:00.000Z');
+  assert.equal(live.subjectChoices.choice1, 'Physics');
+  assert.equal(live.selectedSubject, 'History');
+  assert.equal(live.suggestedStaffId, SMITH);
+  assert.equal(live.suggestedSubject, 'History');
+  assert.equal(live.isFlagged, true);
+  assert.equal(live.flagNote, 'Keep me');
+  const again = mergeStaticWorkspaceRow({
+    studentId: JANE,
+    subjectChoices: { choice1: 'Art' },
+    dynamicData: {},
+    eeActive: null,
+  }, live, settings, '2026-11-04T01:00:00.000Z');
+  assert.equal(again.subjectChoices.choice1, 'Physics');
+  assert.equal(again.selectedSubject, 'History');
+  assert.equal(again.suggestedStaffId, SMITH);
+  assert.equal(again.isFlagged, true);
+  assert.equal(again.flagNote, 'Keep me');
+});
+
+test('department match is case-insensitive and a token can sit in two departments', () => {
+  const catalogue = [
+    { name: 'History', department: 'Humanities' },
+    { name: 'Biology', department: 'Science' },
+    { name: 'Art', department: '  ' },
+  ];
+  assert.equal(departmentKey(' Humanities '), 'humanities');
+  assert.equal(departmentsMatch('Humanities', ' humanities '), true);
+  assert.equal(departmentsMatch('', 'Science'), false);
+  assert.equal(departmentsMatch('Art', ''), false);
+  assert.equal(departmentOfSubject('History', catalogue), 'Humanities');
+  assert.equal(departmentOfSubject('Art', catalogue), '');
+  assert.deepEqual(tokenDepartmentNames(['History', 'Biology'], catalogue), ['Humanities', 'Science']);
+  assert.deepEqual(tokenDepartmentNames(['Art'], catalogue), []);
+  assert.deepEqual(tokenDepartmentNames([], catalogue), []);
+});
+
+test('suggestion capacity counts unrealized suggestions once and ignores an approved assignment', () => {
+  const tokens = [
+    { staffId: SMITH, status: 'available', eligibleSubjects: ['History'], allocatedTo: '' },
+    { staffId: SMITH, status: 'draft', eligibleSubjects: ['History'], allocatedTo: JANE },
+  ];
+  const open = suggestionCapacity({
+    staffId: SMITH,
+    subject: 'History',
+    tokens: [tokens[0]],
+    suggestions: [
+      { studentId: JANE, suggestedStaffId: SMITH, suggestedSubject: 'History' },
+    ],
+    exceptStudentId: MARK,
+  });
+  assert.equal(open.eligible, true);
+  assert.equal(open.open, 1);
+  assert.equal(open.held, 1);
+  assert.equal(open.remaining, 0);
+  const second = suggestionCapacity({
+    staffId: SMITH,
+    subject: 'History',
+    tokens: [tokens[0]],
+    suggestions: [
+      { studentId: JANE, suggestedStaffId: SMITH, suggestedSubject: 'History' },
+    ],
+    exceptStudentId: JANE,
+  });
+  assert.equal(second.remaining, 1);
+  const approved = suggestionCapacity({
+    staffId: SMITH,
+    subject: 'History',
+    tokens,
+    suggestions: [
+      { studentId: JANE, suggestedStaffId: SMITH, suggestedSubject: 'History' },
+    ],
+    exceptStudentId: MARK,
+  });
+  assert.equal(approved.open, 1);
+  assert.equal(approved.held, 0);
+  assert.equal(approved.remaining, 1);
+  const outside = suggestionCapacity({
+    staffId: SMITH,
+    subject: 'Biology',
+    tokens: [tokens[0]],
+    suggestions: [],
+  });
+  assert.equal(outside.eligible, false);
+});
+
+test('subject token load counts each student once by selected subject', () => {
+  const load = subjectTokenLoad([
+    { status: 'available', eligibleSubjects: ['History'] },
+    { status: 'draft', eligibleSubjects: ['Biology'], assignedSubject: 'Biology' },
+  ], [
+    { subjects: ['History', 'Biology'], selectedSubject: 'History', primary: 'History', allocated: false },
+    { subjects: ['History', 'Biology'], selectedSubject: 'Biology', primary: 'History', allocated: true },
+    { subjects: ['History', 'Biology'], selectedSubject: '', primary: 'Biology', allocated: false },
+  ]);
+  const history = load.subjects.find((item) => item.subject === 'History');
+  const biology = load.subjects.find((item) => item.subject === 'Biology');
+  assert.equal(history?.pool, 1);
+  assert.equal(history?.poolChoice1, 1);
+  assert.equal(history?.upool, 1);
+  assert.equal(history?.alloc, 0);
+  assert.equal(history?.remaining, 1);
+  assert.equal(biology?.pool, 1);
+  assert.equal(biology?.alloc, 1);
+  assert.equal(biology?.upool, 0);
+  assert.equal(load.subjects.some((item) => item.pool > 1), false);
+});
+
+test('the desk exposes a suggestion without treating it as a held token', () => {
+  const settings = mergeDetected(emptySettings(), ['choice1', 'choice2'], []);
+  const desk = buildDesk({
+    cohortId: '2026',
+    members: [{ StudentId: JANE, Surname: 'Doe', 'First Name': 'Jane', eeActive: true }],
+    workspaces: [{
+      studentId: JANE,
+      subjectChoices: { choice1: 'History', choice2: 'Biology' },
+      dynamicData: {},
+      pendingClear: false,
+      selectedSubject: 'History',
+      suggestedStaffId: SMITH,
+      suggestedSubject: 'History',
+      isFlagged: true,
+      flagNote: 'Look again',
+      updatedAt: '',
+    }],
+    tokens: [token({ id: 'open', staffId: SMITH, status: 'available', eligibleSubjects: ['History', 'Biology'] })],
+    staff: [{ email: SMITH, displayName: 'Mr. Smith', department: 'Humanities', isHOD: true }],
+    settings,
+    subjects: [
+      { Name: 'History', Department: 'Humanities', Active: true },
+      { Name: 'Biology', Department: 'Science', Active: true },
+    ],
+  });
+  assert.equal(desk.students[0].token, null);
+  assert.equal(desk.students[0].selectedSubject, 'History');
+  assert.equal(desk.students[0].suggestedStaffId, SMITH);
+  assert.equal(desk.students[0].suggestedStaffName, 'Mr. Smith');
+  assert.equal(desk.students[0].isFlagged, true);
+  assert.equal(desk.subjects.find((item) => item.name === 'History')?.department, 'Humanities');
+  assert.equal(desk.directory[0].isHOD, true);
+  const overview = hodSuggestionOverview({
+    department: 'Humanities',
+    catalogue: desk.subjects.map((item) => ({ name: item.name, department: item.department })),
+    tokens: desk.tokenRows,
+    students: desk.students.map((student) => ({
+      studentId: student.studentId,
+      displayName: student.displayName,
+      suggestedStaffId: student.suggestedStaffId,
+      suggestedSubject: student.suggestedSubject,
+      tokenStaffId: student.token?.staffId || '',
+    })),
+    staff: [{ staffId: SMITH, displayName: 'Mr. Smith' }],
+  });
+  assert.equal(overview.subjects.find((item) => item.subject === 'History')?.taken, 1);
+  assert.equal(overview.subjects.find((item) => item.subject === 'History')?.remaining, 0);
+  assert.equal(overview.supervisors[0].students[0].displayName, 'Doe, Jane');
 });
 
 test('an interdisciplinary draft can take any available token', () => {

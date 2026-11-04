@@ -89,6 +89,12 @@ import {
   saveAllocationChoices,
   saveAllocationConfig,
   saveAllocationFlag,
+  setAllocationSubject,
+  suggestAllocation,
+  certifyHodSuggestions,
+  reopenHodSuggestions,
+  approveAllocationSuggestion,
+  batchApproveAllocationSuggestions,
   assignStaffSubjects,
   saveStaffQuotas,
   saveStaffSubjects,
@@ -191,6 +197,12 @@ export async function dispatch(app: App, method: string, args: unknown[]): Promi
     case 'getAllocationDesk': return getAllocationDesk(app, args[0]);
     case 'draftAllocation': return draftAllocation(app, args[0], args[1], args[2], args[3], args[4], args[5], args[6]);
     case 'saveAllocationFlag': return saveAllocationFlag(app, args[0], args[1], args[2], args[3]);
+    case 'setAllocationSubject': return setAllocationSubject(app, args[0], args[1], args[2]);
+    case 'suggestAllocation': return suggestAllocation(app, args[0], args[1], args[2]);
+    case 'certifyHodSuggestions': return certifyHodSuggestions(app, args[0]);
+    case 'reopenHodSuggestions': return reopenHodSuggestions(app, args[0], args[1]);
+    case 'approveAllocationSuggestion': return approveAllocationSuggestion(app, args[0], args[1]);
+    case 'batchApproveAllocationSuggestions': return batchApproveAllocationSuggestions(app, args[0], args[1]);
     case 'batchDraftAllocations': return batchDraftAllocations(app, args[0], args[1], args[2], args[3], args[4]);
     case 'reopenAllocation': return reopenAllocation(app, args[0], args[1]);
     case 'reopenAllocations': return reopenAllocations(app, args[0], args[1]);

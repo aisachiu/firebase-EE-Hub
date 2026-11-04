@@ -55,6 +55,7 @@ window.eeWatchAllocation = function(cohortId, handlers) {
     workspace: null,
     tokens: null,
     settings: null,
+    hodStatus: null,
     staff: null,
     subjects: null,
     auditLogs: null,
@@ -71,6 +72,7 @@ window.eeWatchAllocation = function(cohortId, handlers) {
       workspace: bucket.workspace,
       tokens: bucket.tokens,
       settings: bucket.settings,
+      hodStatus: bucket.hodStatus,
       staff: bucket.staff,
       subjects: bucket.subjects,
       auditLogs: bucket.auditLogs,
@@ -88,9 +90,19 @@ window.eeWatchAllocation = function(cohortId, handlers) {
   unsubs.push(onSnapshot(doc(db, 'cohorts', cohortId, 'allocationConfig', 'settings'), function(snap) {
     emit('settings', snap.exists() ? snap.data() : null);
   }, fail));
+  unsubs.push(onSnapshot(doc(db, 'cohorts', cohortId, 'allocationConfig', 'hodStatus'), function(snap) {
+    emit('hodStatus', snap.exists() ? snap.data() : null);
+  }, fail));
   unsubs.push(onSnapshot(collection(db, 'staffUsers'), function(snap) { emit('staff', allocationDocs(snap)); }, fail));
   unsubs.push(onSnapshot(collection(db, 'subjects'), function(snap) { emit('subjects', allocationDocs(snap)); }, fail));
-  unsubs.push(onSnapshot(collection(db, 'cohorts', cohortId, 'allocationAuditLogs'), function(snap) { emit('auditLogs', allocationDocs(snap)); }, fail));
+  unsubs.push(onSnapshot(collection(db, 'cohorts', cohortId, 'allocationAuditLogs'), function(snap) { emit('auditLogs', allocationDocs(snap)); }, function(error) {
+    const code = String((error && error.code) || '');
+    if (code === 'permission-denied' || code.indexOf('permission-denied') >= 0) {
+      emit('auditLogs', []);
+      return;
+    }
+    fail(error);
+  }));
   return function() {
     stopped = true;
     unsubs.forEach(function(stop) { stop(); });

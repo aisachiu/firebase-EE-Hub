@@ -1,4 +1,4 @@
-import { buildDesk, choiceMatchFlag, diplomaLevelFlag, settingsFromDoc, subjectsOverlap, tokenFromDoc, workspaceFromDoc } from '../../../functions/src/allocationPure.ts';
+import { buildDesk, choiceMatchFlag, diplomaLevelFlag, hodStatusFromDoc, settingsFromDoc, subjectsOverlap, tokenFromDoc, workspaceFromDoc } from '../../../functions/src/allocationPure.ts';
 import { callServer } from '../shared/api.js';
 import { showError } from '../shared/feedback.js';
 import { isStale, sameScene } from '../shared/scene.js';
@@ -20,6 +20,9 @@ export function releaseAllocationWatch() {
   state.allocationListenFallback = false;
   state.allocationPendingEdits = {};
   state.allocationPendingFlags = {};
+  state.allocationPendingSubjects = {};
+  state.allocationPendingSuggestions = {};
+  state.allocationHodStatus = null;
   state.allocationAuditLogs = [];
   state.allocationRevision = 0;
   state.allocationPaintDeferred = false;
@@ -43,7 +46,12 @@ export function deskFromAllocationSources(cohortId, sources) {
   }).filter(Boolean);
   const staff = (incoming.staff || []).map(function(doc) {
     const email = emailOf(doc.EMAIL || doc.id);
-    return { email: email, displayName: String(doc.DisplayName || doc.EMAIL || email).trim() };
+    return {
+      email: email,
+      displayName: String(doc.DisplayName || doc.EMAIL || email).trim(),
+      department: String(doc['Primary Department'] || '').trim(),
+      isHOD: doc.isHOD === true,
+    };
   }).filter(function(person) { return person.email; });
   const choiceSources = new Map();
   (incoming.workspace || []).forEach(function(doc) {
@@ -142,9 +150,87 @@ export function reconcilePendingFlags(pending, remoteDesk) {
   return next;
 }
 
+export function overlayPendingSubjects(desk, pending) {
+  const edits = pending || {};
+  const ids = Object.keys(edits);
+  if (!desk || !ids.length) return desk;
+  const students = (desk.students || []).map(function(student) {
+    const edit = edits[student.studentId];
+    if (!edit) return student;
+    const next = Object.assign({}, student, { selectedSubject: edit.selectedSubject || '' });
+    if (edit.clearSuggestion) {
+      next.suggestedStaffId = '';
+      next.suggestedSubject = '';
+      next.suggestedStaffName = '';
+    }
+    return next;
+  });
+  return Object.assign({}, desk, { students: students });
+}
+
+export function overlayPendingSuggestions(desk, pending) {
+  const edits = pending || {};
+  const ids = Object.keys(edits);
+  if (!desk || !ids.length) return desk;
+  const names = new Map(((desk.directory) || []).map(function(person) {
+    return [emailOf(person.email), person.displayName || person.email];
+  }));
+  const students = (desk.students || []).map(function(student) {
+    const edit = edits[student.studentId];
+    if (!edit) return student;
+    const staffId = emailOf(edit.suggestedStaffId);
+    return Object.assign({}, student, {
+      suggestedStaffId: staffId,
+      suggestedSubject: edit.suggestedSubject || '',
+      suggestedStaffName: staffId ? (names.get(staffId) || edit.suggestedStaffName || staffId) : '',
+    });
+  });
+  return Object.assign({}, desk, { students: students });
+}
+
+export function reconcilePendingSubjects(pending, remoteDesk) {
+  const next = {};
+  const students = new Map(((remoteDesk && remoteDesk.students) || []).map(function(student) {
+    return [student.studentId, student];
+  }));
+  Object.keys(pending || {}).forEach(function(studentId) {
+    const edit = pending[studentId];
+    const student = students.get(studentId);
+    if (!student) {
+      next[studentId] = edit;
+      return;
+    }
+    if (String(student.selectedSubject || '').toLowerCase() !== String(edit.selectedSubject || '').toLowerCase()) {
+      next[studentId] = edit;
+    }
+  });
+  return next;
+}
+
+export function reconcilePendingSuggestions(pending, remoteDesk) {
+  const next = {};
+  const students = new Map(((remoteDesk && remoteDesk.students) || []).map(function(student) {
+    return [student.studentId, student];
+  }));
+  Object.keys(pending || {}).forEach(function(studentId) {
+    const edit = pending[studentId];
+    const student = students.get(studentId);
+    if (!student) {
+      next[studentId] = edit;
+      return;
+    }
+    const sameStaff = emailOf(student.suggestedStaffId) === emailOf(edit.suggestedStaffId);
+    const sameSubject = String(student.suggestedSubject || '').toLowerCase() === String(edit.suggestedSubject || '').toLowerCase();
+    if (!sameStaff || !sameSubject) next[studentId] = edit;
+  });
+  return next;
+}
+
 export function presentAllocationDesk(remote) {
   const edited = overlayPendingEdits(remote, state.allocationPendingEdits);
-  return overlayPendingFlags(edited, state.allocationPendingFlags);
+  const flagged = overlayPendingFlags(edited, state.allocationPendingFlags);
+  const selected = overlayPendingSubjects(flagged, state.allocationPendingSubjects);
+  return overlayPendingSuggestions(selected, state.allocationPendingSuggestions);
 }
 
 function supervisorsAfterMoves(supervisors, beforeStudents, afterStudents) {
@@ -299,10 +385,13 @@ export function receiveAllocationSources(cohortId, sources) {
   state.allocationRevision = (state.allocationRevision || 0) + 1;
   state.allocationPendingEdits = reconcilePendingEdits(state.allocationPendingEdits, remote, tokenUpdatedStamps(sources));
   state.allocationPendingFlags = reconcilePendingFlags(state.allocationPendingFlags, remote);
+  state.allocationPendingSubjects = reconcilePendingSubjects(state.allocationPendingSubjects, remote);
+  state.allocationPendingSuggestions = reconcilePendingSuggestions(state.allocationPendingSuggestions, remote);
+  state.allocationHodStatus = hodStatusFromDoc(sources && sources.hodStatus);
   state.allocationDesk = presentAllocationDesk(remote);
   state.allocationAuditLogs = Array.isArray(sources && sources.auditLogs) ? sources.auditLogs : [];
   const view = state.allocationView || 'dashboard';
-  if (state.section === 'allocation' && (view === 'dashboard' || (view === 'settings' && settingsChanged))) painter();
+  if (state.section === 'allocation' && (view === 'dashboard' || view === 'hod' || (view === 'settings' && settingsChanged))) painter();
 }
 
 function settingsStamp(settings) {
@@ -334,6 +423,9 @@ function loadStaticDesk(cohortId) {
     state.allocationRevision = (state.allocationRevision || 0) + 1;
     state.allocationPendingEdits = reconcilePendingEdits(state.allocationPendingEdits, desk, {});
     state.allocationPendingFlags = reconcilePendingFlags(state.allocationPendingFlags, desk);
+    state.allocationPendingSubjects = reconcilePendingSubjects(state.allocationPendingSubjects, desk);
+    state.allocationPendingSuggestions = reconcilePendingSuggestions(state.allocationPendingSuggestions, desk);
+    state.allocationHodStatus = desk.hodStatus || hodStatusFromDoc(null);
     state.allocationDesk = presentAllocationDesk(desk);
     state.allocationAuditLogs = Array.isArray(desk.auditLogs) ? desk.auditLogs : [];
     painter();
@@ -360,7 +452,8 @@ function refreshAllocationDrive(cohortId) {
     };
     state.allocationDesk = Object.assign({}, state.allocationDesk, patch);
     if (state.allocationRemoteDesk) state.allocationRemoteDesk = Object.assign({}, state.allocationRemoteDesk, patch);
-    if (state.section === 'allocation' && (state.allocationView || 'dashboard') === 'dashboard') painter();
+    const driveView = state.allocationView || 'dashboard';
+    if (state.section === 'allocation' && (driveView === 'dashboard' || driveView === 'hod')) painter();
   }).catch(function(error) {
     if (isStale(error)) return;
   });

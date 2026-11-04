@@ -1,7 +1,7 @@
 import { presentDriveAccount, requireDriveActor } from './driveAccount';
 import { requireCohort } from './roster';
 import { COLLECTIONS } from './schema';
-import { App, audited, requireAdmin } from './session';
+import { App, audited, deny, requireAdmin, requireStaff } from './session';
 import { SheetGrid, spreadsheetIdFrom } from './sheetImport';
 import { openGoogleWorkbook, SheetWorkbook, sheetTabTitle } from './sheetSync';
 import { AllocationOp } from './store';
@@ -27,7 +27,16 @@ import {
   settingsFromDoc,
   activeSubjectNamesFrom,
   canonicalSubjectAssignment,
+  canonicalSubjectName,
+  departmentKey,
+  departmentOfSubject,
+  departmentsMatch,
+  emptyWorkspaceRecord,
+  hodStatusFromDoc,
+  HodStatusRecord,
   parseSubjectCell,
+  subjectCatalogueFrom,
+  suggestionCapacity,
   tokenSubjectCatalogue,
   staffQuotaTokenRows,
   tokenFromDoc,
@@ -77,10 +86,10 @@ interface ExportDeps {
   now?: Date;
 }
 
-export async function getAllocationDesk(app: App, cohortId: unknown): Promise<AllocationDesk & { driveReady: boolean; driveActor: string; driveError: string; auditLogs: Doc[] }> {
-  await requireAdmin(app, 'GET_ALLOCATION_DESK');
+export async function getAllocationDesk(app: App, cohortId: unknown): Promise<AllocationDesk & { driveReady: boolean; driveActor: string; driveError: string; auditLogs: Doc[]; hodStatus: HodStatusRecord }> {
+  const user = await requireAllocationReader(app, 'GET_ALLOCATION_DESK');
   const cohort = await requireCohort(app, text(cohortId));
-  const [members, workspaceDocs, tokenDocs, configDoc, staff, drive, subjectDocs, auditLogs] = await Promise.all([
+  const [members, workspaceDocs, tokenDocs, configDoc, staff, drive, subjectDocs, auditLogs, hodDoc] = await Promise.all([
     app.store.listMembers(cohort.id),
     app.store.listWorkspace(cohort.id),
     app.store.listTokens(cohort.id),
@@ -88,7 +97,8 @@ export async function getAllocationDesk(app: App, cohortId: unknown): Promise<Al
     app.store.list(COLLECTIONS.staffUsers),
     presentDriveAccount(app),
     app.store.list(COLLECTIONS.subjects),
-    readAllocationAudits(app, cohort.id),
+    user.permissions?.canAdmin ? readAllocationAudits(app, cohort.id) : Promise.resolve([] as Doc[]),
+    app.store.getHodStatus(cohort.id),
   ]);
   const choiceSources = new Map<string, unknown>();
   workspaceDocs.forEach((doc) => {
@@ -99,12 +109,24 @@ export async function getAllocationDesk(app: App, cohortId: unknown): Promise<Al
     members,
     workspaces: workspaceDocs.map((doc) => workspaceFromDoc(doc, text(doc.id || doc.studentId))),
     tokens: tokensFrom(tokenDocs, cohort.id),
-    staff: staff.map((person) => ({ email: normalizeEmail(person.EMAIL), displayName: text(person.DisplayName) })),
+    staff: staff.map((person) => ({
+      email: normalizeEmail(person.EMAIL),
+      displayName: text(person.DisplayName),
+      department: text(person['Primary Department']),
+      isHOD: person.isHOD === true,
+    })),
     settings: settingsFromDoc(configDoc),
     subjects: subjectDocs,
     choiceSources,
   });
-  return { ...desk, auditLogs, driveReady: drive.ready, driveActor: drive.actorEmail, driveError: drive.ready ? '' : drive.error };
+  return {
+    ...desk,
+    auditLogs,
+    hodStatus: hodStatusFromDoc(hodDoc),
+    driveReady: drive.ready,
+    driveActor: drive.actorEmail,
+    driveError: drive.ready ? '' : drive.error,
+  };
 }
 
 export async function draftAllocation(app: App, cohortId: unknown, studentId: unknown, staffId: unknown, subject: unknown, interdisciplinary?: unknown, interdisciplinarySubject?: unknown, options?: unknown) {
@@ -418,6 +440,273 @@ export async function saveAllocationChoices(app: App, cohortId: unknown, updates
       });
     }
     return { updated: grouped.size };
+  });
+}
+
+export async function setAllocationSubject(app: App, cohortId: unknown, studentId: unknown, subject: unknown) {
+  const user = await requireAdmin(app, 'SET_ALLOCATION_SUBJECT');
+  const cohort = await requireCohort(app, text(cohortId));
+  const email = normalizeEmail(studentId);
+  return audited(app, user, 'SET_ALLOCATION_SUBJECT', { cohortId: cohort.id, studentId: email }, async () => {
+    await requireActiveMember(app, cohort.id, email);
+    const active = activeSubjectNamesFrom(await app.store.list(COLLECTIONS.subjects));
+    const canonical = canonicalSubjectName(subject, active);
+    const existing = workspaceFromDoc(await app.store.getWorkspace(cohort.id, email) || {}, email);
+    const suggestionMatches = !existing.suggestedSubject || existing.suggestedSubject.toLowerCase() === canonical.toLowerCase();
+    const next = {
+      ...existing,
+      studentId: email,
+      selectedSubject: canonical,
+      suggestedStaffId: suggestionMatches ? existing.suggestedStaffId : '',
+      suggestedSubject: suggestionMatches ? (existing.suggestedStaffId ? canonical : '') : '',
+      updatedAt: nowIso(),
+    };
+    await app.store.setWorkspace(cohort.id, email, next);
+    return { studentId: email, selectedSubject: canonical, suggestedStaffId: next.suggestedStaffId, suggestedSubject: next.suggestedSubject };
+  });
+}
+
+export async function suggestAllocation(app: App, cohortId: unknown, studentId: unknown, staffId: unknown) {
+  const user = await requireHod(app, 'SUGGEST_ALLOCATION');
+  const cohort = await requireCohort(app, text(cohortId));
+  const email = normalizeEmail(studentId);
+  const teacher = normalizeEmail(staffId);
+  return audited(app, user, 'SUGGEST_ALLOCATION', { cohortId: cohort.id, studentId: email, staffId: teacher }, async () => {
+    await requireActiveMember(app, cohort.id, email);
+    const department = await callerDepartment(app, user.email);
+    if (!departmentKey(department)) throw new HubError('Your staff record has no primary department.');
+    const catalogue = subjectCatalogueFrom(await app.store.list(COLLECTIONS.subjects));
+    const existing = workspaceFromDoc(await app.store.getWorkspace(cohort.id, email) || {}, email);
+    if (!existing.selectedSubject) throw new HubError('Choose a subject before suggesting a teacher.');
+    const subjectDepartment = departmentOfSubject(existing.selectedSubject, catalogue);
+    if (!departmentsMatch(subjectDepartment, department)) throw new HubError('That subject is outside your department.');
+    const status = hodStatusFromDoc(await app.store.getHodStatus(cohort.id));
+    if (departmentSubmitted(status, department)) throw new HubError('Suggestions for this department are submitted. Reopen them before editing.');
+    const tokens = tokensFrom(await app.store.listTokens(cohort.id), cohort.id);
+    if (tokens.some((token) => token.allocatedTo === email && token.status === 'committed')) {
+      throw new HubError('This allocation is published. Unpublish it before changing the suggestion.');
+    }
+    let suggestedStaffId = '';
+    let suggestedSubject = '';
+    if (teacher) {
+      const workspaces = (await app.store.listWorkspace(cohort.id)).map((doc) => workspaceFromDoc(doc, text(doc.id || doc.studentId)));
+      const capacity = suggestionCapacity({
+        staffId: teacher,
+        subject: existing.selectedSubject,
+        tokens,
+        suggestions: workspaces.map((workspace) => ({
+          studentId: workspace.studentId,
+          suggestedStaffId: text(workspace.suggestedStaffId),
+          suggestedSubject: text(workspace.suggestedSubject),
+        })),
+        exceptStudentId: email,
+      });
+      if (!capacity.eligible) throw new HubError(`${existing.selectedSubject} does not match the supervisor's EE subjects.`);
+      if (capacity.remaining <= 0) throw new HubError(`${teacher} has no available slots.`);
+      suggestedStaffId = teacher;
+      suggestedSubject = existing.selectedSubject;
+    }
+    const now = nowIso();
+    await app.store.setWorkspace(cohort.id, email, {
+      ...existing,
+      studentId: email,
+      suggestedStaffId,
+      suggestedSubject,
+      updatedAt: now,
+    });
+    return { studentId: email, suggestedStaffId, suggestedSubject };
+  });
+}
+
+export async function certifyHodSuggestions(app: App, cohortId: unknown) {
+  const user = await requireHod(app, 'CERTIFY_HOD_SUGGESTIONS');
+  const cohort = await requireCohort(app, text(cohortId));
+  return audited(app, user, 'CERTIFY_HOD_SUGGESTIONS', { cohortId: cohort.id }, async () => {
+    const department = await callerDepartment(app, user.email);
+    if (!departmentKey(department)) throw new HubError('Your staff record has no primary department.');
+    const catalogue = subjectCatalogueFrom(await app.store.list(COLLECTIONS.subjects));
+    const display = catalogue.find((item) => departmentsMatch(item.department, department))?.department || department;
+    const current = hodStatusFromDoc(await app.store.getHodStatus(cohort.id));
+    current.byDepartment[departmentKey(display)] = {
+      department: display,
+      submitted: true,
+      submittedAt: nowIso(),
+      submittedBy: user.email,
+    };
+    await app.store.setHodStatus(cohort.id, current);
+    return current;
+  });
+}
+
+export async function reopenHodSuggestions(app: App, cohortId: unknown, department: unknown) {
+  const user = await requireStaff(app, 'REOPEN_HOD_SUGGESTIONS');
+  const canAdmin = !!user.permissions?.canAdmin;
+  if (!canAdmin && !user.permissions?.isHOD) return deny(app, user, 'REOPEN_HOD_SUGGESTIONS', 'Head of department access required.');
+  const cohort = await requireCohort(app, text(cohortId));
+  const requested = text(department).trim();
+  if (!departmentKey(requested)) throw new HubError('Choose a department.');
+  return audited(app, user, 'REOPEN_HOD_SUGGESTIONS', { cohortId: cohort.id, department: requested }, async () => {
+    if (!canAdmin) {
+      const own = await callerDepartment(app, user.email);
+      if (!departmentsMatch(own, requested)) throw new HubError('You can reopen only your own department.');
+    }
+    const current = hodStatusFromDoc(await app.store.getHodStatus(cohort.id));
+    const key = Object.keys(current.byDepartment).find((id) => id === departmentKey(requested) || departmentsMatch(current.byDepartment[id].department, requested));
+    if (key) {
+      current.byDepartment[key] = {
+        ...current.byDepartment[key],
+        submitted: false,
+        submittedAt: '',
+        submittedBy: '',
+      };
+    }
+    await app.store.setHodStatus(cohort.id, current);
+    return current;
+  });
+}
+
+export async function approveAllocationSuggestion(app: App, cohortId: unknown, studentId: unknown) {
+  const user = await requireAdmin(app, 'APPROVE_ALLOCATION_SUGGESTION');
+  const cohort = await requireCohort(app, text(cohortId));
+  const email = normalizeEmail(studentId);
+  return audited(app, user, 'APPROVE_ALLOCATION_SUGGESTION', { cohortId: cohort.id, studentId: email }, async () => {
+    const member = await requireActiveMember(app, cohort.id, email);
+    const tokens = tokensFrom(await app.store.listTokens(cohort.id), cohort.id);
+    const workspace = workspaceFromDoc(await app.store.getWorkspace(cohort.id, email) || {}, email);
+    if (!workspace.suggestedStaffId) throw new HubError('This student has no suggestion to approve.');
+    if (!workspace.selectedSubject) throw new HubError('Choose a subject before approving a suggestion.');
+    const current = tokens.find((token) => token.allocatedTo === email && token.status !== 'available');
+    const plan = planDraft({
+      studentId: email,
+      staffId: workspace.suggestedStaffId,
+      subject: workspace.selectedSubject,
+      tokens,
+      memberSupervisorId: normalizeEmail(member.supervisorId),
+      pendingClear: workspace.pendingClear,
+      interdisciplinary: current?.interdisciplinary === true,
+      interdisciplinarySubject: current?.interdisciplinarySubject || '',
+    });
+    if (plan.error) throw new HubError(plan.error);
+    const now = nowIso();
+    const ops: AllocationOp[] = plan.tokens.map((token) => ({
+      kind: 'token' as const,
+      cohortId: cohort.id,
+      id: token.id,
+      data: { ...token, updatedAt: now },
+    }));
+    ops.push({
+      kind: 'workspace',
+      cohortId: cohort.id,
+      id: email,
+      data: {
+        ...workspace,
+        studentId: email,
+        pendingClear: plan.pendingClear,
+        suggestedStaffId: '',
+        suggestedSubject: '',
+        updatedAt: now,
+      },
+    });
+    await app.store.applyAllocationOps(ops);
+    if (plan.changed) {
+      const after = plan.tokens.find((token) => token.allocatedTo === email && token.status !== 'available');
+      await logAllocationDrafts(app, user, cohort.id, [{ studentId: email, before: current, after }]);
+    }
+    return { changed: plan.changed, studentId: email, suggestedStaffId: '' };
+  });
+}
+
+export async function batchApproveAllocationSuggestions(app: App, cohortId: unknown, studentIds: unknown) {
+  const user = await requireAdmin(app, 'BATCH_APPROVE_ALLOCATION_SUGGESTIONS');
+  const cohort = await requireCohort(app, text(cohortId));
+  const ids = Array.isArray(studentIds) ? studentIds.map((id) => normalizeEmail(id)).filter(Boolean) : [];
+  if (!ids.length) throw new HubError('Select at least one student.');
+  if (ids.length > 1000) throw new HubError('Select no more than 1,000 students at a time.');
+  return audited(app, user, 'BATCH_APPROVE_ALLOCATION_SUGGESTIONS', { cohortId: cohort.id, students: ids.length }, async () => {
+    const members = await app.store.listMembers(cohort.id);
+    const byStudent = new Map(members.map((member) => [normalizeEmail(member.StudentId), member]));
+    let tokens = tokensFrom(await app.store.listTokens(cohort.id), cohort.id);
+    const workspaces = (await app.store.listWorkspace(cohort.id)).map((doc) => workspaceFromDoc(doc, text(doc.id || doc.studentId)));
+    const workspaceByStudent = new Map(workspaces.map((workspace) => [workspace.studentId, workspace]));
+    const assigned: string[] = [];
+    const skipped: { studentId: string; reason: string }[] = [];
+    const tokenWrites = new Map<string, TokenRecord>();
+    const workspaceWrites = new Map<string, WorkspaceRecord>();
+    const drafts: { studentId: string; before?: TokenRecord; after?: TokenRecord }[] = [];
+    ids.forEach((id) => {
+      const member = byStudent.get(id);
+      if (!member) {
+        skipped.push({ studentId: id, reason: 'Student is not in the selected cohort.' });
+        return;
+      }
+      if (!isEeActive(member.eeActive)) {
+        skipped.push({ studentId: id, reason: 'This student is not active for allocation.' });
+        return;
+      }
+      const workspace = workspaceByStudent.get(id) || emptyWorkspace(id, '');
+      if (!workspace.suggestedStaffId) {
+        skipped.push({ studentId: id, reason: 'No suggestion.' });
+        return;
+      }
+      if (!workspace.selectedSubject) {
+        skipped.push({ studentId: id, reason: 'Choose a subject before approving a suggestion.' });
+        return;
+      }
+      const before = tokens.find((token) => token.allocatedTo === id && token.status !== 'available');
+      if (before && before.status === 'committed') {
+        skipped.push({ studentId: id, reason: 'This allocation is published. Unpublish it before changing the token.' });
+        return;
+      }
+      const plan = planDraft({
+        studentId: id,
+        staffId: workspace.suggestedStaffId,
+        subject: workspace.selectedSubject,
+        tokens,
+        memberSupervisorId: normalizeEmail(member.supervisorId),
+        pendingClear: workspace.pendingClear,
+        interdisciplinary: before?.interdisciplinary === true,
+        interdisciplinarySubject: before?.interdisciplinarySubject || '',
+      });
+      if (plan.error) {
+        skipped.push({ studentId: id, reason: plan.error });
+        return;
+      }
+      if (plan.changed) {
+        plan.tokens.forEach((token) => {
+          const index = tokens.findIndex((item) => item.id === token.id);
+          if (index >= 0) tokens[index] = token;
+          tokenWrites.set(token.id, token);
+        });
+        drafts.push({
+          studentId: id,
+          before,
+          after: plan.tokens.find((token) => token.allocatedTo === id && token.status !== 'available'),
+        });
+      }
+      const next = {
+        ...workspace,
+        studentId: id,
+        pendingClear: plan.pendingClear,
+        suggestedStaffId: '',
+        suggestedSubject: '',
+      };
+      workspaceByStudent.set(id, next);
+      workspaceWrites.set(id, next);
+      assigned.push(id);
+    });
+    const now = nowIso();
+    const ops: AllocationOp[] = [...tokenWrites.values()].map((token) => ({
+      kind: 'token' as const,
+      cohortId: cohort.id,
+      id: token.id,
+      data: { ...token, updatedAt: now },
+    }));
+    workspaceWrites.forEach((workspace, studentId) => {
+      ops.push({ kind: 'workspace', cohortId: cohort.id, id: studentId, data: { ...workspace, updatedAt: now } });
+    });
+    if (ops.length) await app.store.applyAllocationOps(ops);
+    if (drafts.length) await logAllocationDrafts(app, user, cohort.id, drafts);
+    return { assigned, skipped };
   });
 }
 
@@ -857,7 +1146,30 @@ function tokensFrom(docs: Doc[], cohortId: string): TokenRecord[] {
 }
 
 function emptyWorkspace(studentId: string, now: string): WorkspaceRecord {
-  return { studentId, subjectChoices: {}, dynamicData: {}, pendingClear: false, updatedAt: now };
+  return emptyWorkspaceRecord(studentId, now);
+}
+
+async function requireAllocationReader(app: App, operation: string) {
+  const user = await requireStaff(app, operation);
+  if (!user.permissions?.canAdmin && !user.permissions?.isHOD) return deny(app, user, operation, 'Allocation access required.');
+  return user;
+}
+
+async function requireHod(app: App, operation: string) {
+  const user = await requireStaff(app, operation);
+  if (!user.permissions?.isHOD) return deny(app, user, operation, 'Head of department access required.');
+  return user;
+}
+
+async function callerDepartment(app: App, email: string): Promise<string> {
+  const staff = await app.store.get(COLLECTIONS.staffUsers, email);
+  return text(staff?.['Primary Department']).trim();
+}
+
+function departmentSubmitted(status: HodStatusRecord, department: string): boolean {
+  const key = departmentKey(department);
+  if (!key) return false;
+  return Object.values(status.byDepartment).some((row) => row.submitted && departmentsMatch(row.department, department));
 }
 
 function subjectMap(value: unknown): Record<string, string> {
