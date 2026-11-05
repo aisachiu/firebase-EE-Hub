@@ -200,7 +200,7 @@ export async function dispatch(app: App, method: string, args: unknown[]): Promi
     case 'getAllocationDesk': return getAllocationDesk(app, args[0]);
     case 'draftAllocation': return draftAllocation(app, args[0], args[1], args[2], args[3], args[4], args[5], args[6]);
     case 'saveAllocationFlag': return saveAllocationFlag(app, args[0], args[1], args[2], args[3]);
-    case 'setAllocationSubject': return setAllocationSubject(app, args[0], args[1], args[2]);
+    case 'setAllocationSubject': return setAllocationSubject(app, args[0], args[1], args[2], args[3]);
     case 'suggestAllocation': return suggestAllocation(app, args[0], args[1], args[2]);
     case 'certifyHodSuggestions': return certifyHodSuggestions(app, args[0]);
     case 'reopenHodSuggestions': return reopenHodSuggestions(app, args[0], args[1]);

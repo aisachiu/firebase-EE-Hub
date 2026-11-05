@@ -769,8 +769,8 @@ test('a head of department suggests and certifies, and a coordinator approves', 
   const approved = await approveAllocationSuggestion(app, '2026', JANE);
   assert.equal(approved.changed, true);
   const after = await store.getWorkspace('2026', JANE);
-  assert.equal(after?.suggestedStaffId, '');
-  assert.equal(after?.suggestedSubject, '');
+  assert.equal(after?.suggestedStaffId, SMITH);
+  assert.equal(after?.suggestedSubject, 'History');
   assert.equal(after?.selectedSubject, 'History');
   assert.equal((await app.store.listTokens('2026')).find((token) => token.allocatedTo === JANE)?.status, 'draft');
   assert.equal((await app.store.listTokens('2026')).find((token) => token.allocatedTo === JANE)?.assignedSubject, 'History');
@@ -791,6 +791,7 @@ test('a head of department suggests and certifies, and a coordinator approves', 
   await assert.rejects(setAllocationSubject(hod, '2026', MARK, 'History'), /Access denied/);
   const bulk = await batchApproveAllocationSuggestions(app, '2026', [JANE, MARK]);
   assert.equal(bulk.assigned.includes(JANE), false);
+  assert.equal(bulk.skipped.some((row) => row.studentId === JANE && /already assigned/i.test(row.reason)), true);
   assert.equal(bulk.skipped.some((row) => row.studentId === MARK && /No suggestion/.test(row.reason)), true);
   await suggestAllocation(hod, '2026', JANE, SMITH);
   await suggestAllocation(hod, '2026', MARK, SMITH);
@@ -798,7 +799,8 @@ test('a head of department suggests and certifies, and a coordinator approves', 
   const skipped = await batchApproveAllocationSuggestions(app, '2026', [JANE, MARK]);
   assert.equal(skipped.skipped.some((row) => row.studentId === JANE && /published/i.test(row.reason)), true);
   assert.equal(skipped.assigned.includes(MARK), true);
-  assert.equal((await store.getWorkspace('2026', MARK))?.suggestedStaffId, '');
+  assert.equal((await store.getWorkspace('2026', MARK))?.suggestedStaffId, SMITH);
+  assert.equal((await store.getWorkspace('2026', MARK))?.suggestedSubject, 'History');
 });
 
 test('allocation draft export ingests selected subject, suggestion, and the draft token', async () => {
@@ -898,7 +900,7 @@ test('selecting and clearing a subject is recorded in the allocation audit log',
     suggestedStaffId: SMITH,
     suggestedSubject: 'History',
   });
-  const cleared = await setAllocationSubject(app, '2026', JANE, '');
+  const cleared = await setAllocationSubject(app, '2026', JANE, '', true);
   assert.equal(cleared.selectedSubject, '');
   assert.equal(cleared.suggestedStaffId, '');
   const clearLog = (await store.listAllocationAudits('2026')).find((row) => row.action === 'Cleared subject' && row.studentId === JANE);
@@ -911,7 +913,13 @@ test('selecting and clearing a subject is recorded in the allocation audit log',
   assert.equal(restored?.suggestedSubject, 'History');
   await applyAllocationIngest(app, '2026', SHEET, 'tokens', { workbook: workbook([tokenGrid]) });
   await draftAllocation(app, '2026', JANE, SMITH, 'History');
-  await assert.rejects(setAllocationSubject(app, '2026', JANE, 'Biology'), /assigned token/);
+  await assert.rejects(setAllocationSubject(app, '2026', JANE, 'Biology'), /Confirm clearing/);
+  const changed = await setAllocationSubject(app, '2026', JANE, 'Biology', true);
+  assert.equal(changed.selectedSubject, 'Biology');
+  assert.equal(changed.tokenCleared, true);
+  assert.equal((await store.getWorkspace('2026', JANE))?.suggestedStaffId, '');
+  assert.equal((await store.getWorkspace('2026', JANE))?.suggestedSubject, '');
+  assert.equal((await app.store.listTokens('2026')).some((token) => token.allocatedTo === JANE), false);
   await undoAllocationAudit(app, '2026', textId(picked));
   assert.equal((await store.getWorkspace('2026', JANE))?.selectedSubject, '');
   assert.equal((await app.store.listTokens('2026')).some((token) => token.allocatedTo === JANE), false);

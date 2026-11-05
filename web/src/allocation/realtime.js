@@ -163,9 +163,24 @@ export function overlayPendingSubjects(desk, pending) {
       next.suggestedSubject = '';
       next.suggestedStaffName = '';
     }
+    if (edit.clearAllocation) {
+      next.token = null;
+      next.pendingClear = false;
+      next.flags = Object.assign({}, student.flags, {
+        drafted: false,
+        committed: false,
+        subjectMatch: 'none',
+        hlMatch: 'none',
+      });
+    }
     return next;
   });
-  return Object.assign({}, desk, { students: students });
+  const updated = Object.assign({}, desk, {
+    students: students,
+    supervisors: supervisorsAfterMoves(desk.supervisors || [], desk.students || [], students),
+  });
+  if (Array.isArray(desk.tokenRows)) updated.tokenRows = tokenRowsAfterEdits(desk.tokenRows, desk.students || [], students);
+  return updated;
 }
 
 export function overlayPendingSuggestions(desk, pending) {
