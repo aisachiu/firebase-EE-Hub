@@ -26,7 +26,7 @@ interface SubjectAuditChange {
 }
 
 interface AuditWriter {
-  allocation(input: { studentId: string; before?: TokenRecord; after?: TokenRecord }): Promise<void>;
+  allocation(input: { studentId: string; before?: TokenRecord; after?: TokenRecord; beforeWorkspace?: WorkspaceRecord; afterWorkspace?: WorkspaceRecord }): Promise<void>;
   subject(change: SubjectAuditChange): Promise<void>;
   tokenAdd(token: TokenRecord): Promise<void>;
   tokenUpdate(before: TokenRecord, eligibleSubjects: string[]): Promise<void>;
@@ -52,8 +52,6 @@ function snapshotToken(token: TokenRecord): Doc {
     eligibleSubjects: token.eligibleSubjects.slice(),
     allocatedTo: token.allocatedTo || '',
     assignedSubject: token.assignedSubject || '',
-    interdisciplinary: token.interdisciplinary === true,
-    interdisciplinarySubject: token.interdisciplinarySubject || '',
     status: token.status,
     createdAt: token.createdAt || '',
   };
@@ -106,13 +104,19 @@ async function startAuditWriter(app: App, user: HubUser, cohortId: string): Prom
     async allocation(input) {
       const before = input.before;
       const after = input.after;
-      if (!before && !after) return;
+      const beforeInterdisciplinary = input.beforeWorkspace?.selectedInterdisciplinary ?? before?.legacySelectedInterdisciplinary === true;
+      const beforeInterdisciplinarySubject = input.beforeWorkspace?.interdisciplinarySubject || before?.legacyInterdisciplinarySubject || '';
+      const afterInterdisciplinary = input.afterWorkspace?.selectedInterdisciplinary === true;
+      const afterInterdisciplinarySubject = input.afterWorkspace?.interdisciplinarySubject || '';
+      const workspaceChanged = beforeInterdisciplinary !== afterInterdisciplinary
+        || text(beforeInterdisciplinarySubject) !== text(afterInterdisciplinarySubject);
+      if (!before && !after && !workspaceChanged) return;
       const clearing = !after;
       const teacherId = clearing ? (before?.staffId || '') : after.staffId;
       const subject = clearing ? (before?.assignedSubject || '') : (after.assignedSubject || '');
       await write({
         kind: 'allocation' satisfies AuditKind,
-        action: clearing ? 'Unallocated' : 'Allocated',
+        action: !before && !after ? 'Updated interdisciplinary selection' : clearing ? 'Unallocated' : 'Allocated',
         studentId: normalizeEmail(input.studentId),
         studentName: studentName(input.studentId),
         subject,
@@ -120,8 +124,10 @@ async function startAuditWriter(app: App, user: HubUser, cohortId: string): Prom
         teacher: teacherId ? teacherName(teacherId) : '',
         beforeStaffId: before?.staffId || '',
         beforeSubject: before?.assignedSubject || '',
-        beforeInterdisciplinary: before?.interdisciplinary === true,
-        beforeInterdisciplinarySubject: before?.interdisciplinary === true ? (before.interdisciplinarySubject || '') : '',
+        beforeInterdisciplinary,
+        beforeInterdisciplinarySubject,
+        afterInterdisciplinary,
+        afterInterdisciplinarySubject,
         beforeBypass: assignmentBypass(before),
       });
     },
@@ -190,9 +196,11 @@ export async function logAllocationDrafts(
   app: App,
   user: HubUser,
   cohortId: string,
-  changes: { studentId: string; before?: TokenRecord; after?: TokenRecord }[],
+  changes: { studentId: string; before?: TokenRecord; after?: TokenRecord; beforeWorkspace?: WorkspaceRecord; afterWorkspace?: WorkspaceRecord }[],
 ): Promise<void> {
-  const rows = changes.filter((change) => change.before || change.after);
+  const rows = changes.filter((change) => change.before || change.after
+    || change.beforeWorkspace?.selectedInterdisciplinary !== change.afterWorkspace?.selectedInterdisciplinary
+    || text(change.beforeWorkspace?.interdisciplinarySubject) !== text(change.afterWorkspace?.interdisciplinarySubject));
   if (!rows.length) return;
   const writer = await startAuditWriter(app, user, cohortId);
   for (const change of rows) await writer.allocation(change);
@@ -238,8 +246,6 @@ function tokenSignature(token: TokenRecord): string {
     token.status,
     token.allocatedTo,
     token.assignedSubject,
-    token.interdisciplinary ? '1' : '0',
-    token.interdisciplinarySubject,
     token.eligibleSubjects.join('|'),
   ].join('~');
 }
@@ -289,11 +295,20 @@ export async function undoAllocationAudit(app: App, cohortId: unknown, logId: un
           bypassSubject: entry.beforeBypass === true,
         });
         if (plan.error) throw new HubError(plan.error);
-        if (!plan.changed) continue;
-        replaceTokens(plan.tokens);
+        if (plan.changed) replaceTokens(plan.tokens);
         const current = workspaceBy.get(studentId) || emptyWorkspace(studentId, now);
-        if (current.pendingClear !== plan.pendingClear) {
-          workspaceBy.set(studentId, { ...current, pendingClear: plan.pendingClear, updatedAt: now });
+        const selectedInterdisciplinary = entry.beforeInterdisciplinary === true;
+        const interdisciplinarySubject = selectedInterdisciplinary ? text(entry.beforeInterdisciplinarySubject) : '';
+        if (current.pendingClear !== plan.pendingClear
+          || current.selectedInterdisciplinary !== selectedInterdisciplinary
+          || text(current.interdisciplinarySubject) !== interdisciplinarySubject) {
+          workspaceBy.set(studentId, {
+            ...current,
+            pendingClear: plan.pendingClear,
+            selectedInterdisciplinary,
+            interdisciplinarySubject,
+            updatedAt: now,
+          });
           dirty.add(studentId);
         }
         continue;

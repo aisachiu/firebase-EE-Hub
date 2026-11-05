@@ -15,9 +15,9 @@ export interface TokenRecord {
   eligibleSubjects: string[];
   allocatedTo: string;
   assignedSubject: string;
-  /** Coordinator marked this allocated token as an interdisciplinary EE. */
-  interdisciplinary: boolean;
-  interdisciplinarySubject: string;
+  /** Read-only migration fields from token records written by older versions. */
+  legacySelectedInterdisciplinary?: boolean;
+  legacyInterdisciplinarySubject?: string;
   status: TokenStatus;
   createdAt: string;
 }
@@ -32,6 +32,8 @@ export interface WorkspaceRecord {
   flagNote?: string;
   /** Subject the coordinator selected for allocation. Empty until a chip is clicked. */
   selectedSubject?: string;
+  selectedInterdisciplinary?: boolean;
+  interdisciplinarySubject?: string;
   /** Staff email suggested by the head of department. A token is chosen only when a coordinator approves. */
   suggestedStaffId?: string;
   /** selectedSubject at the time of the suggestion. */
@@ -162,8 +164,6 @@ export interface DeskToken {
   staffName: string;
   eligibleSubjects: string[];
   assignedSubject: string;
-  interdisciplinary: boolean;
-  interdisciplinarySubject: string;
   status: 'draft' | 'committed';
 }
 
@@ -176,8 +176,6 @@ export interface DeskTokenRow {
   studentId: string;
   studentName: string;
   assignedSubject: string;
-  interdisciplinary: boolean;
-  interdisciplinarySubject: string;
 }
 
 export interface AllocationChoiceRow {
@@ -206,6 +204,8 @@ export interface DeskStudent {
   isFlagged: boolean;
   flagNote: string;
   selectedSubject: string;
+  selectedInterdisciplinary: boolean;
+  interdisciplinarySubject: string;
   suggestedStaffId: string;
   suggestedSubject: string;
   suggestedStaffName: string;
@@ -423,8 +423,6 @@ export function planTokenTopUp(existing: TokenRecord[], rows: ParsedTokenRow[], 
           eligibleSubjects: row.eligibleSubjects.slice(),
           allocatedTo: '',
           assignedSubject: '',
-          interdisciplinary: false,
-          interdisciplinarySubject: '',
           status: 'available',
           createdAt: now,
         });
@@ -476,9 +474,7 @@ export function planDraft(input: {
   if (current && current.status === 'committed') {
     const same = !!staffId
       && current.staffId === staffId
-      && current.assignedSubject === subject
-      && (current.interdisciplinary === true) === interdisciplinary
-      && current.interdisciplinarySubject === interdisciplinarySubject;
+      && current.assignedSubject === subject;
     if (same) return { tokens: [], pendingClear: input.pendingClear, changed: false, error: '', code: '' };
     return {
       tokens: [],
@@ -492,7 +488,7 @@ export function planDraft(input: {
     if (!current) return { tokens: [], pendingClear: input.pendingClear, changed: false, error: '', code: '' };
     const published = !!input.memberSupervisorId && input.memberSupervisorId === current.staffId;
     return {
-      tokens: [{ ...current, allocatedTo: '', assignedSubject: '', interdisciplinary: false, interdisciplinarySubject: '', status: 'available' }],
+      tokens: [tokenForAssignment(current, { allocatedTo: '', assignedSubject: '', status: 'available' })],
       pendingClear: published ? true : input.pendingClear,
       changed: true,
       error: '',
@@ -502,7 +498,7 @@ export function planDraft(input: {
   if (current && current.staffId === staffId && (!requestedToken || requestedToken === current.id)) {
     let assignedSubject = subject;
     if (!bypassSubject) {
-      const mismatch = subjectMismatch(subject, current.eligibleSubjects);
+      const mismatch = tokenSubjectMismatch(subject, interdisciplinary, interdisciplinarySubject, current.eligibleSubjects);
       if (mismatch) {
         assignedSubject = overrideSubject ? (current.eligibleSubjects[0] || '') : '';
         if (!assignedSubject || subjectMismatch(assignedSubject, current.eligibleSubjects)) {
@@ -510,12 +506,11 @@ export function planDraft(input: {
         }
       }
     }
-    const sameFlag = (current.interdisciplinary === true) === interdisciplinary;
-    if (current.assignedSubject === assignedSubject && sameFlag && current.interdisciplinarySubject === interdisciplinarySubject) {
+    if (current.assignedSubject === assignedSubject) {
       return { tokens: [], pendingClear: input.pendingClear, changed: false, error: '', code: '' };
     }
     return {
-      tokens: [{ ...current, assignedSubject, interdisciplinary, interdisciplinarySubject, status: 'draft' }],
+      tokens: [tokenForAssignment(current, { assignedSubject, status: 'draft' })],
       pendingClear: false,
       changed: true,
       error: '',
@@ -531,18 +526,7 @@ export function planDraft(input: {
   }
   let preferred = requestedToken ? available.find((token) => token.id === requestedToken) : undefined;
   let assignedSubject = subject;
-  if (!preferred) {
-    preferred = subject
-      ? available.find((token) => bypassSubject || subjectsOverlap(subject, token.eligibleSubjects))
-      : available[0];
-  }
-  if (!preferred && overrideSubject && !bypassSubject) {
-    preferred = available.find((token) => token.eligibleSubjects.length);
-    assignedSubject = preferred ? preferred.eligibleSubjects[0] : subject;
-  }
-  if (!preferred && bypassSubject) preferred = available[0];
-  if (bypassSubject) assignedSubject = subject;
-  if (!preferred || (!bypassSubject && assignedSubject && !subjectsOverlap(assignedSubject, preferred.eligibleSubjects))) {
+  if (preferred && !bypassSubject && subject && tokenSubjectMismatch(subject, interdisciplinary, interdisciplinarySubject, preferred.eligibleSubjects)) {
     return {
       tokens: [],
       pendingClear: input.pendingClear,
@@ -551,9 +535,42 @@ export function planDraft(input: {
       code: 'conflict',
     };
   }
-  const updates: TokenRecord[] = [{ ...preferred, allocatedTo: studentId, assignedSubject, interdisciplinary, interdisciplinarySubject, status: 'draft' }];
-  if (current) updates.push({ ...current, allocatedTo: '', assignedSubject: '', interdisciplinary: false, interdisciplinarySubject: '', status: 'available' });
+  if (!preferred) {
+    preferred = subject
+      ? available.find((token) => bypassSubject || !tokenSubjectMismatch(subject, interdisciplinary, interdisciplinarySubject, token.eligibleSubjects))
+      : available[0];
+  }
+  if (!preferred && overrideSubject && !bypassSubject) {
+    preferred = available.find((token) => token.eligibleSubjects.length);
+    assignedSubject = preferred ? preferred.eligibleSubjects[0] : subject;
+  }
+  if (!preferred && bypassSubject) preferred = available[0];
+  if (bypassSubject) assignedSubject = subject;
+  if (!preferred || (!bypassSubject && assignedSubject && tokenSubjectMismatch(assignedSubject, interdisciplinary, interdisciplinarySubject, preferred.eligibleSubjects))) {
+    return {
+      tokens: [],
+      pendingClear: input.pendingClear,
+      changed: false,
+      error: `${subject} does not match the supervisor's EE subjects.`,
+      code: 'conflict',
+    };
+  }
+  const updates: TokenRecord[] = [tokenForAssignment(preferred, { allocatedTo: studentId, assignedSubject, status: 'draft' })];
+  if (current) updates.push(tokenForAssignment(current, { allocatedTo: '', assignedSubject: '', status: 'available' }));
   return { tokens: updates, pendingClear: false, changed: true, error: '', code: '' };
+}
+
+function tokenForAssignment(token: TokenRecord, update: Partial<TokenRecord>): TokenRecord {
+  const current = { ...token };
+  delete current.legacySelectedInterdisciplinary;
+  delete current.legacyInterdisciplinarySubject;
+  return { ...current, ...update };
+}
+
+function tokenSubjectMismatch(subject: string, interdisciplinary: boolean, interdisciplinarySubject: string, eligible: string[]): string {
+  if (!subject || subjectsOverlap(subject, eligible)) return '';
+  if (interdisciplinary && interdisciplinarySubject && subjectsOverlap(interdisciplinarySubject, eligible)) return '';
+  return `${subject} does not match the supervisor's EE subjects.`;
 }
 
 function subjectMismatch(subject: string, eligible: string[]): string {
@@ -568,6 +585,8 @@ export function planBatchDraft(input: {
   tokens: TokenRecord[];
   supervisorByStudent: Record<string, string>;
   pendingClearByStudent: Record<string, boolean>;
+  selectedInterdisciplinaryByStudent?: Record<string, boolean>;
+  interdisciplinarySubjectByStudent?: Record<string, string>;
   overrideSubject?: boolean;
 }): BatchDraftPlan {
   const working = input.tokens.map((token) => ({ ...token, eligibleSubjects: token.eligibleSubjects.slice() }));
@@ -590,6 +609,8 @@ export function planBatchDraft(input: {
       tokens: working,
       memberSupervisorId: normalizeEmail(input.supervisorByStudent[studentId]),
       pendingClear: !!input.pendingClearByStudent[studentId],
+      interdisciplinary: input.selectedInterdisciplinaryByStudent?.[studentId] === true,
+      interdisciplinarySubject: text(input.interdisciplinarySubjectByStudent?.[studentId]),
       overrideSubject: input.overrideSubject === true,
     });
     if (plan.error) {
@@ -1215,6 +1236,8 @@ export function emptyWorkspaceRecord(studentId: string, now: string): WorkspaceR
     isFlagged: false,
     flagNote: '',
     selectedSubject: '',
+    selectedInterdisciplinary: undefined,
+    interdisciplinarySubject: '',
     suggestedStaffId: '',
     suggestedSubject: '',
     updatedAt: now,
@@ -1227,6 +1250,8 @@ function carriedWorkspace(existing: WorkspaceRecord | undefined) {
     isFlagged: existing?.isFlagged === true,
     flagNote: text(existing?.flagNote),
     selectedSubject: text(existing?.selectedSubject),
+    selectedInterdisciplinary: existing?.selectedInterdisciplinary === true,
+    interdisciplinarySubject: text(existing?.interdisciplinarySubject),
     suggestedStaffId: normalizeEmail(existing?.suggestedStaffId),
     suggestedSubject: text(existing?.suggestedSubject),
   };
@@ -1437,6 +1462,7 @@ export function tokenFromDoc(doc: Doc): TokenRecord | null {
   const raw = text(doc.status).toLowerCase();
   const allocatedTo = normalizeEmail(doc.allocatedTo);
   const status: TokenStatus = (raw === 'draft' || raw === 'committed') && allocatedTo ? raw : 'available';
+  const legacyInterdisciplinary = doc.interdisciplinary === true || doc.Interdisciplinary === true;
   return {
     id,
     cohortId: text(doc.cohortId),
@@ -1444,8 +1470,8 @@ export function tokenFromDoc(doc: Doc): TokenRecord | null {
     eligibleSubjects: subjectLoadNames(doc.eligibleSubjects),
     allocatedTo: status === 'available' ? '' : allocatedTo,
     assignedSubject: status === 'available' ? '' : text(doc.assignedSubject),
-    interdisciplinary: status !== 'available' && doc.interdisciplinary === true,
-    interdisciplinarySubject: status !== 'available' && doc.interdisciplinary === true ? text(doc.interdisciplinarySubject || doc.InterdisciplinarySubject) : '',
+    legacySelectedInterdisciplinary: status !== 'available' && legacyInterdisciplinary,
+    legacyInterdisciplinarySubject: status !== 'available' && legacyInterdisciplinary ? text(doc.interdisciplinarySubject || doc.InterdisciplinarySubject) : '',
     status,
     createdAt: text(doc.createdAt),
   };
@@ -1462,7 +1488,20 @@ export function workspaceFromDoc(doc: Doc, id: string): WorkspaceRecord {
     selectedSubject: text(doc.selectedSubject),
     suggestedStaffId: normalizeEmail(doc.suggestedStaffId),
     suggestedSubject: text(doc.suggestedSubject),
+    selectedInterdisciplinary: typeof doc.selectedInterdisciplinary === 'boolean' ? doc.selectedInterdisciplinary : undefined,
+    interdisciplinarySubject: text(doc.interdisciplinarySubject),
     updatedAt: text(doc.updatedAt),
+  };
+}
+
+export function workspaceWithLegacyTokenInterdisciplinary(workspace: WorkspaceRecord, token: TokenRecord | undefined): WorkspaceRecord {
+  const selectedInterdisciplinary = workspace.selectedInterdisciplinary ?? token?.legacySelectedInterdisciplinary === true;
+  return {
+    ...workspace,
+    selectedInterdisciplinary,
+    interdisciplinarySubject: selectedInterdisciplinary
+      ? text(workspace.interdisciplinarySubject) || text(token?.legacyInterdisciplinarySubject)
+      : '',
   };
 }
 
@@ -2484,6 +2523,12 @@ export function buildDesk(input: {
       const held = tokensByStudent.get(studentId) || [];
       if (held.length > 1) warnings.push(`${studentId} has more than one token.`);
       const token = held.find((item) => item.status === 'draft') || held[0] || null;
+      const selectedInterdisciplinary = workspace?.selectedInterdisciplinary
+        ?? token?.legacySelectedInterdisciplinary
+        ?? false;
+      const interdisciplinarySubject = selectedInterdisciplinary
+        ? text(workspace?.interdisciplinarySubject) || text(token?.legacyInterdisciplinarySubject)
+        : '';
       const choiceSource = input.choiceSources && input.choiceSources.has(studentId)
         ? input.choiceSources.get(studentId)
         : workspace?.subjectChoices;
@@ -2511,6 +2556,8 @@ export function buildDesk(input: {
         isFlagged: workspace?.isFlagged === true,
         flagNote: text(workspace?.flagNote),
         selectedSubject: text(workspace?.selectedSubject),
+        selectedInterdisciplinary,
+        interdisciplinarySubject,
         suggestedStaffId: normalizeEmail(workspace?.suggestedStaffId),
         suggestedSubject: text(workspace?.suggestedSubject),
         suggestedStaffName: names.get(normalizeEmail(workspace?.suggestedStaffId)) || '',
@@ -2522,8 +2569,6 @@ export function buildDesk(input: {
           staffName: names.get(token.staffId) || token.staffId,
           eligibleSubjects: eligible.slice(),
           assignedSubject,
-          interdisciplinary: token.interdisciplinary === true,
-          interdisciplinarySubject: token.interdisciplinarySubject,
           status: token.status as 'draft' | 'committed',
         } : null,
         choices,
@@ -2583,8 +2628,6 @@ export function buildDesk(input: {
       studentId: token.allocatedTo,
       studentName: token.allocatedTo ? (studentNames.get(token.allocatedTo) || token.allocatedTo) : '',
       assignedSubject: subjectNamesForLoad(token.assignedSubject, catalogue)[0] || '',
-      interdisciplinary: token.interdisciplinary === true,
-      interdisciplinarySubject: token.interdisciplinarySubject,
     })),
     choiceRows: choiceRowsFrom(input.members, input.workspaces),
     settings: input.settings,
@@ -2795,7 +2838,7 @@ export function planDraftTokenBackfill(input: {
 export interface AllocationDraftIngestPlan {
   workspaceWrites: WorkspaceRecord[];
   tokenWrites: TokenRecord[];
-  draftChanges: { studentId: string; before?: TokenRecord; after?: TokenRecord }[];
+  draftChanges: { studentId: string; before?: TokenRecord; after?: TokenRecord; beforeWorkspace?: WorkspaceRecord; afterWorkspace?: WorkspaceRecord }[];
   warnings: string[];
   rows: AllocationPreviewRow[];
   writing: number;
@@ -2831,6 +2874,11 @@ export function planAllocationDraftIngest(input: {
       return;
     }
     const next = prior ? copyWorkspace(prior, input.now) : emptyWorkspaceRecord(studentId, input.now);
+    const workspaceBefore = workspaceWithLegacyTokenInterdisciplinary(
+      next,
+      beforeToken === 'conflict' ? undefined : beforeToken,
+    );
+    Object.assign(next, workspaceBefore);
     applySheetSubject(row, next, input.activeSubjects, warnings);
     applySheetSuggestion(row, prior, next, input.activeSubjects, warnings);
     applySheetToken(row, studentId, tokens, roster.get(studentId) || '', next, warnings, draftChanges);
@@ -2843,6 +2891,11 @@ export function planAllocationDraftIngest(input: {
       return;
     }
     if (draftFieldsChanged(prior, next)) workspaceWrites.push(next);
+    const draftChange = draftChanges.find((change) => change.studentId === studentId);
+    if (draftChange) {
+      draftChange.beforeWorkspace = prior || emptyWorkspaceRecord(studentId, '');
+      draftChange.afterWorkspace = next;
+    }
     rows.push({ id: studentId, action: prior || hubToken ? 'Update' : 'Add', incoming, hub });
   });
   const tokenWrites = tokens.filter((token) => {
@@ -2931,7 +2984,7 @@ function applySheetToken(
   memberSupervisorId: string,
   workspace: WorkspaceRecord,
   warnings: string[],
-  draftChanges: { studentId: string; before?: TokenRecord; after?: TokenRecord }[],
+  draftChanges: { studentId: string; before?: TokenRecord; after?: TokenRecord; beforeWorkspace?: WorkspaceRecord; afterWorkspace?: WorkspaceRecord }[],
 ): void {
   if (row.supervisorEmail === undefined) return;
   const current = heldToken(tokens, studentId);
@@ -2982,7 +3035,7 @@ function commitSheetDraft(
   workspace: WorkspaceRecord,
   before: TokenRecord | undefined,
   warnings: string[],
-  draftChanges: { studentId: string; before?: TokenRecord; after?: TokenRecord }[],
+  draftChanges: { studentId: string; before?: TokenRecord; after?: TokenRecord; beforeWorkspace?: WorkspaceRecord; afterWorkspace?: WorkspaceRecord }[],
 ): void {
   const plan = planDraft({
     studentId,
@@ -2991,8 +3044,8 @@ function commitSheetDraft(
     tokens,
     memberSupervisorId,
     pendingClear: workspace.pendingClear,
-    interdisciplinary: before?.interdisciplinary === true,
-    interdisciplinarySubject: before?.interdisciplinarySubject || '',
+    interdisciplinary: workspace.selectedInterdisciplinary === true,
+    interdisciplinarySubject: workspace.interdisciplinarySubject || '',
   });
   if (plan.error) {
     warnings.push(`${studentId}: ${plan.error}`);
@@ -3005,7 +3058,13 @@ function commitSheetDraft(
   });
   workspace.pendingClear = plan.pendingClear;
   const after = heldToken(tokens, studentId);
-  draftChanges.push({ studentId, before, after: after && after !== 'conflict' ? after : undefined });
+  draftChanges.push({
+    studentId,
+    before,
+    after: after && after !== 'conflict' ? after : undefined,
+    beforeWorkspace: workspace,
+    afterWorkspace: workspace,
+  });
 }
 
 function sheetDraftStatus(value: string | undefined): '' | 'committed' | 'draft' | 'unallocated' {
@@ -3049,15 +3108,20 @@ function copyWorkspace(workspace: WorkspaceRecord, now: string): WorkspaceRecord
     selectedSubject: text(workspace.selectedSubject),
     suggestedStaffId: normalizeEmail(workspace.suggestedStaffId),
     suggestedSubject: text(workspace.suggestedSubject),
+    selectedInterdisciplinary: workspace.selectedInterdisciplinary === true,
+    interdisciplinarySubject: text(workspace.interdisciplinarySubject),
     updatedAt: now,
   };
 }
 
 function draftFieldsChanged(before: WorkspaceRecord | undefined, after: WorkspaceRecord): boolean {
-  if (!before) return !!(after.selectedSubject || after.suggestedStaffId || after.suggestedSubject || after.pendingClear);
+  if (!before) return !!(after.selectedSubject || after.suggestedStaffId || after.suggestedSubject
+    || after.selectedInterdisciplinary || after.interdisciplinarySubject || after.pendingClear);
   return text(before.selectedSubject) !== after.selectedSubject
     || normalizeEmail(before.suggestedStaffId) !== after.suggestedStaffId
     || text(before.suggestedSubject) !== after.suggestedSubject
+    || (before.selectedInterdisciplinary === true) !== (after.selectedInterdisciplinary === true)
+    || text(before.interdisciplinarySubject) !== text(after.interdisciplinarySubject)
     || (before.pendingClear === true) !== after.pendingClear;
 }
 
@@ -3066,8 +3130,6 @@ function tokenAssignmentChanged(before: TokenRecord, after: TokenRecord): boolea
     || before.status !== after.status
     || before.allocatedTo !== after.allocatedTo
     || before.assignedSubject !== after.assignedSubject
-    || before.interdisciplinary !== after.interdisciplinary
-    || before.interdisciplinarySubject !== after.interdisciplinarySubject
     || before.eligibleSubjects.join('\n') !== after.eligibleSubjects.join('\n');
 }
 

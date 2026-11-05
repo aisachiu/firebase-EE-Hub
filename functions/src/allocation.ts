@@ -48,6 +48,7 @@ import {
   TokenRecord,
   uniqueSubjects,
   workspaceFromDoc,
+  workspaceWithLegacyTokenInterdisciplinary,
   workspacePreviewRows,
   WorkspaceRecord,
   AllocationPreviewRow,
@@ -141,7 +142,15 @@ export async function draftAllocation(app: App, cohortId: unknown, studentId: un
   return audited(app, user, 'DRAFT_ALLOCATION', { cohortId: cohort.id, studentId: email, staffId: normalizeEmail(staffId) }, async () => {
     const member = await requireActiveMember(app, cohort.id, email);
     const tokens = tokensFrom(await app.store.listTokens(cohort.id), cohort.id);
-    const workspace = workspaceFromDoc(await app.store.getWorkspace(cohort.id, email) || {}, email);
+    const rawWorkspace = workspaceFromDoc(await app.store.getWorkspace(cohort.id, email) || {}, email);
+    const before = tokens.find((token) => token.allocatedTo === email && token.status !== 'available');
+    const workspace = workspaceWithLegacyTokenInterdisciplinary(rawWorkspace, before);
+    const selectedInterdisciplinary = interdisciplinary === undefined
+      ? workspace.selectedInterdisciplinary === true
+      : interdisciplinary === true || text(interdisciplinary) === 'Yes';
+    const selectedInterdisciplinarySubject = selectedInterdisciplinary
+      ? text(interdisciplinarySubject === undefined ? workspace.interdisciplinarySubject : interdisciplinarySubject)
+      : '';
     const plan = planDraft({
       studentId: email,
       staffId: text(staffId),
@@ -149,13 +158,15 @@ export async function draftAllocation(app: App, cohortId: unknown, studentId: un
       tokens,
       memberSupervisorId: normalizeEmail(member.supervisorId),
       pendingClear: workspace.pendingClear,
-      interdisciplinary: interdisciplinary === true || text(interdisciplinary) === 'Yes',
-      interdisciplinarySubject: text(interdisciplinarySubject),
+      interdisciplinary: selectedInterdisciplinary,
+      interdisciplinarySubject: selectedInterdisciplinarySubject,
       bypassSubject: extra.bypassSubject === true,
       tokenId: text(extra.tokenId),
     });
     if (plan.error) throw new HubError(plan.error);
-    if (!plan.changed) return { changed: false, studentId: email };
+    const workspaceChanged = workspace.selectedInterdisciplinary !== selectedInterdisciplinary
+      || workspace.interdisciplinarySubject !== selectedInterdisciplinarySubject;
+    if (!plan.changed && !workspaceChanged) return { changed: false, studentId: email };
     const now = nowIso();
     const ops: AllocationOp[] = plan.tokens.map((token) => ({
       kind: 'token' as const,
@@ -163,16 +174,25 @@ export async function draftAllocation(app: App, cohortId: unknown, studentId: un
       id: token.id,
       data: { ...token, updatedAt: now },
     }));
+    const afterWorkspace = {
+      ...workspace,
+      studentId: email,
+      pendingClear: plan.pendingClear,
+      selectedInterdisciplinary,
+      interdisciplinarySubject: selectedInterdisciplinarySubject,
+      updatedAt: now,
+    };
     ops.push({
       kind: 'workspace',
       cohortId: cohort.id,
       id: email,
-      data: { ...workspace, studentId: email, pendingClear: plan.pendingClear, updatedAt: now },
+      data: afterWorkspace,
     });
     await app.store.applyAllocationOps(ops);
-    const before = tokens.find((token) => token.allocatedTo === email && token.status !== 'available');
-    const after = plan.tokens.find((token) => token.allocatedTo === email && token.status !== 'available');
-    await logAllocationDrafts(app, user, cohort.id, [{ studentId: email, before, after }]);
+    const after = plan.changed
+      ? plan.tokens.find((token) => token.allocatedTo === email && token.status !== 'available')
+      : before;
+    await logAllocationDrafts(app, user, cohort.id, [{ studentId: email, before, after, beforeWorkspace: rawWorkspace, afterWorkspace }]);
     return { changed: true, studentId: email, pendingClear: plan.pendingClear };
   });
 }
@@ -199,6 +219,13 @@ export async function batchDraftAllocations(app: App, cohortId: unknown, staffId
     const tokens = tokensFrom(await app.store.listTokens(cohort.id), cohort.id);
     const workspaces = (await app.store.listWorkspace(cohort.id)).map((doc) => workspaceFromDoc(doc, text(doc.id || doc.studentId)));
     const workspaceByStudent = new Map(workspaces.map((workspace) => [workspace.studentId, workspace]));
+    active.forEach((id) => {
+      const currentToken = tokens.find((token) => token.allocatedTo === id && token.status !== 'available');
+      workspaceByStudent.set(
+        id,
+        workspaceWithLegacyTokenInterdisciplinary(workspaceByStudent.get(id) || emptyWorkspaceRecord(id, ''), currentToken),
+      );
+    });
     const settings = settingsFromDoc(await app.store.getAllocationConfig(cohort.id));
     const requested = subjectMap(subjects);
     const resolved: Record<string, string> = {};
@@ -216,6 +243,8 @@ export async function batchDraftAllocations(app: App, cohortId: unknown, staffId
       tokens,
       supervisorByStudent: Object.fromEntries(active.map((id) => [id, normalizeEmail(byStudent.get(id)?.supervisorId)])),
       pendingClearByStudent: Object.fromEntries(active.map((id) => [id, !!workspaceByStudent.get(id)?.pendingClear])),
+      selectedInterdisciplinaryByStudent: Object.fromEntries(active.map((id) => [id, workspaceByStudent.get(id)?.selectedInterdisciplinary === true])),
+      interdisciplinarySubjectByStudent: Object.fromEntries(active.map((id) => [id, text(workspaceByStudent.get(id)?.interdisciplinarySubject)])),
       overrideSubject: overrideSubject === true,
     });
     const now = nowIso();
@@ -227,11 +256,13 @@ export async function batchDraftAllocations(app: App, cohortId: unknown, staffId
     }));
     Object.keys(plan.pendingClears).forEach((studentId) => {
       const workspace = workspaceByStudent.get(studentId) || emptyWorkspace(studentId, now);
+      const afterWorkspace = { ...workspace, pendingClear: plan.pendingClears[studentId], updatedAt: now };
+      workspaceByStudent.set(studentId, afterWorkspace);
       ops.push({
         kind: 'workspace',
         cohortId: cohort.id,
         id: studentId,
-        data: { ...workspace, pendingClear: plan.pendingClears[studentId], updatedAt: now },
+        data: afterWorkspace,
       });
     });
     if (ops.length) await app.store.applyAllocationOps(ops);
@@ -239,6 +270,8 @@ export async function batchDraftAllocations(app: App, cohortId: unknown, staffId
       studentId,
       before: tokens.find((token) => token.allocatedTo === studentId && token.status !== 'available'),
       after: plan.tokenWrites.find((token) => token.allocatedTo === studentId && token.status !== 'available'),
+      beforeWorkspace: workspaces.find((workspace) => workspace.studentId === studentId),
+      afterWorkspace: workspaceByStudent.get(studentId),
     })));
     return {
       assigned: plan.assigned,
@@ -256,7 +289,15 @@ export async function reopenAllocation(app: App, cohortId: unknown, studentId: u
     const tokens = tokensFrom(await app.store.listTokens(cohort.id), cohort.id);
     const plan = planReopen(tokens, email);
     if (plan.error) throw new HubError(plan.error);
-    if (plan.token && plan.token.status === 'draft') await app.store.setToken(cohort.id, plan.token.id, plan.token);
+    if (plan.token && plan.token.status === 'draft' && tokens.find((token) => token.id === plan.token!.id)?.status !== 'draft') {
+      const currentWorkspace = workspaceFromDoc(await app.store.getWorkspace(cohort.id, email) || {}, email);
+      const workspace = workspaceWithLegacyTokenInterdisciplinary(currentWorkspace, plan.token);
+      const now = nowIso();
+      await app.store.applyAllocationOps([
+        { kind: 'token', cohortId: cohort.id, id: plan.token.id, data: { ...plan.token, updatedAt: now } },
+        { kind: 'workspace', cohortId: cohort.id, id: email, data: { ...workspace, studentId: email, updatedAt: now } },
+      ]);
+    }
     return { studentId: email, status: 'draft' };
   });
 }
@@ -274,6 +315,11 @@ export async function reopenAllocations(app: App, cohortId: unknown, studentIds:
     const reopened: string[] = [];
     const skipped: { studentId: string; reason: string }[] = [];
     const writes: TokenRecord[] = [];
+    const workspaceWrites = new Map<string, WorkspaceRecord>();
+    const workspaces = new Map((await app.store.listWorkspace(cohort.id)).map((doc) => {
+      const workspace = workspaceFromDoc(doc, text(doc.id || doc.studentId));
+      return [workspace.studentId, workspace] as const;
+    }));
     ids.forEach((email) => {
       if (!active.has(email)) {
         skipped.push({ studentId: email, reason: 'This student is not active for allocation.' });
@@ -290,17 +336,25 @@ export async function reopenAllocations(app: App, cohortId: unknown, studentIds:
         return;
       }
       writes.push(plan.token);
+      workspaceWrites.set(
+        email,
+        workspaceWithLegacyTokenInterdisciplinary(workspaces.get(email) || emptyWorkspaceRecord(email, ''), current || plan.token),
+      );
       tokens = tokens.map((token) => (token.id === plan.token!.id ? plan.token! : token));
       reopened.push(email);
     });
     if (writes.length) {
       const now = nowIso();
-      await app.store.applyAllocationOps(writes.map((token) => ({
+      const ops: AllocationOp[] = writes.map((token) => ({
         kind: 'token' as const,
         cohortId: cohort.id,
         id: token.id,
         data: { ...token, updatedAt: now },
-      })));
+      }));
+      workspaceWrites.forEach((workspace, studentId) => {
+        ops.push({ kind: 'workspace', cohortId: cohort.id, id: studentId, data: { ...workspace, studentId, updatedAt: now } });
+      });
+      await app.store.applyAllocationOps(ops);
     }
     return { reopened, skipped };
   });
@@ -340,12 +394,15 @@ export async function commitAllocations(app: App, cohortId: unknown, studentIds?
       });
     };
     plan.assignments.forEach((row) => {
-      const workspace = workspaceByStudent.get(row.studentId);
-      const subject = publishedAllocationSubject(row.subject, workspace?.subjectChoices, settings.primaryChoiceKey);
       const token = tokenById.get(row.tokenId);
-      const interdisciplinary = token?.interdisciplinary === true;
+      const workspace = workspaceWithLegacyTokenInterdisciplinary(
+        workspaceByStudent.get(row.studentId) || emptyWorkspaceRecord(row.studentId, now),
+        token,
+      );
+      const subject = publishedAllocationSubject(row.subject, workspace?.subjectChoices, settings.primaryChoiceKey);
+      const interdisciplinary = workspace.selectedInterdisciplinary === true;
       const interdisciplinarySubject = interdisciplinary
-        ? token?.interdisciplinarySubject || text(workspace?.subjectChoices[settings.secondaryChoiceKey])
+        ? workspace.interdisciplinarySubject || text(workspace.subjectChoices[settings.secondaryChoiceKey])
         : '';
       const member = {
         ...byStudent.get(row.studentId)!,
@@ -358,8 +415,13 @@ export async function commitAllocations(app: App, cohortId: unknown, studentIds?
       };
       ops.push({ kind: 'member', cohortId: cohort.id, id: row.studentId, data: member });
       writeStudentSubject(row.studentId, subject, interdisciplinary, interdisciplinarySubject);
-      if (token) ops.push({ kind: 'token', cohortId: cohort.id, id: token.id, data: { ...token, assignedSubject: subject, interdisciplinary, interdisciplinarySubject, status: 'committed' } });
-      if (workspace?.pendingClear) ops.push({ kind: 'workspace', cohortId: cohort.id, id: row.studentId, data: { ...workspace, pendingClear: false, updatedAt: now } });
+      if (token) ops.push({ kind: 'token', cohortId: cohort.id, id: token.id, data: { ...token, assignedSubject: subject, status: 'committed' } });
+      ops.push({
+        kind: 'workspace',
+        cohortId: cohort.id,
+        id: row.studentId,
+        data: { ...workspace, studentId: row.studentId, pendingClear: false, updatedAt: now },
+      });
     });
     plan.clears.forEach((studentId) => {
       const member = {
@@ -373,8 +435,17 @@ export async function commitAllocations(app: App, cohortId: unknown, studentIds?
       };
       ops.push({ kind: 'member', cohortId: cohort.id, id: studentId, data: member });
       writeStudentSubject(studentId, '', false, '');
-      const workspace = workspaceByStudent.get(studentId);
-      if (workspace) ops.push({ kind: 'workspace', cohortId: cohort.id, id: studentId, data: { ...workspace, pendingClear: false, updatedAt: now } });
+      const token = tokens.find((item) => item.allocatedTo === studentId && item.status !== 'available');
+      const workspace = workspaceWithLegacyTokenInterdisciplinary(
+        workspaceByStudent.get(studentId) || emptyWorkspaceRecord(studentId, now),
+        token,
+      );
+      ops.push({
+        kind: 'workspace',
+        cohortId: cohort.id,
+        id: studentId,
+        data: { ...workspace, pendingClear: false, updatedAt: now },
+      });
     });
     await app.store.applyAllocationOps(ops);
     return { published: plan.assignments.length, cleared: plan.clears.length };
@@ -592,10 +663,11 @@ export async function approveAllocationSuggestion(app: App, cohortId: unknown, s
   return audited(app, user, 'APPROVE_ALLOCATION_SUGGESTION', { cohortId: cohort.id, studentId: email }, async () => {
     const member = await requireActiveMember(app, cohort.id, email);
     const tokens = tokensFrom(await app.store.listTokens(cohort.id), cohort.id);
-    const workspace = workspaceFromDoc(await app.store.getWorkspace(cohort.id, email) || {}, email);
+    const rawWorkspace = workspaceFromDoc(await app.store.getWorkspace(cohort.id, email) || {}, email);
+    const current = tokens.find((token) => token.allocatedTo === email && token.status !== 'available');
+    const workspace = workspaceWithLegacyTokenInterdisciplinary(rawWorkspace, current);
     if (!workspace.suggestedStaffId) throw new HubError('This student has no suggestion to approve.');
     if (!workspace.selectedSubject) throw new HubError('Choose a subject before approving a suggestion.');
-    const current = tokens.find((token) => token.allocatedTo === email && token.status !== 'available');
     const plan = planDraft({
       studentId: email,
       staffId: workspace.suggestedStaffId,
@@ -603,8 +675,8 @@ export async function approveAllocationSuggestion(app: App, cohortId: unknown, s
       tokens,
       memberSupervisorId: normalizeEmail(member.supervisorId),
       pendingClear: workspace.pendingClear,
-      interdisciplinary: current?.interdisciplinary === true,
-      interdisciplinarySubject: current?.interdisciplinarySubject || '',
+      interdisciplinary: workspace.selectedInterdisciplinary === true,
+      interdisciplinarySubject: workspace.interdisciplinarySubject || '',
     });
     if (plan.error) throw new HubError(plan.error);
     const now = nowIso();
@@ -622,6 +694,8 @@ export async function approveAllocationSuggestion(app: App, cohortId: unknown, s
         ...workspace,
         studentId: email,
         pendingClear: plan.pendingClear,
+        selectedInterdisciplinary: workspace.selectedInterdisciplinary === true,
+        interdisciplinarySubject: workspace.interdisciplinarySubject || '',
         suggestedStaffId: '',
         suggestedSubject: '',
         updatedAt: now,
@@ -630,7 +704,7 @@ export async function approveAllocationSuggestion(app: App, cohortId: unknown, s
     await app.store.applyAllocationOps(ops);
     if (plan.changed) {
       const after = plan.tokens.find((token) => token.allocatedTo === email && token.status !== 'available');
-      await logAllocationDrafts(app, user, cohort.id, [{ studentId: email, before: current, after }]);
+      await logAllocationDrafts(app, user, cohort.id, [{ studentId: email, before: current, after, beforeWorkspace: rawWorkspace, afterWorkspace: workspace }]);
     }
     return { changed: plan.changed, studentId: email, suggestedStaffId: '' };
   });
@@ -652,7 +726,7 @@ export async function batchApproveAllocationSuggestions(app: App, cohortId: unkn
     const skipped: { studentId: string; reason: string }[] = [];
     const tokenWrites = new Map<string, TokenRecord>();
     const workspaceWrites = new Map<string, WorkspaceRecord>();
-    const drafts: { studentId: string; before?: TokenRecord; after?: TokenRecord }[] = [];
+    const drafts: { studentId: string; before?: TokenRecord; after?: TokenRecord; beforeWorkspace?: WorkspaceRecord; afterWorkspace?: WorkspaceRecord }[] = [];
     ids.forEach((id) => {
       const member = byStudent.get(id);
       if (!member) {
@@ -663,7 +737,9 @@ export async function batchApproveAllocationSuggestions(app: App, cohortId: unkn
         skipped.push({ studentId: id, reason: 'This student is not active for allocation.' });
         return;
       }
-      const workspace = workspaceByStudent.get(id) || emptyWorkspace(id, '');
+      const rawWorkspace = workspaceByStudent.get(id) || emptyWorkspace(id, '');
+      const before = tokens.find((token) => token.allocatedTo === id && token.status !== 'available');
+      const workspace = workspaceWithLegacyTokenInterdisciplinary(rawWorkspace, before);
       if (!workspace.suggestedStaffId) {
         skipped.push({ studentId: id, reason: 'No suggestion.' });
         return;
@@ -672,7 +748,6 @@ export async function batchApproveAllocationSuggestions(app: App, cohortId: unkn
         skipped.push({ studentId: id, reason: 'Choose a subject before approving a suggestion.' });
         return;
       }
-      const before = tokens.find((token) => token.allocatedTo === id && token.status !== 'available');
       if (before && before.status === 'committed') {
         skipped.push({ studentId: id, reason: 'This allocation is published. Unpublish it before changing the token.' });
         return;
@@ -684,8 +759,8 @@ export async function batchApproveAllocationSuggestions(app: App, cohortId: unkn
         tokens,
         memberSupervisorId: normalizeEmail(member.supervisorId),
         pendingClear: workspace.pendingClear,
-        interdisciplinary: before?.interdisciplinary === true,
-        interdisciplinarySubject: before?.interdisciplinarySubject || '',
+        interdisciplinary: workspace.selectedInterdisciplinary === true,
+        interdisciplinarySubject: workspace.interdisciplinarySubject || '',
       });
       if (plan.error) {
         skipped.push({ studentId: id, reason: plan.error });
@@ -701,12 +776,16 @@ export async function batchApproveAllocationSuggestions(app: App, cohortId: unkn
           studentId: id,
           before,
           after: plan.tokens.find((token) => token.allocatedTo === id && token.status !== 'available'),
+          beforeWorkspace: rawWorkspace,
+          afterWorkspace: { ...workspace, pendingClear: plan.pendingClear },
         });
       }
       const next = {
         ...workspace,
         studentId: id,
         pendingClear: plan.pendingClear,
+        selectedInterdisciplinary: workspace.selectedInterdisciplinary === true,
+        interdisciplinarySubject: workspace.interdisciplinarySubject || '',
         suggestedStaffId: '',
         suggestedSubject: '',
       };
@@ -997,8 +1076,6 @@ export async function addCohortTokens(app: App, cohortId: unknown, staffId: unkn
         eligibleSubjects,
         allocatedTo: '',
         assignedSubject: '',
-        interdisciplinary: false,
-        interdisciplinarySubject: '',
         status: 'available',
         createdAt: now,
       };
@@ -1021,7 +1098,16 @@ export async function updateCohortToken(app: App, cohortId: unknown, tokenId: un
     const existing = tokenFromDoc({ ...(await app.store.getToken(cohort.id, id) || {}), cohortId: cohort.id });
     if (!existing) throw new HubError('Token not found.');
     if (existing.status === 'committed') throw new HubError('This token is published. Unpublish it on the allocation dashboard before editing it.');
-    await app.store.setToken(cohort.id, existing.id, { ...existing, eligibleSubjects });
+    const now = nowIso();
+    const ops: AllocationOp[] = [{ kind: 'token', cohortId: cohort.id, id: existing.id, data: { ...existing, eligibleSubjects, updatedAt: now } }];
+    if (existing.allocatedTo) {
+      const workspace = workspaceWithLegacyTokenInterdisciplinary(
+        workspaceFromDoc(await app.store.getWorkspace(cohort.id, existing.allocatedTo) || {}, existing.allocatedTo),
+        existing,
+      );
+      ops.push({ kind: 'workspace', cohortId: cohort.id, id: existing.allocatedTo, data: { ...workspace, updatedAt: now } });
+    }
+    await app.store.applyAllocationOps(ops);
     await logUpdatedToken(app, user, cohort.id, existing, eligibleSubjects);
     return { id: existing.id, eligibleSubjects };
   });
@@ -1036,6 +1122,13 @@ export async function deleteCohortToken(app: App, cohortId: unknown, tokenId: un
     const existing = tokenFromDoc({ ...(await app.store.getToken(cohort.id, id) || {}), cohortId: cohort.id });
     if (!existing) throw new HubError('Token not found.');
     if (existing.status === 'committed') throw new HubError('This token is published. Return it to draft on the allocation dashboard before deleting it.');
+    if (existing.allocatedTo) {
+      const workspace = workspaceWithLegacyTokenInterdisciplinary(
+        workspaceFromDoc(await app.store.getWorkspace(cohort.id, existing.allocatedTo) || {}, existing.allocatedTo),
+        existing,
+      );
+      await app.store.setWorkspace(cohort.id, existing.allocatedTo, { ...workspace, updatedAt: nowIso() });
+    }
     await app.store.removeToken(cohort.id, existing.id);
     await logRemovedToken(app, user, cohort.id, existing);
     return { deleted: true, id: existing.id };

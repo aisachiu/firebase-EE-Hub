@@ -795,7 +795,10 @@ main.staff-list { max-width: 1480px; }
 .alloc-subject-picks .subject-chip[aria-pressed="true"] { outline: 2px solid var(--ink); outline-offset: 1px; font-weight: 800; }
 .alloc-filter-actions { display: flex; align-items: end; gap: 8px; }
 .alloc-filters label, .alloc-kicker { display: block; margin-bottom: 4px; color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
-.alloc-batch { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; padding: 8px 10px; background: white; border: 1px solid var(--line); }
+.alloc-batch { margin-bottom: 12px; padding: 8px 10px; background: white; border: 1px solid var(--line); }
+.alloc-batch summary { color: var(--ink); cursor: pointer; font-weight: 700; }
+.alloc-batch summary .muted { margin-left: 6px; font-size: 12px; font-weight: 400; }
+.alloc-batch-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
 .alloc-desk-wrap { margin-top: 0; }
 .alloc-desk { min-width: 760px; }
 .alloc-desk th, .alloc-desk td { vertical-align: top; }

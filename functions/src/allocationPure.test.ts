@@ -68,6 +68,7 @@ import {
   suggestionCapacity,
   tokenDepartmentNames,
   workspaceFromDoc,
+  workspaceWithLegacyTokenInterdisciplinary,
   interdisciplinarySignal,
   requestedSubjectNames,
   resolveRequestedSubjects,
@@ -86,8 +87,6 @@ function token(partial: Partial<TokenRecord> & Pick<TokenRecord, 'id' | 'staffId
     eligibleSubjects: ['History'],
     allocatedTo: '',
     assignedSubject: '',
-    interdisciplinary: false,
-    interdisciplinarySubject: '',
     createdAt: '2026-10-18T00:00:00.000Z',
     ...partial,
   };
@@ -680,8 +679,8 @@ test('a draft is refused when the EE subject does not match the supervisor token
     interdisciplinary: true,
     interdisciplinarySubject: 'Eng Lit',
   });
-  assert.equal(marked.tokens[0].interdisciplinary, true);
-  assert.equal(marked.tokens[0].interdisciplinarySubject, 'Eng Lit');
+  assert.equal(Object.hasOwn(marked.tokens[0], 'interdisciplinary'), false);
+  assert.equal(Object.hasOwn(marked.tokens[0], 'interdisciplinarySubject'), false);
   assert.equal(marked.tokens[0].assignedSubject, 'History');
   const cleared = planDraft({
     studentId: JANE,
@@ -693,8 +692,7 @@ test('a draft is refused when the EE subject does not match the supervisor token
     interdisciplinary: false,
     interdisciplinarySubject: 'Eng Lit',
   });
-  assert.equal(cleared.tokens[0].interdisciplinary, false);
-  assert.equal(cleared.tokens[0].interdisciplinarySubject, '');
+  assert.equal(cleared.changed, false);
   const saved = applySavedConfig(mergeDetected(emptySettings(), ['choice1'], ['Notes']), {
     primaryChoiceKey: 'choice1',
     columns: [{ key: 'Notes', showOnCard: false, filterable: false, sortable: false, expanded: true }],
@@ -1068,8 +1066,36 @@ test('an interdisciplinary draft can take any available token', () => {
   assert.equal(allowed.changed, true);
   assert.equal(allowed.tokens[0].id, 'art');
   assert.equal(allowed.tokens[0].assignedSubject, 'History');
-  assert.equal(allowed.tokens[0].interdisciplinary, true);
-  assert.equal(allowed.tokens[0].interdisciplinarySubject, 'Biology');
+  assert.equal(Object.hasOwn(allowed.tokens[0], 'interdisciplinary'), false);
+  assert.equal(Object.hasOwn(allowed.tokens[0], 'interdisciplinarySubject'), false);
+});
+
+test('interdisciplinary token eligibility includes the workspace second subject and migrates legacy token fields', () => {
+  const secondSubjectToken = token({ id: 'biology', staffId: SMITH, status: 'available', eligibleSubjects: ['Biology'] });
+  const matched = planDraft({
+    studentId: JANE,
+    staffId: SMITH,
+    subject: 'History',
+    tokens: [secondSubjectToken],
+    memberSupervisorId: '',
+    pendingClear: false,
+    interdisciplinary: true,
+    interdisciplinarySubject: 'Biology',
+  });
+  assert.equal(matched.changed, true);
+  const legacyToken = tokenFromDoc({
+    id: 'legacy',
+    staffId: SMITH,
+    allocatedTo: JANE,
+    assignedSubject: 'History',
+    status: 'draft',
+    interdisciplinary: true,
+    interdisciplinarySubject: 'Biology',
+  });
+  assert.ok(legacyToken);
+  const workspace = workspaceWithLegacyTokenInterdisciplinary(workspaceFromDoc({}, JANE), legacyToken);
+  assert.equal(workspace.selectedInterdisciplinary, true);
+  assert.equal(workspace.interdisciplinarySubject, 'Biology');
 });
 
 test('allocation draft sheets export and ingest selected subject, suggestion, and draft tokens', () => {

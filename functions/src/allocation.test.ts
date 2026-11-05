@@ -418,7 +418,7 @@ test('multiple EE subjects persist on the staff record and in bulk', async () =>
   ]);
 });
 
-test('choice edits enforce Yes or No and an interdisciplinary token publishes onto the student', async () => {
+test('interdisciplinary selection persists on workspace and publishes to the student, not the token', async () => {
   const app = appFor();
   await seed(app);
   await applyAllocationIngest(app, '2026', SHEET, 'workspace', { workbook: workbook([workspaceGrid]) });
@@ -444,9 +444,12 @@ test('choice edits enforce Yes or No and an interdisciplinary token publishes on
   await app.store.set(COLLECTIONS.studentUsers, JANE, { StudentId: JANE, DisplayName: 'Jane Doe', subject: '' });
   await assert.rejects(draftAllocation(app, '2026', JANE, SMITH, 'Biology', true), /does not match/);
   await draftAllocation(app, '2026', JANE, SMITH, 'History', true, 'Theatre');
+  const workspace = await app.store.getWorkspace('2026', JANE);
+  assert.equal(workspace?.selectedInterdisciplinary, true);
+  assert.equal(workspace?.interdisciplinarySubject, 'Theatre');
   const drafted = (await app.store.listTokens('2026')).find((token) => token.allocatedTo === JANE);
-  assert.equal(drafted?.interdisciplinary, true);
-  assert.equal(drafted?.interdisciplinarySubject, 'Theatre');
+  assert.equal(Object.hasOwn(drafted || {}, 'interdisciplinary'), false);
+  assert.equal(Object.hasOwn(drafted || {}, 'interdisciplinarySubject'), false);
   await commitAllocations(app, '2026');
   assert.equal((await app.store.getMember('2026', JANE))?.interdisciplinary, true);
   assert.equal((await app.store.getMember('2026', JANE))?.Interdisciplinary, true);
@@ -454,6 +457,8 @@ test('choice edits enforce Yes or No and an interdisciplinary token publishes on
   assert.equal((await app.store.get(COLLECTIONS.studentUsers, JANE))?.Interdisciplinary, true);
   assert.equal((await app.store.get(COLLECTIONS.studentUsers, JANE))?.interdisciplinary, true);
   assert.equal((await app.store.get(COLLECTIONS.studentUsers, JANE))?.InterdisciplinarySubject, 'Theatre');
+  const storedToken = (await app.store.listTokens('2026')).find((token) => token.allocatedTo === JANE);
+  assert.equal(Object.hasOwn(storedToken || {}, 'interdisciplinary'), false);
   const board = await listCohortTokens(app, '2026');
   const held = board.tokens.find((token) => token.allocatedTo === JANE);
   assert.equal(held?.studentName, 'Doe, Jane');

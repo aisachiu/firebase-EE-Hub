@@ -3,6 +3,17 @@ import { nextDocCommentSyncWrite, pairRecordId } from './docCommentsPure';
 import { COLLECTIONS } from './schema';
 import { cleanDoc, Doc, normalizeEmail, parseDriveId, text } from './util';
 
+function tokenWithoutInterdisciplinary(data: Doc): Doc {
+  const token = { ...data };
+  delete token.interdisciplinary;
+  delete token.Interdisciplinary;
+  delete token.interdisciplinarySubject;
+  delete token.InterdisciplinarySubject;
+  delete token.legacySelectedInterdisciplinary;
+  delete token.legacyInterdisciplinarySubject;
+  return token;
+}
+
 export type AllocationOp =
   | { kind: 'member'; cohortId: string; id: string; data: Doc }
   | { kind: 'token'; cohortId: string; id: string; data: Doc }
@@ -168,7 +179,7 @@ export class Store {
   }
 
   async setToken(cohortId: string, id: string, data: Doc): Promise<void> {
-    await this.tokens(cohortId).doc(id).set(cleanDoc(data));
+    await this.tokens(cohortId).doc(id).set(cleanDoc(tokenWithoutInterdisciplinary(data)));
   }
 
   async removeToken(cohortId: string, id: string): Promise<void> {
@@ -245,7 +256,7 @@ export class Store {
       const slice = ops.slice(index, index + size);
       slice.forEach((op) => {
         if (op.kind === 'member') batch.set(this.members(op.cohortId).doc(op.id), cleanDoc(op.data));
-        else if (op.kind === 'token') batch.set(this.tokens(op.cohortId).doc(op.id), cleanDoc(op.data));
+        else if (op.kind === 'token') batch.set(this.tokens(op.cohortId).doc(op.id), cleanDoc(tokenWithoutInterdisciplinary(op.data)));
         else if (op.kind === 'workspace') batch.set(this.workspace(op.cohortId).doc(op.id), cleanDoc(op.data));
         else if (op.kind === 'student') batch.set(this.col(COLLECTIONS.studentUsers).doc(op.id), cleanDoc(op.data), { merge: true });
         else batch.set(this.allocationConfig(op.cohortId), cleanDoc(op.data));

@@ -14,6 +14,8 @@ function student(partial) {
     choices: { primary: '["Psychology","Theater"]', secondary: '', interdisciplinary: false },
     requestedSubjects: [psychology, theater],
     token: null,
+    selectedInterdisciplinary: false,
+    interdisciplinarySubject: '',
     pendingClear: false,
     dynamicData: {},
     ...partial,
@@ -118,9 +120,9 @@ test('allocation desk tags, filter, column order, supervisor cues, and token loa
         interdisciplinary: false,
       },
     }), desk());
-    assert.match(scoredChoices, /<span class="alloc-choice-kicker">1:<\/span>/);
+    assert.match(scoredChoices, /<span class="alloc-choice-kicker">1<\/span>/);
     assert.match(scoredChoices, /Psychology \(A&amp;\)<\/label>/);
-    assert.match(scoredChoices, /<span class="alloc-choice-kicker">2:<\/span>/);
+    assert.match(scoredChoices, /<span class="alloc-choice-kicker">2<\/span>/);
     assert.match(scoredChoices, /\(87\.5\)/);
     const unscoredChoices = deskMod.allocationSubjectChoiceMarkup(student({
       choices: { primary: '["Psychology","Theater"]', secondary: '', primaryScore: '', secondaryScore: '', interdisciplinary: false },
@@ -222,10 +224,19 @@ test('allocation desk tags, filter, column order, supervisor cues, and token loa
       { id: 'a', staffId: 'psy@school.edu', status: 'draft', eligibleSubjects: ['Psychology'], assignedSubject: 'Psychology', studentId: 'mark@school.edu' },
       { id: 'b', staffId: 'psy@school.edu', status: 'available', eligibleSubjects: ['Psychology'] },
       { id: 'c', staffId: 'psy@school.edu', status: 'available', eligibleSubjects: ['Biology'] },
+      { id: 'd', staffId: 'art@school.edu', status: 'available', eligibleSubjects: ['Theater'] },
     ];
     const scoped = deskMod.allocationSupervisorCues(student({ selectedSubject: 'Psychology' }), supervisors(), scopedDesk);
     assert.match(scoped, /Dr Psy \(1\/2\)/);
     assert.doesNotMatch(scoped, /disabled/);
+    const interdisciplinary = student({
+      selectedSubject: 'Psychology',
+      selectedInterdisciplinary: true,
+      interdisciplinarySubject: 'Theater',
+    });
+    const interCue = deskMod.allocationSupervisorCues(interdisciplinary, supervisors(), scopedDesk);
+    assert.match(interCue, /Mx Art \(0\/1\)/);
+    assert.equal(deskMod.supervisorAcceptsSubject(scopedDesk, 'art@school.edu', 'Psychology', interdisciplinary), true);
     const fullDesk = desk();
     fullDesk.tokenRows = [
       { id: 'a', staffId: 'psy@school.edu', status: 'draft', eligibleSubjects: ['Psychology'] },
@@ -293,6 +304,7 @@ test('allocation desk tags, filter, column order, supervisor cues, and token loa
     assert.ok(html.indexOf('data-table-header="alloc-filters"') < html.indexOf('id="alloc-student-search"'));
     assert.ok(html.indexOf('id="alloc-student-search"') < html.indexOf('id="alloc-batch-assign"'));
     assert.ok(html.indexOf('id="alloc-batch-assign"') < html.indexOf('<table'));
+    assert.match(html, /<details class="alloc-batch">\s*<summary>Apply to selected <span class="muted">0 selected<\/span><\/summary>/);
     assert.match(html, /id="alloc-status"/);
     assert.doesNotMatch(html, /data-alloc-status="flagged"/);
     assert.match(html, /data-alloc-flag="jane@school.edu"/);
@@ -317,6 +329,10 @@ test('allocation desk tags, filter, column order, supervisor cues, and token loa
     assert.ok(html.indexOf('data-alloc-ee-inter="jane@school.edu"') < html.indexOf('class="alloc-supervisor-name'));
     assert.match(html, /data-alloc-supervisor/);
     assert.match(html, /Choose a subject first/);
+    state.allocationSelected = ['jane@school.edu'];
+    const selectedHtml = deskMod.allocationDashboardMarkup(desk());
+    assert.match(selectedHtml, /<details class="alloc-batch" open>\s*<summary>Apply to selected <span class="muted">1 selected<\/span><\/summary>/);
+    state.allocationSelected = [];
     state.allocationFlaggedFilter = 'yes';
     const flaggedDesk = desk();
     flaggedDesk.students[1].isFlagged = true;
@@ -775,12 +791,13 @@ test('allocation desk tags, filter, column order, supervisor cues, and token loa
     assert.equal(released.students[0].token, null);
     assert.equal(released.supervisors.find((person) => person.staffId === 'psy@school.edu').available, 1);
     assert.equal(shown.students[0].token.assignedSubject, 'Psychology');
-    assert.equal(shown.students[0].token.interdisciplinary, true);
+    assert.equal(shown.students[0].selectedInterdisciplinary, true);
     assert.equal(shown.students[0].token.status, 'draft');
     assert.equal(shown.students[1].studentId, 'mark@school.edu');
     assert.equal(shown.students[1].token, null);
     const echoed = desk();
-    echoed.students[0].token = { staffId: 'psy@school.edu', assignedSubject: 'Psychology', interdisciplinary: true, status: 'draft' };
+    echoed.students[0].token = { staffId: 'psy@school.edu', assignedSubject: 'Psychology', status: 'draft' };
+    echoed.students[0].selectedInterdisciplinary = true;
     assert.deepEqual(live.reconcilePendingEdits(pending, echoed, 2), {});
     const other = desk();
     other.students[0].token = { staffId: 'art@school.edu', assignedSubject: 'Theater', interdisciplinary: false, status: 'draft' };
@@ -812,7 +829,9 @@ test('allocation desk tags, filter, column order, supervisor cues, and token loa
     });
     assert.equal(built.students.length, 1);
     assert.equal(built.students[0].token.staffName, 'Dr Psy');
-    assert.equal(built.students[0].token.interdisciplinary, true);
+    assert.equal(built.students[0].selectedInterdisciplinary, true);
+    assert.equal(built.students[0].interdisciplinarySubject, '');
+    assert.equal(Object.hasOwn(built.students[0].token, 'interdisciplinary'), false);
     assert.equal(built.students[0].token.assignedSubject, 'Psychology');
     assert.equal(built.settings.lastSyncedAt, '2026-10-29T00:00:00.000Z');
     assert.equal(built.students[0].requestedSubjects[0].name, 'Psychology');
@@ -913,7 +932,14 @@ test('suggestions, department rows, and the HOD drawer', async () => {
       { id: 't3', staffId: 'psy@school.edu', status: 'available', eligibleSubjects: ['Psychology'], studentId: '' },
     ];
     hodDesk.students = [
-      student({ selectedSubject: 'Psychology', suggestedStaffId: 'psy@school.edu', suggestedSubject: 'Psychology', suggestedStaffName: 'Dr Psy' }),
+      student({
+        selectedSubject: 'Psychology',
+        selectedInterdisciplinary: true,
+        interdisciplinarySubject: 'Theater',
+        suggestedStaffId: 'psy@school.edu',
+        suggestedSubject: 'Psychology',
+        suggestedStaffName: 'Dr Psy',
+      }),
       student({ studentId: 'pat@school.edu', displayName: 'Jones, Pat', sortName: 'jones, pat', selectedSubject: 'Psychology', suggestedStaffId: 'psy@school.edu', suggestedSubject: 'Psychology', suggestedStaffName: 'Dr Psy' }),
       student({ studentId: 'mark@school.edu', displayName: 'Lee, Mark', sortName: 'lee, mark', selectedSubject: 'Theater', requestedSubjects: [theater] }),
     ];
@@ -921,6 +947,7 @@ test('suggestions, department rows, and the HOD drawer', async () => {
     state.allocationHodDepartment = 'Arts';
     const other = deskMod.allocationHodMarkup(hodDesk);
     assert.match(other, /data-alloc-suggest="mark@school.edu"[^>]*disabled/);
+    assert.doesNotMatch(other, /data-alloc-suggest="jane@school.edu"/);
     state.allocationHodDepartment = 'Humanities';
     state.allocationHodStatus = { byDepartment: {} };
     const own = deskMod.allocationHodMarkup(hodDesk);

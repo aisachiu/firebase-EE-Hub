@@ -289,8 +289,9 @@ export function allocationDashboardMarkup(desk) {
   });
   const scaleOn = columns.some(function(column) { return column.colorScale && extents[column.key]; });
   const allSelected = students.length > 0 && students.every(function(student) { return state.allocationSelected.indexOf(student.studentId) >= 0; });
-  const batchAction = `<div class="alloc-batch">
-        <span>Apply to selected</span>
+  const batchAction = `<details class="alloc-batch"${state.allocationSelected.length ? ' open' : ''}>
+        <summary>Apply to selected <span class="muted">${state.allocationSelected.length} selected</span></summary>
+        <div class="alloc-batch-controls">
         <select id="alloc-batch-subject" aria-label="Subject to apply"><option value="">Select subject...</option><option value="__no_subject__">[no subject]</option>${subjectOptions}</select>
         <button type="button" class="button" id="alloc-batch-apply-subject">Apply Subject</button>
         <button type="button" class="button" id="alloc-batch-approve">Assign From Suggestions</button>
@@ -298,8 +299,8 @@ export function allocationDashboardMarkup(desk) {
         <button type="button" class="button" id="alloc-batch-assign">Assign Supervisor</button>
         <select id="alloc-batch-publication-action" aria-label="Publish action"><option value="publish">Publish</option><option value="unpublish">Unpublish</option></select>
         <button type="button" class="button secondary" id="alloc-batch-publication">Publish</button>
-        <span class="muted">${state.allocationSelected.length} selected</span>
-      </div>`;
+        </div>
+      </details>`;
   const sortOption = function(key, label) {
     return `<option value="${escapeHtml(key)}" ${sort.key === key ? 'selected' : ''}>${escapeHtml(label)}</option>`;
   };
@@ -545,7 +546,7 @@ export function allocationExpandedMarkup(student, colspan) {
   const choice2 = plainChoice(student.choices && student.choices.secondary, requested[1] && requested[1].name);
   const rawInter = interdisciplinaryRaw(student, settings);
   const interLabel = rawInter === 'Yes' || rawInter === 'No' ? rawInter : (student.choices && student.choices.interdisciplinary ? 'Yes' : 'No');
-  const interSubject = student.token && student.token.interdisciplinarySubject ? student.token.interdisciplinarySubject : '';
+  const interSubject = student.interdisciplinarySubject || '';
   const expanded = ((settings.columns) || []).filter(function(column) { return column.expanded; });
   const notes = expanded.map(function(column) {
     const value = allocationStoredField(student, column.key);
@@ -582,7 +583,7 @@ export function allocationInterdisciplinaryOn(student) {
   if (student && Object.prototype.hasOwnProperty.call(state.allocationInterdisciplinary, student.studentId)) {
     return state.allocationInterdisciplinary[student.studentId] === true;
   }
-  return !!(student && student.token && student.token.interdisciplinary);
+  return !!(student && student.selectedInterdisciplinary);
 }
 
 export function allocationInterdisciplinarySubject(student) {
@@ -590,7 +591,7 @@ export function allocationInterdisciplinarySubject(student) {
   if (studentId && Object.prototype.hasOwnProperty.call(state.allocationInterdisciplinarySubject, studentId)) {
     return state.allocationInterdisciplinarySubject[studentId];
   }
-  if (student && student.token && student.token.interdisciplinarySubject) return student.token.interdisciplinarySubject;
+  if (student && student.interdisciplinarySubject) return student.interdisciplinarySubject;
   if (!allocationInterdisciplinaryOn(student) || !studentId) return '';
   const seeded = student && student.choices ? String(student.choices.secondary || '') : '';
   state.allocationInterdisciplinarySubject[studentId] = seeded;
@@ -636,7 +637,7 @@ export function allocationStoredField(student, columnKey) {
 export function allocationInterdisciplinarySubjectOptions(student, desk) {
   const names = subjectCatalogue(desk).map(function(subject) { return subject.name; });
   const choice2 = student && student.choices ? String(student.choices.secondary || '').trim() : '';
-  const saved = student && student.token ? String(student.token.interdisciplinarySubject || '').trim() : '';
+  const saved = student ? String(student.interdisciplinarySubject || '').trim() : '';
   const current = allocationInterdisciplinarySubject(student);
   [saved, choice2, current].forEach(function(name) {
     if (name && !names.some(function(item) { return sameSubjectName(item, name); })) names.unshift(name);
@@ -704,7 +705,7 @@ export function allocationInterdisciplinaryModalMarkup(student, desk) {
   }).join('');
   const name = (student && student.displayName) || 'student';
   return `<div class="form-panel member-editor" role="dialog" aria-modal="true" aria-labelledby="alloc-inter-modal-title"><div class="toolbar"><h2 id="alloc-inter-modal-title">Interdisciplinary EE</h2><button type="button" class="button secondary" data-close-admin-dialog>Close</button></div>
-    <p class="muted">Assign any available teacher token. Subject eligibility is not applied. Then choose the second interdisciplinary subject for ${escapeHtml(name)}.</p>
+    <p class="muted">Choose a token that matches the selected subject or the second interdisciplinary subject, then choose the second subject for ${escapeHtml(name)}.</p>
     <div class="field"><label for="alloc-inter-token">Teacher token</label><select id="alloc-inter-token">${tokenOptions ? `<option value="">Choose token...</option>${tokenOptions}` : '<option value="">No available tokens</option>'}</select></div>
     <div class="field"><label for="alloc-inter-modal-subject">Second interdisciplinary subject</label><select id="alloc-inter-modal-subject"><option value="">Choose subject...</option>${subjectOptions}</select></div>
     <p class="notice error" id="alloc-inter-modal-error" hidden></p>
@@ -983,6 +984,13 @@ function holdsEligibleToken(student, person, subject) {
   return subjectsOverlap(subject, eligible);
 }
 
+function allocationSupervisorMatchSubject(person, student, selectedSubject) {
+  const eligible = person.eligibleSubjects || [];
+  if (subjectsOverlap(selectedSubject, eligible)) return selectedSubject;
+  const secondSubject = allocationInterdisciplinaryOn(student) ? allocationInterdisciplinarySubject(student) : '';
+  return secondSubject && subjectsOverlap(secondSubject, eligible) ? secondSubject : '';
+}
+
 function teacherCanTake(person, subject, student, desk) {
   const counts = teacherSubjectCounts(person, subject, desk);
   return counts.allocated < counts.total || holdsEligibleToken(student, person, subject);
@@ -1025,14 +1033,15 @@ export function allocationSupervisorCues(student, supervisors, desk) {
   const colour = subjectChipStyle(match ? match.colour : '');
   const current = student.token ? student.token.staffId : '';
   const eligible = (supervisors || []).filter(function(person) {
-    return subjectsOverlap(picked, person.eligibleSubjects || []);
+    return !!allocationSupervisorMatchSubject(person, student, picked);
   }).slice().sort(function(left, right) {
     return String(left.displayName || '').localeCompare(String(right.displayName || ''), undefined, { sensitivity: 'base' });
   });
   if (!eligible.length) return `<p class="muted alloc-cue-empty">No supervisor is eligible for ${escapeHtml(picked)}.</p>`;
   const options = eligible.map(function(person) {
-    const counts = teacherSubjectCounts(person, picked, source);
-    const canTake = teacherCanTake(person, picked, student, source);
+    const matchedSubject = allocationSupervisorMatchSubject(person, student, picked);
+    const counts = teacherSubjectCounts(person, matchedSubject, source);
+    const canTake = teacherCanTake(person, matchedSubject, student, source);
     const selected = person.staffId === current ? ' selected' : '';
     const disabled = canTake ? '' : ' disabled class="alloc-teacher-empty"';
     const label = (person.displayName || person.staffId) + ' (' + counts.allocated + '/' + counts.total + ')';
@@ -1069,7 +1078,7 @@ export function allocationSubjectChoiceMarkup(student, desk) {
   const locked = allocationSubjectLocked(student);
   const catalogue = subjectCatalogue(desk || state.allocationDesk).filter(function(subject) { return subject.active !== false; });
   const chips = requested.map(function(choice, index) {
-    const label = index === 0 ? '1:' : index === 1 ? '2:' : '';
+    const label = index === 0 ? '1' : index === 1 ? '2' : '';
     const scores = student.choices || {};
     const score = index === 0 ? scores.primaryScore : index === 1 ? scores.secondaryScore : '';
     return subjectChoiceChip(student, choice, sameSubjectName(choice.name, selectedName), locked, label, score);
@@ -1154,10 +1163,10 @@ function toggleNameFilter(current, value) {
   return next;
 }
 
-export function supervisorAcceptsSubject(desk, staffId, subject) {
+export function supervisorAcceptsSubject(desk, staffId, subject, student) {
   if (!staffId || !subject) return true;
   const person = ((desk && desk.supervisors) || []).find(function(item) { return item.staffId === staffId; });
-  return subjectsOverlap(subject, person ? (person.eligibleSubjects || []) : []);
+  return !!person && !!allocationSupervisorMatchSubject(person, student, subject);
 }
 
 function applyPendingDesk() {
@@ -1267,7 +1276,6 @@ function openAllocationInterdisciplinaryModal(student, desk, wasOn, seededNow) {
     closeAdminDialog();
     const synthetic = option.getAttribute('data-synthetic') === 'true';
     saveAllocationDraft(student.studentId, option.getAttribute('data-staff') || '', assigned, true, 'Interdisciplinary assignment saved.', {
-      bypassSubject: true,
       tokenId: synthetic ? '' : tokenId,
     });
   });
@@ -1307,7 +1315,7 @@ function saveAllocationDraft(studentId, staffId, subject, interdisciplinary, mes
   const interdisciplinarySubject = interdisciplinary
     ? (Object.prototype.hasOwnProperty.call(state.allocationInterdisciplinarySubject, studentId)
       ? state.allocationInterdisciplinarySubject[studentId]
-      : (student && student.token && student.token.interdisciplinarySubject) || '')
+      : (student && student.interdisciplinarySubject) || '')
     : '';
   const edit = {
     staffId: staffId || '',
@@ -2664,24 +2672,17 @@ export function bindAllocation(target, desk) {
         state.allocationInterdisciplinary[studentId] = true;
         const seededNow = !Object.prototype.hasOwnProperty.call(state.allocationInterdisciplinarySubject, studentId);
         if (seededNow) {
-          const existing = student && student.token && student.token.interdisciplinarySubject;
+          const existing = student && student.interdisciplinarySubject;
           state.allocationInterdisciplinarySubject[studentId] = existing || (student && student.choices && student.choices.secondary) || '';
         }
         openAllocationInterdisciplinaryModal(student, desk, wasOn, seededNow);
         return;
       }
       delete state.allocationInterdisciplinary[studentId];
-      if (!student || !student.token) {
-        paintAllocation();
-        return;
-      }
-      const subject = student.selectedSubject || '';
-      if (!subject) {
-        showError(new Error('Choose a subject before assigning a teacher.'));
-        paintAllocation();
-        return;
-      }
-      saveAllocationDraft(studentId, student.token.staffId, subject, false, 'Interdisciplinary mark cleared.');
+      const subject = student && student.token
+        ? student.token.assignedSubject || student.selectedSubject || ''
+        : (student && student.selectedSubject) || '';
+      saveAllocationDraft(studentId, student && student.token ? student.token.staffId : '', subject, false, 'Interdisciplinary mark cleared.');
     });
   });
   target.querySelectorAll('[data-alloc-supervisor]').forEach(function(select) {
@@ -2705,7 +2706,7 @@ export function bindAllocation(target, desk) {
         paintAllocation();
         return;
       }
-      if (staffId && !supervisorAcceptsSubject(desk, staffId, subject)) {
+      if (staffId && !supervisorAcceptsSubject(desk, staffId, subject, student)) {
         showError(new Error(subject + ' does not match the supervisor\'s EE subjects.'));
         paintAllocation();
         return;
@@ -2838,7 +2839,7 @@ export function cohortTokensMarkup(board) {
         <td><strong>${escapeHtml(token.staffName)}</strong><div class="muted">${escapeHtml(token.staffId)}</div></td>
         <td>${escapeHtml((token.eligibleSubjects || []).join(', ') || 'None')}</td>
         <td>${escapeHtml(token.status)}</td>
-        <td>${token.allocatedTo ? `<strong>${escapeHtml(token.studentName || token.allocatedTo)}</strong><div class="muted">${escapeHtml(token.allocatedTo)}</div>` : '—'}${token.interdisciplinary ? ' <span class="id-tag" title="Interdisciplinary EE">ID</span>' : ''}</td>
+        <td>${token.allocatedTo ? `<strong>${escapeHtml(token.studentName || token.allocatedTo)}</strong><div class="muted">${escapeHtml(token.allocatedTo)}</div>` : '—'}</td>
         <td>${escapeHtml(token.assignedSubject || '—')}</td>
         <td><div class="actions">${token.status === 'committed' ? '<span class="muted">Locked</span>' : `<button type="button" class="link-button" data-token-edit="${escapeHtml(token.id)}">Edit</button><button type="button" class="link-button" data-token-delete="${escapeHtml(token.id)}">Delete</button>`}</div></td>
       </tr>`;
@@ -3118,8 +3119,8 @@ function clearAllocationSupervisorBatch() {
     const subject = student.token && student.token.assignedSubject
       ? student.token.assignedSubject
       : (student.selectedSubject || '');
-    const interdisciplinarySubject = student.token && student.token.interdisciplinarySubject
-      ? student.token.interdisciplinarySubject
+    const interdisciplinarySubject = student.interdisciplinarySubject
+      ? student.interdisciplinarySubject
       : '';
     return callServer(
       'draftAllocation',
