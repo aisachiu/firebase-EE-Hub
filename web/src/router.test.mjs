@@ -143,6 +143,43 @@ test('staff keep Resources and do not see the student views in the tab bar', asy
   assert.equal(router.pathFromState(appState), '/resources');
 });
 
+test('server settings open the Server admin panel', async () => {
+  installWindow();
+  const router = await import('./router.js');
+  const user = { role: 'staff', permissions: { canAdmin: true, isAdmin: true } };
+  const appState = { user: user, actingAs: 'coordinator', section: '', view: '', studentFocus: '', adminEntity: '', staffPane: '' };
+  router.applyRoute(router.matchPath('/admin/server'), appState);
+  assert.equal(appState.section, 'admin');
+  assert.equal(appState.adminEntity, 'serverSettings');
+  assert.equal(router.pathFromState(appState), '/admin/server');
+  assert.equal(router.titleForState(appState), 'Server · EE Hub');
+});
+
+test('maintenance mode sends non-admins to /maintenance and lets coordinators through', async () => {
+  installWindow();
+  const router = await import('./router.js');
+  const on = { loaded: true, maintenanceMode: true, maintenanceNote: 'Back soon.' };
+  const off = { loaded: true, maintenanceMode: false, maintenanceNote: '' };
+  const student = { role: 'student', permissions: {} };
+  const supervisor = { role: 'staff', permissions: { isSupervisor: true, canAdmin: false, isAdmin: false } };
+  const hod = { role: 'staff', permissions: { isHOD: true, canAdmin: false, isAdmin: false } };
+  const coordinator = { role: 'staff', permissions: { canAdmin: true, isAdmin: false, isCoordinator: true } };
+  const admin = { role: 'staff', permissions: { canAdmin: true, isAdmin: true } };
+  assert.equal(router.maintenanceTarget({ loaded: false, maintenanceMode: true }, student, '/my-ee'), '');
+  assert.equal(router.maintenanceTarget(on, student, '/my-ee'), '/maintenance');
+  assert.equal(router.maintenanceTarget(on, student, '/maintenance'), '');
+  assert.equal(router.maintenanceTarget(on, supervisor, '/my-students'), '/maintenance');
+  assert.equal(router.maintenanceTarget(on, hod, '/allocation/hod'), '/maintenance');
+  assert.equal(router.maintenanceTarget(on, null, '/'), '/maintenance');
+  assert.equal(router.maintenanceTarget(on, coordinator, '/admin/server'), '');
+  assert.equal(router.maintenanceTarget(on, admin, '/maintenance'), '/');
+  assert.equal(router.maintenanceTarget(off, student, '/maintenance'), '/');
+  assert.equal(router.maintenanceTarget(off, coordinator, '/maintenance'), '/');
+  assert.equal(router.maintenanceTarget(off, student, '/resources'), '');
+  assert.equal(router.isHubAdmin(coordinator), true);
+  assert.equal(router.isHubAdmin(supervisor), false);
+});
+
 test('a head of department opens Allocation on the department view', async () => {
   installWindow();
   const router = await import('./router.js');

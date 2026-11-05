@@ -1,3 +1,4 @@
+import { maintenancePageHtml } from './maintenance.js';
 import { paintTabDot, setShellRenderer } from './navigation.js';
 import { callServer, paintRequestIndicator } from './shared/api.js';
 import { rememberOpeningMessages } from './shared/desk.js';
@@ -6,44 +7,157 @@ import { ensureHeaderCohorts, headerCohortOptions, replaceHeaderCohort } from '.
 import { escapeHtml } from './shared/html.js';
 import { loadingLine, rememberQuotes } from './shared/loading.js';
 import { advanceScene } from './shared/scene.js';
+import { emptyServerSettings, serverSettingsFromDoc } from './shared/serverSettings.js';
 import { closeOpenMemberEditor, hideListJourneyTip } from './shared/sessionChrome.js';
 import { actingAsOptions } from './shared/staffContext.js';
 import { state } from './shared/state.js';
 import { staffStudentDrawersHtml } from './shared/studentDrawers.js';
 import { docChipMarkup } from './shared/docChip.js';
-import { applyLocation, confirmProvisioningLeave, fallbackSection, installHistory, requestPush, sectionTabs, syncHistory } from './router.js';
+import { applyLocation, confirmProvisioningLeave, fallbackSection, installHistory, isHubAdmin, maintenanceTarget, normalizePath, requestPush, sectionTabs, syncHistory } from './router.js';
 
 export let booted = false;
+let authSettled = false;
+let showingMaintenance = false;
 
 export function start() {
-  installHistory(function() { renderShell(); });
+  installHistory(function() { enter(); });
+  window.eeOnAuth = onAuth;
+  window.eeOnServerSettings = onServerSettings;
+  window.eeOnServerSettingsError = function() {
+    if (state.serverSettings && state.serverSettings.loaded) return;
+    onServerSettings(null);
+  };
+  if (window.eeServerSettingsStatus === 'ready') onServerSettings(window.eeServerSettingsData || {});
+  else if (window.eeServerSettingsStatus === 'error') window.eeOnServerSettingsError();
   const ready = window.eeAuthReady || Promise.resolve(window.eeUser || null);
-  ready.then(function() {
-    window.eeOnAuth = function(user) {
-      if (user && !booted) bootHub();
-    };
-    if (!window.eeUser) showSignIn();
-    else bootHub();
+  ready.then(function(user) {
+    if (authSettled) return;
+    onAuth(user || null);
   });
 }
 
-export function showSignIn() {
+function onAuth(user) {
+  authSettled = true;
+  if (!user) {
+    booted = false;
+    state.user = null;
+    state.serverSettings = emptyServerSettings();
+    showingMaintenance = false;
+    showSignedOut();
+    return;
+  }
+  if (!booted) enter();
+}
+
+function onServerSettings(data) {
+  const previous = state.serverSettings || emptyServerSettings();
+  state.serverSettings = serverSettingsFromDoc(data);
+  if (!previous.loaded) {
+    enter();
+    return;
+  }
+  const modeChanged = !!previous.maintenanceMode !== !!state.serverSettings.maintenanceMode;
+  const noteChanged = (previous.maintenanceNote || '') !== (state.serverSettings.maintenanceNote || '');
+  if (modeChanged && !isHubAdmin(state.user)) enter();
+  else if (showingMaintenance && (modeChanged || noteChanged)) enter();
+}
+
+function enter() {
+  if (!authSettled) return;
+  if (!window.eeUser) {
+    showSignedOut();
+    return;
+  }
+  if (!state.serverSettings || !state.serverSettings.loaded) return;
+  if (!state.user) {
+    bootHub();
+    return;
+  }
+  const path = normalizePath(window.location.pathname);
+  const target = maintenanceTarget(state.serverSettings, state.user, path);
+  if (state.serverSettings.maintenanceMode && !isHubAdmin(state.user)) {
+    if (path !== '/maintenance') replacePath('/maintenance');
+    showMaintenance();
+    return;
+  }
+  if (target === '/') {
+    replacePath('/');
+    applyLocation();
+  }
+  renderShell();
+}
+
+function showSignedOut() {
+  const target = maintenanceTarget(state.serverSettings, null, window.location.pathname);
+  if (target === '/maintenance') {
+    replacePath('/maintenance');
+    showMaintenance();
+    return;
+  }
+  if (target === '/' || normalizePath(window.location.pathname) === '/maintenance') replacePath('/');
+  showSignIn();
+}
+
+function replacePath(path) {
+  if (window.location.pathname === path && !window.location.search) return;
+  window.history.replaceState({ eeHub: path }, '', path);
+}
+
+function clearPageChrome() {
+  const body = document.body;
+  if (!body || !body.classList) return;
+  ['ee-rotary', 'has-journey', 'journey-open', 'has-notes', 'notes-open', 'student-drawers', 'has-alloc-drawer', 'alloc-drawer-open'].forEach(function(name) {
+    body.classList.remove(name);
+  });
+}
+
+function signInControlsHtml() {
   const demos = window.eeDemoAccounts || [];
   const demoHtml = demos.length
     ? '<div class="toolbar">' + demos.map(function(account) {
         return '<button type="button" class="button secondary" data-demo="' + escapeHtml(account.email) + '">' + escapeHtml(account.label) + '</button>';
       }).join('') + '</div><p class="muted">These demo accounts exist only when the local emulators are running.</p>'
     : '';
-  document.title = 'Sign in · EE Hub';
-  document.getElementById('app').innerHTML = '<div class="shell"><p class="eyebrow">VSA EE Hub</p><h1>Sign in</h1><p class="lede">Use your school Google account. Your email must already be on the staff or student list.</p><p><button type="button" class="button" id="google-sign-in">Sign in with Google</button></p>' + demoHtml + '</div>';
-  document.getElementById('google-sign-in').addEventListener('click', function() {
+  return '<p><button type="button" class="button" id="google-sign-in">Sign in with Google</button></p>' + demoHtml;
+}
+
+function bindSignInControls() {
+  const button = document.getElementById('google-sign-in');
+  if (button) button.addEventListener('click', function() {
     window.eeSignIn().catch(function(error) { showFatal('Sign-in failed', error.message || 'Google sign-in did not complete.'); });
   });
-  document.querySelectorAll('[data-demo]').forEach(function(button) {
-    button.addEventListener('click', function() {
-      window.eeSignInDemo(button.dataset.demo).catch(function(error) { showFatal('Sign-in failed', error.message || 'Demo sign-in did not complete.'); });
+  document.querySelectorAll('[data-demo]').forEach(function(demoButton) {
+    demoButton.addEventListener('click', function() {
+      window.eeSignInDemo(demoButton.dataset.demo).catch(function(error) { showFatal('Sign-in failed', error.message || 'Demo sign-in did not complete.'); });
     });
   });
+}
+
+export function showSignIn() {
+  showingMaintenance = false;
+  document.title = 'Sign in · EE Hub';
+  document.getElementById('app').innerHTML = '<div class="shell"><p class="eyebrow">VSA EE Hub</p><h1>Sign in</h1><p class="lede">Use your school Google account. Your email must already be on the staff or student list.</p>' + signInControlsHtml() + '</div>';
+  bindSignInControls();
+}
+
+export function showMaintenance() {
+  showingMaintenance = true;
+  clearPageChrome();
+  document.title = 'Maintenance · EE Hub';
+  const signedIn = !!window.eeUser;
+  const actions = signedIn
+    ? '<p><button type="button" class="button secondary" id="maintenance-sign-out">Sign out</button></p>'
+    : signInControlsHtml();
+  document.getElementById('app').innerHTML = maintenancePageHtml(state.serverSettings, actions);
+  if (signedIn) {
+    const signOut = document.getElementById('maintenance-sign-out');
+    if (signOut) signOut.addEventListener('click', function() {
+      const done = window.eeSignOut ? window.eeSignOut() : Promise.resolve();
+      done.then(function() { window.location.reload(); });
+    });
+    return;
+  }
+  bindSignInControls();
 }
 
 export function bootHub() {
@@ -65,7 +179,7 @@ export function bootHub() {
     else if (state.user.permissions && state.user.permissions.isLead) state.actingAs = 'lead';
     else state.actingAs = 'staff';
     applyLocation();
-    renderShell();
+    enter();
   }).catch(function(error) {
     booted = false;
     showFatal('Unable to start', error.message || 'The application could not reach the EE Hub.');
@@ -141,6 +255,7 @@ function bindNotesChrome(notesMod) {
 }
 
 export function renderShell() {
+  showingMaintenance = false;
   const renderId = ++shellRender;
   closeOpenMemberEditor();
   hideListJourneyTip();

@@ -869,6 +869,43 @@ test('backfill copies draft tokens into empty selected subjects once', async () 
   assert.equal(again.writing, 0);
 });
 
+test('selecting and clearing a subject is recorded in the allocation audit log', async () => {
+  const app = appFor();
+  await seed(app);
+  const store = app.store as unknown as ReturnType<typeof memory>;
+  await store.set(COLLECTIONS.subjects, 'his', { 'Subject ID': 'his', Name: 'History', Active: true });
+  await store.set(COLLECTIONS.subjects, 'bio', { 'Subject ID': 'bio', Name: 'Biology', Active: true });
+  const selected = await setAllocationSubject(app, '2026', JANE, 'history');
+  assert.equal(selected.selectedSubject, 'History');
+  const picked = (await store.listAllocationAudits('2026')).find((row) => row.action === 'Selected subject' && row.studentId === JANE);
+  assert.equal(picked?.subject, 'History');
+  assert.equal(picked?.beforeSelectedSubject, '');
+  await setAllocationSubject(app, '2026', JANE, 'History');
+  assert.equal((await store.listAllocationAudits('2026')).filter((row) => row.action === 'Selected subject').length, 1);
+  await store.setWorkspace('2026', JANE, {
+    ...(await store.getWorkspace('2026', JANE) || {}),
+    suggestedStaffId: SMITH,
+    suggestedSubject: 'History',
+  });
+  const cleared = await setAllocationSubject(app, '2026', JANE, '');
+  assert.equal(cleared.selectedSubject, '');
+  assert.equal(cleared.suggestedStaffId, '');
+  const clearLog = (await store.listAllocationAudits('2026')).find((row) => row.action === 'Cleared subject' && row.studentId === JANE);
+  assert.equal(clearLog?.subject, 'History');
+  assert.equal(clearLog?.beforeSuggestedStaffId, SMITH);
+  await undoAllocationAudit(app, '2026', textId(clearLog));
+  const restored = await store.getWorkspace('2026', JANE);
+  assert.equal(restored?.selectedSubject, 'History');
+  assert.equal(restored?.suggestedStaffId, SMITH);
+  assert.equal(restored?.suggestedSubject, 'History');
+  await applyAllocationIngest(app, '2026', SHEET, 'tokens', { workbook: workbook([tokenGrid]) });
+  await draftAllocation(app, '2026', JANE, SMITH, 'History');
+  await assert.rejects(setAllocationSubject(app, '2026', JANE, 'Biology'), /assigned token/);
+  await undoAllocationAudit(app, '2026', textId(picked));
+  assert.equal((await store.getWorkspace('2026', JANE))?.selectedSubject, '');
+  assert.equal((await app.store.listTokens('2026')).some((token) => token.allocatedTo === JANE), false);
+});
+
 function textId(row: Doc | undefined): string {
   return String(row?.id || '');
 }
