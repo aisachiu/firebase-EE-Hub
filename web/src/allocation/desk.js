@@ -268,6 +268,16 @@ export function allocationDashboardMarkup(desk) {
     const exhausted = !(Number(person.available) > 0);
     return `<option value="${escapeHtml(person.staffId)}"${exhausted ? ' disabled class="alloc-teacher-empty"' : ''}>${escapeHtml(allocationSupervisorLabel(person))}${exhausted ? ' (0 remaining)' : ''}</option>`;
   }).join('');
+  const subjectNames = new Map();
+  subjectCatalogue(desk).concat(allocationSelectedSubjectOptions(desk)).forEach(function(subject) {
+    const name = typeof subject === 'string' ? subject : subject.name;
+    if (name && !subjectNames.has(name.toLowerCase())) subjectNames.set(name.toLowerCase(), name);
+  });
+  const subjectOptions = Array.from(subjectNames.values()).sort(function(left, right) {
+    return left.localeCompare(right, undefined, { sensitivity: 'base' });
+  }).map(function(name) {
+    return `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`;
+  }).join('');
   const counts = allocationDashboardCounts(desk);
   const extents = {};
   columns.forEach(function(column) {
@@ -280,11 +290,13 @@ export function allocationDashboardMarkup(desk) {
   const allSelected = students.length > 0 && students.every(function(student) { return state.allocationSelected.indexOf(student.studentId) >= 0; });
   const batchAction = `<div class="alloc-batch">
         <span>Apply to selected</span>
-        <select id="alloc-batch-supervisor"><option value="">Select supervisor...</option>${teacherOptions}</select>
-        <button type="button" class="button" id="alloc-batch-assign">Assign</button>
-        <button type="button" class="button" id="alloc-batch-approve">Apply all suggested as supervisors to selected</button>
-        <button type="button" class="button" id="alloc-batch-publish">Publish</button>
-        <button type="button" class="button secondary" id="alloc-batch-unpublish" title="Send published allocations back to draft">Unpublish</button>
+        <select id="alloc-batch-subject" aria-label="Subject to apply"><option value="">Select subject...</option><option value="__no_subject__">[no subject]</option>${subjectOptions}</select>
+        <button type="button" class="button" id="alloc-batch-apply-subject">Apply Subject</button>
+        <button type="button" class="button" id="alloc-batch-approve">Assign From Suggestions</button>
+        <select id="alloc-batch-supervisor" aria-label="Teacher token"><option value="">Select teacher token...</option><option value="__no_supervisor__">[no supervisor]</option>${teacherOptions}</select>
+        <button type="button" class="button" id="alloc-batch-assign">Assign Supervisor</button>
+        <select id="alloc-batch-publication-action" aria-label="Publish action"><option value="publish">Publish</option><option value="unpublish">Unpublish</option></select>
+        <button type="button" class="button secondary" id="alloc-batch-publication">Publish</button>
         <span class="muted">${state.allocationSelected.length} selected</span>
       </div>`;
   const sortOption = function(key, label) {
@@ -331,7 +343,7 @@ export function allocationDashboardMarkup(desk) {
         ${allocationSelectedSubjectFilterMarkup(desk)}
         ${allocationTeacherFilterMarkup(desk)}
         ${allocationCustomFilterMarkup(desk)}
-        <div class="alloc-filter-actions"><button type="button" class="button" id="alloc-apply-filters">Apply</button><button type="button" class="button secondary" id="alloc-clear-filters">Clear filters</button></div>
+        <div class="alloc-filter-actions"><button type="button" class="button secondary" id="alloc-clear-filters">Clear filters</button></div>
       </div>
       `)}
       <div class="alloc-search"><label for="alloc-student-search">Search students</label><input id="alloc-student-search" type="search" value="${escapeHtml(state.allocationQuery || '')}" placeholder="Name or student email" autocomplete="off" aria-label="Search students by name or email"></div>
@@ -760,6 +772,7 @@ function allocationFiltersNarrow() {
   if (state.allocationStatus && state.allocationStatus !== 'all') return true;
   if (state.allocationNeedSupport === 'yes') return true;
   if (state.allocationFlaggedFilter === 'yes') return true;
+  if (String(state.allocationQuery || '').trim()) return true;
   if ((state.allocationSupportFlags || []).length) return true;
   if ((state.allocationSubjectFilter || []).length) return true;
   if ((state.allocationSelectedSubjectFilter || []).length) return true;
@@ -789,7 +802,7 @@ export function commitAllocationFilterDraft(desk) {
     return null;
   }
   const ids = (desk.students || []).filter(function(student) {
-    return allocationStudentMatchesFilters(student, desk);
+    return allocationQueryMatches(student, state.allocationQuery) && allocationStudentMatchesFilters(student, desk);
   }).map(function(student) { return student.studentId; });
   state.allocationFilterSnapshot = ids;
   return ids;
@@ -1840,11 +1853,10 @@ function hodSuggestOptions(student, desk) {
       subject: subject,
       tokens: tokens,
       suggestions: suggestions,
-      exceptStudentId: student.studentId,
     });
     const selected = String(person.staffId).toLowerCase() === String(student.suggestedStaffId || '').toLowerCase();
     const disabled = !selected && (!capacity.eligible || capacity.remaining <= 0);
-    const label = (person.displayName || person.staffId) + ' (' + capacity.remaining + ' suggestable)';
+    const label = (person.displayName || person.staffId) + ' (' + capacity.held + '/' + capacity.open + ')';
     return `<option value="${escapeHtml(person.staffId)}"${disabled ? ' disabled' : ''}${selected ? ' selected' : ''}>${escapeHtml(label)}</option>`;
   }).join('');
 }
@@ -2116,17 +2128,17 @@ export function bindAllocation(target, desk) {
   const statusFilter = document.getElementById('alloc-status');
   if (statusFilter) statusFilter.addEventListener('change', function() {
     ensureFilterDraft().status = statusFilter.value || 'all';
-    paintAllocation();
+    applyAllocationFilters();
   });
   const needSupportFilter = document.getElementById('alloc-need-support');
   if (needSupportFilter) needSupportFilter.addEventListener('change', function() {
     ensureFilterDraft().needSupport = needSupportFilter.value === 'yes' ? 'yes' : 'all';
-    paintAllocation();
+    applyAllocationFilters();
   });
   const flaggedFilter = document.getElementById('alloc-flagged-filter');
   if (flaggedFilter) flaggedFilter.addEventListener('change', function() {
     ensureFilterDraft().flagged = flaggedFilter.value === 'yes' ? 'yes' : 'all';
-    paintAllocation();
+    applyAllocationFilters();
   });
   target.querySelectorAll('[data-alloc-drawer-sort]').forEach(function(button) {
     button.addEventListener('click', function() {
@@ -2144,7 +2156,7 @@ export function bindAllocation(target, desk) {
     button.addEventListener('click', function() {
       const draft = ensureFilterDraft();
       draft.subject = toggleNameFilter(draft.subject, button.getAttribute('data-alloc-subject-filter') || '');
-      paintAllocation();
+      applyAllocationFilters();
     });
   });
   target.querySelectorAll('[data-alloc-inter-subject]').forEach(function(select) {
@@ -2172,7 +2184,7 @@ export function bindAllocation(target, desk) {
     button.addEventListener('click', function() {
       const draft = ensureFilterDraft();
       draft.selected = toggleNameFilter(draft.selected, button.getAttribute('data-alloc-selected-filter') || '');
-      paintAllocation();
+      applyAllocationFilters();
     });
   });
   target.querySelectorAll('[data-alloc-teacher-filter]').forEach(function(button) {
@@ -2187,14 +2199,14 @@ export function bindAllocation(target, desk) {
         else current.push(value);
         draft.teacher = current;
       }
-      paintAllocation();
+      applyAllocationFilters();
     });
   });
   target.querySelectorAll('[data-alloc-flag-filter]').forEach(function(button) {
     button.addEventListener('click', function() {
       const draft = ensureFilterDraft();
       draft.supportFlags = toggleNameFilter(draft.supportFlags, button.getAttribute('data-alloc-flag-filter') || '');
-      paintAllocation();
+      applyAllocationFilters();
     });
   });
   target.querySelectorAll('[data-alloc-custom-value]').forEach(function(button) {
@@ -2243,7 +2255,7 @@ export function bindAllocation(target, desk) {
       else delete filters[key];
       draft.custom = filters;
       state.allocationCustomOpen = key;
-      paintAllocation();
+      applyAllocationFilters();
       refocusAllocationControl('data-alloc-custom-query', key, null);
     });
   });
@@ -2251,11 +2263,9 @@ export function bindAllocation(target, desk) {
   if (studentSearch) studentSearch.addEventListener('input', function() {
     const caret = studentSearch.selectionStart;
     state.allocationQuery = studentSearch.value;
-    paintAllocation();
+    applyAllocationFilters();
     refocusAllocationControl('id', 'alloc-student-search', caret);
   });
-  const applyFilters = document.getElementById('alloc-apply-filters');
-  if (applyFilters) applyFilters.addEventListener('click', applyAllocationFilters);
   const clearFilters = document.getElementById('alloc-clear-filters');
   if (clearFilters) clearFilters.addEventListener('click', function() {
     resetAllocationFilters();
@@ -2335,6 +2345,11 @@ export function bindAllocation(target, desk) {
   if (batch) batch.addEventListener('click', assignAllocationBatch);
   const approveBatch = document.getElementById('alloc-batch-approve');
   if (approveBatch) approveBatch.addEventListener('click', approveSuggestedBatch);
+  const batchSubject = document.getElementById('alloc-batch-apply-subject');
+  if (batchSubject) batchSubject.addEventListener('click', function() {
+    const select = document.getElementById('alloc-batch-subject');
+    if (select) applyAllocationSubjectBatch(select.value);
+  });
   const hodDepartment = document.getElementById('alloc-hod-department');
   if (hodDepartment) hodDepartment.addEventListener('change', function() {
     state.allocationHodDepartment = hodDepartment.value;
@@ -2378,10 +2393,17 @@ export function bindAllocation(target, desk) {
       queueSuggestion(student, select.value);
     });
   });
-  const publishSelected = document.getElementById('alloc-batch-publish');
-  if (publishSelected) publishSelected.addEventListener('click', publishSelectedAllocations);
-  const unpublishSelected = document.getElementById('alloc-batch-unpublish');
-  if (unpublishSelected) unpublishSelected.addEventListener('click', unpublishSelectedAllocations);
+  const publicationAction = document.getElementById('alloc-batch-publication-action');
+  const publicationButton = document.getElementById('alloc-batch-publication');
+  if (publicationAction && publicationButton) {
+    publicationAction.addEventListener('change', function() {
+      publicationButton.textContent = publicationAction.value === 'unpublish' ? 'Unpublish' : 'Publish';
+    });
+    publicationButton.addEventListener('click', function() {
+      if (publicationAction.value === 'unpublish') unpublishSelectedAllocations();
+      else publishSelectedAllocations();
+    });
+  }
   target.querySelectorAll('[data-alloc-subject]').forEach(function(box) {
     box.addEventListener('click', function(event) {
       event.preventDefault();
@@ -2827,8 +2849,12 @@ function approveAllocationSuggestionRow(student) {
 
 export function assignAllocationBatch() {
   const staffId = document.getElementById('alloc-batch-supervisor').value;
-  if (!staffId) { showError(new Error('Choose a supervisor.')); return; }
   if (!state.allocationSelected.length) { showError(new Error('Select at least one student.')); return; }
+  if (staffId === '__no_supervisor__') {
+    clearAllocationSupervisorBatch();
+    return;
+  }
+  if (!staffId) { showError(new Error('Choose a teacher token.')); return; }
   const subjects = {};
   state.allocationSelected.forEach(function(id) {
     const student = ((state.allocationDesk && state.allocationDesk.students) || []).find(function(item) { return item.studentId === id; });
@@ -2843,6 +2869,68 @@ export function assignAllocationBatch() {
     state.allocationSelected = [];
     loadAllocation();
   }).catch(showError);
+}
+
+function completeAllocationBatch(ids, results, successMessage) {
+  const failedIds = new Set();
+  const failures = [];
+  let succeeded = 0;
+  results.forEach(function(result, index) {
+    if (result.status === 'fulfilled') {
+      succeeded += 1;
+      return;
+    }
+    const id = ids[index];
+    failedIds.add(id);
+    failures.push(id + ': ' + (result.reason && result.reason.message ? result.reason.message : String(result.reason)));
+  });
+  state.allocationSelected = ids.filter(function(id) { return failedIds.has(id); });
+  if (succeeded) showSuccess(successMessage(succeeded));
+  if (failures.length) showError(new Error(failures.join('\n')));
+  loadAllocation();
+}
+
+export function applyAllocationSubjectBatch(value) {
+  if (!state.allocationSelected.length) { showError(new Error('Select at least one student.')); return; }
+  if (!value) { showError(new Error('Choose a subject or [no subject].')); return; }
+  const subject = value === '__no_subject__' ? '' : value;
+  const ids = state.allocationSelected.slice();
+  const results = Promise.allSettled(ids.map(function(studentId) {
+    return callServer('setAllocationSubject', state.cohortId, studentId, subject);
+  }));
+  results.then(function(settled) {
+    completeAllocationBatch(ids, settled, function(count) {
+      return 'Applied subject to ' + count + ' student' + (count === 1 ? '' : 's') + '.';
+    });
+  });
+}
+
+function clearAllocationSupervisorBatch() {
+  const students = selectedAllocationRows();
+  if (!students.length) { showError(new Error('Select at least one student.')); return; }
+  const ids = students.map(function(student) { return student.studentId; });
+  const results = Promise.allSettled(students.map(function(student) {
+    const subject = student.token && student.token.assignedSubject
+      ? student.token.assignedSubject
+      : (student.selectedSubject || '');
+    const interdisciplinarySubject = student.token && student.token.interdisciplinarySubject
+      ? student.token.interdisciplinarySubject
+      : '';
+    return callServer(
+      'draftAllocation',
+      state.cohortId,
+      student.studentId,
+      '',
+      subject,
+      allocationInterdisciplinaryOn(student),
+      interdisciplinarySubject,
+    );
+  }));
+  results.then(function(settled) {
+    completeAllocationBatch(ids, settled, function(count) {
+      return 'Cleared supervisor for ' + count + ' student' + (count === 1 ? '' : 's') + '.';
+    });
+  });
 }
 
 export function approveSuggestedBatch() {
@@ -3437,9 +3525,8 @@ export function allocationStudentMatchesFilters(student, desk) {
 export function visibleAllocationStudents(desk) {
   const snapshot = state.allocationFilterSnapshot;
   const rows = (desk.students || []).filter(function(student) {
-    if (!allocationQueryMatches(student, state.allocationQuery)) return false;
     if (Array.isArray(snapshot)) return snapshot.indexOf(student.studentId) >= 0;
-    return allocationStudentMatchesFilters(student, desk);
+    return allocationQueryMatches(student, state.allocationQuery) && allocationStudentMatchesFilters(student, desk);
   });
   rows.sort(function(left, right) { return left.sortName.localeCompare(right.sortName); });
   return sortedRows('alloc-desk', rows, function(student, key) { return allocationRank(student, key); });
