@@ -57,6 +57,7 @@ import {
   logAllocationDrafts,
   logCreatedTokens,
   logRemovedToken,
+  logSelectedSubject,
   logTokenWrites,
   logUpdatedToken,
   readAllocationAudits,
@@ -453,9 +454,18 @@ export async function setAllocationSubject(app: App, cohortId: unknown, studentI
   return audited(app, user, 'SET_ALLOCATION_SUBJECT', { cohortId: cohort.id, studentId: email }, async () => {
     await requireActiveMember(app, cohort.id, email);
     const active = activeSubjectNamesFrom(await app.store.list(COLLECTIONS.subjects));
-    const canonical = canonicalSubjectName(subject, active);
+    const raw = text(subject).trim();
+    const canonical = raw ? canonicalSubjectName(subject, active) : '';
     const existing = workspaceFromDoc(await app.store.getWorkspace(cohort.id, email) || {}, email);
-    const suggestionMatches = !existing.suggestedSubject || existing.suggestedSubject.toLowerCase() === canonical.toLowerCase();
+    const tokens = tokensFrom(await app.store.listTokens(cohort.id), cohort.id);
+    const held = tokens.find((token) => token.allocatedTo === email && token.status !== 'available');
+    if (held?.status === 'committed') throw new HubError('This allocation is published. Unpublish it before changing the subject.');
+    if (held) throw new HubError('This student has an assigned token. Clear the token before changing the subject.');
+    const before = text(existing.selectedSubject);
+    if (before.toLowerCase() === canonical.toLowerCase()) {
+      return { studentId: email, selectedSubject: before, suggestedStaffId: existing.suggestedStaffId, suggestedSubject: existing.suggestedSubject };
+    }
+    const suggestionMatches = canonical !== '' && (!existing.suggestedSubject || existing.suggestedSubject.toLowerCase() === canonical.toLowerCase());
     const next = {
       ...existing,
       studentId: email,
@@ -465,6 +475,13 @@ export async function setAllocationSubject(app: App, cohortId: unknown, studentI
       updatedAt: nowIso(),
     };
     await app.store.setWorkspace(cohort.id, email, next);
+    await logSelectedSubject(app, user, cohort.id, {
+      studentId: email,
+      before,
+      after: canonical,
+      beforeSuggestedStaffId: existing.suggestedStaffId,
+      beforeSuggestedSubject: existing.suggestedSubject,
+    });
     return { studentId: email, selectedSubject: canonical, suggestedStaffId: next.suggestedStaffId, suggestedSubject: next.suggestedSubject };
   });
 }
