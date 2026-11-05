@@ -295,7 +295,7 @@ test('publish writes drafts and clears a released supervisor', () => {
   assert.equal(publishedAllocationSubject('  ', { choice1: 'Biology' }, ''), '');
 });
 
-test('the desk marks first and second choice, HL and SL subjects, and support flags from the saved columns', () => {
+test('the desk marks first and second choice, their live-sheet scores, HL and SL subjects, and support flags', () => {
   const settings = mergeDetected(emptySettings(), ['choice1', 'choice2', 'interdisciplinary'], ['Y10 GPA', 'HL', 'Academic Flag']);
   settings.hlColumn = 'HL';
   settings.supportColumn = 'Academic Flag';
@@ -307,7 +307,7 @@ test('the desk marks first and second choice, HL and SL subjects, and support fl
     ],
     workspaces: [{
       studentId: JANE,
-      subjectChoices: { choice1: 'History', choice2: 'Eng Lit', interdisciplinary: true },
+      subjectChoices: { choice1: 'History', choice2: 'Eng Lit', choice1_score: 'A-', choice2_score: 87.5, interdisciplinary: true },
       dynamicData: { 'Y10 GPA': 3.4, HL: 'Bio, Chem', 'Academic Flag': 'Needs Support' },
       pendingClear: false,
       updatedAt: '',
@@ -333,6 +333,8 @@ test('the desk marks first and second choice, HL and SL subjects, and support fl
   assert.equal(diplomaLevelFlag('History', { Subjects: 'Biology (HL), History (SL), Mathematics SL' }, ''), 'sl');
   assert.equal(diplomaLevelFlag('Art', { Subjects: 'Biology (HL), History (SL), Mathematics SL' }, ''), 'miss');
   assert.equal(desk.students[0].flags.needsSupport, true);
+  assert.equal(desk.students[0].choices.primaryScore, 'A-');
+  assert.equal(desk.students[0].choices.secondaryScore, '87.5');
   assert.equal(desk.students[0].choices.interdisciplinary, true);
   assert.equal(desk.supervisors[0].displayName, 'Mr. Smith');
   assert.equal(desk.supervisors[0].used, 1);
@@ -357,6 +359,8 @@ test('the desk marks first and second choice, HL and SL subjects, and support fl
     ],
   });
   assert.equal(saved.primaryChoiceKey, 'choice1');
+  assert.equal(saved.primaryChoiceScoreKey, 'choice1_score');
+  assert.equal(saved.secondaryChoiceScoreKey, 'choice2_score');
   assert.equal(saved.secondaryChoiceKey, '');
   assert.equal(saved.columns.find((column) => column.key === 'Y10 GPA')?.sortable, true);
   assert.equal(saved.columns.find((column) => column.key === 'Y10 GPA')?.colorScale, false);
@@ -700,11 +704,11 @@ test('a draft is refused when the EE subject does not match the supervisor token
   assert.deepEqual(saved.columnMappings, emptyColumnMappings());
 });
 
-test('live sheet mappings merge choice data onto static auxiliary columns', () => {
-  const headers = ['Student Number', 'Student Email', 'First choice', 'HL subjects', 'Mentor note'];
+test('live sheet mappings merge choice data and scores onto static auxiliary columns', () => {
+  const headers = ['Student Number', 'Student Email', 'First choice', 'Choice 1 Score', 'Choice 2 Score', 'HL subjects', 'Mentor note'];
   const mappings = columnMappingsFrom({
     core: { studentNumber: 'Student Number', studentEmail: 'Student Email' },
-    subjectChoice: { primary: 'First choice' },
+    subjectChoice: { primary: 'First choice', primaryScore: 'Choice 1 Score', secondaryScore: 'Choice 2 Score' },
     dashboard: { hl: 'HL subjects' },
   });
   assert.match(liveLinkProblems(emptyColumnMappings(), headers)[0], /Student Number or Student Email/);
@@ -716,9 +720,9 @@ test('live sheet mappings merge choice data onto static auxiliary columns', () =
     title: 'Choices',
     rows: [
       headers,
-      ['20260001', JANE, 'Physics', 'Bio', 'Bring sources'],
+      ['20260001', JANE, 'Physics', 'A-', 87.5, 'Bio', 'Bring sources'],
       ['', '', '', '', ''],
-      ['999', 'missing@vsa.edu', 'Art', '', ''],
+      ['999', 'missing@vsa.edu', 'Art', '', '', '', ''],
     ],
   }, mappings);
   assert.equal(parsed.rows.length, 2);
@@ -727,10 +731,16 @@ test('live sheet mappings merge choice data onto static auxiliary columns', () =
   assert.equal(parsed.rows[0].fields['Mentor note'], 'Bring sources');
   assert.equal(parsed.rows[0].fields['HL subjects'], 'Bio');
   assert.equal(parsed.rows[0].fields['First choice'], 'Physics');
+  assert.equal(parsed.rows[0].primaryScore, 'A-');
+  assert.equal(parsed.rows[0].secondaryScore, 87.5);
   assert.equal(parsed.rows[0].fields['Student Email'], undefined);
   const settings = settingsForLiveLink(emptySettings(), 'https://docs.google.com/spreadsheets/d/abc123_XYZ-000000000000/edit', 'abc123_XYZ-000000000000', 'Choices', mappings, headers);
   assert.equal(liveSheetLinked(settings), true);
   assert.equal(settings.primaryChoiceKey, 'choice1');
+  assert.equal(settings.primaryChoiceScoreKey, 'choice1_score');
+  assert.equal(settings.secondaryChoiceScoreKey, 'choice2_score');
+  assert.ok(settings.detectedChoiceKeys.includes('choice1_score'));
+  assert.ok(settings.detectedChoiceKeys.includes('choice2_score'));
   assert.equal(settings.hlColumn, 'HL subjects');
   assert.equal(settings.sheetName, 'Choices');
   assert.ok(settings.detectedDynamicKeys.includes('Mentor note'));
@@ -754,7 +764,7 @@ test('live sheet mappings merge choice data onto static auxiliary columns', () =
     core: { studentEmail: 'Student Email' },
     subjectChoice: { primary: 'First choice' },
   });
-  const emailRow = parseLiveSheet({ title: 'Choices', rows: [headers, ['', MARK, 'Art', '']] }, emailOnly).rows[0];
+  const emailRow = parseLiveSheet({ title: 'Choices', rows: [headers, ['', MARK, 'Art', '', '', '', '']] }, emailOnly).rows[0];
   assert.equal(resolveLiveStudent(emailRow, index, emailOnly).studentId, MARK);
   const merged = mergeLiveChoiceRow({
     studentId: JANE,
@@ -765,6 +775,8 @@ test('live sheet mappings merge choice data onto static auxiliary columns', () =
   }, parsed.rows[0], settings, JANE, '2026-10-29T00:00:00.000Z');
   assert.equal(merged.subjectChoices.choice1, 'Physics');
   assert.equal(merged.subjectChoices.choice2, 'Eng Lit');
+  assert.equal(merged.subjectChoices.choice1_score, 'A-');
+  assert.equal(merged.subjectChoices.choice2_score, 87.5);
   assert.equal(merged.dynamicData['Y10 GPA'], 'Weak');
   assert.equal(merged.dynamicData['HL subjects'], 'Bio');
   assert.equal(merged.dynamicData['Mentor note'], 'Bring sources');
@@ -864,6 +876,8 @@ test('workspace fields round-trip and survive choice merges', () => {
     studentEmail: '',
     primary: 'Physics',
     secondary: '',
+    primaryScore: '',
+    secondaryScore: '',
     interdisciplinary: '',
     hl: '',
     support: '',

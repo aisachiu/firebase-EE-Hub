@@ -481,9 +481,9 @@ test('a live sheet link merges choice rows onto static auxiliary data', async ()
     {
       title: 'Choices',
       rows: [
-        ['Student Number', 'Student Email', 'First choice', 'HL subjects', 'Mentor note'],
-        ['20260001', JANE, 'Physics', 'Bio', 'Bring sources'],
-        ['999', 'missing@vsa.edu', 'Art', '', ''],
+        ['Student Number', 'Student Email', 'First choice', 'Choice 1 Score', 'Choice 2 Score', 'HL subjects', 'Mentor note'],
+        ['20260001', JANE, 'Physics', 'A-', 87.5, 'Bio', 'Bring sources'],
+        ['999', 'missing@vsa.edu', 'Art', '', '', '', ''],
       ],
     },
   ]);
@@ -500,14 +500,14 @@ test('a live sheet link merges choice rows onto static auxiliary data', async ()
   assert.deepEqual(tabs.tabs, ['COHORTDATA: 2026', 'Choices']);
   assert.equal(tabs.spreadsheetId, 'abc123_XYZ-000000000000');
   const headers = await getLiveSheetHeaders(app, '2026', { url: SHEET }, 'Choices', { workbook: sheets });
-  assert.deepEqual(headers.headers, ['Student Number', 'Student Email', 'First choice', 'HL subjects', 'Mentor note']);
+  assert.deepEqual(headers.headers, ['Student Number', 'Student Email', 'First choice', 'Choice 1 Score', 'Choice 2 Score', 'HL subjects', 'Mentor note']);
 
   const link = {
     url: SHEET,
     sheetName: 'Choices',
     columnMappings: {
       core: { studentNumber: 'Student Number', studentEmail: 'Student Email' },
-      subjectChoice: { primary: 'First choice', secondary: '', interdisciplinary: '' },
+      subjectChoice: { primary: 'First choice', secondary: '', primaryScore: 'Choice 1 Score', secondaryScore: 'Choice 2 Score', interdisciplinary: '' },
       dashboard: { hl: 'HL subjects', support: '' },
     },
   };
@@ -528,6 +528,8 @@ test('a live sheet link merges choice rows onto static auxiliary data', async ()
   assert.equal(saved.liveSheetTab, 'Choices');
   assert.equal(saved.liveSheetUrl, SHEET);
   assert.equal(saved.columnMappings.subjectChoice.primary, 'First choice');
+  assert.equal(saved.columnMappings.subjectChoice.primaryScore, 'Choice 1 Score');
+  assert.equal(saved.columnMappings.subjectChoice.secondaryScore, 'Choice 2 Score');
   assert.equal(saved.primaryChoiceKey, 'choice1');
   assert.equal(saved.hlColumn, 'HL subjects');
   assert.equal(saved.columns.find((column) => column.key === 'Mentor note')?.source, 'live');
@@ -544,6 +546,8 @@ test('a live sheet link merges choice rows onto static auxiliary data', async ()
   const jane = await app.store.getWorkspace('2026', JANE);
   assert.equal(jane?.subjectChoices.choice1, 'Physics');
   assert.equal(jane?.subjectChoices.choice2, 'Eng Lit');
+  assert.equal(jane?.subjectChoices.choice1_score, 'A-');
+  assert.equal(jane?.subjectChoices.choice2_score, 87.5);
   assert.equal(jane?.dynamicData['Y10 GPA'], 'Weak');
   assert.equal(jane?.dynamicData['HL subjects'], 'Bio');
   assert.equal(jane?.dynamicData['Mentor note'], 'Bring sources');
@@ -576,6 +580,8 @@ test('a live sheet link merges choice rows onto static auxiliary data', async ()
   const afterStatic = await app.store.getWorkspace('2026', JANE);
   assert.equal(afterStatic?.subjectChoices.choice1, 'Physics');
   assert.equal(afterStatic?.subjectChoices.choice2, 'Drama');
+  assert.equal(afterStatic?.subjectChoices.choice1_score, 'A-');
+  assert.equal(afterStatic?.subjectChoices.choice2_score, 87.5);
   assert.equal(afterStatic?.dynamicData['Y10 GPA'], 'Strong');
   assert.equal(afterStatic?.dynamicData['HL subjects'], 'Bio');
   assert.equal(afterStatic?.dynamicData['Mentor note'], 'Bring sources');

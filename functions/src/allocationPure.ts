@@ -54,7 +54,7 @@ export interface ColumnFlag {
 
 export interface LiveColumnMappings {
   core: { studentNumber: string; studentEmail: string };
-  subjectChoice: { primary: string; secondary: string; interdisciplinary: string };
+  subjectChoice: { primary: string; secondary: string; primaryScore: string; secondaryScore: string; interdisciplinary: string };
   dashboard: { hl: string; support: string };
 }
 
@@ -74,7 +74,7 @@ export const LIVE_SYNC_COOLDOWN_MS = 60_000;
 
 export const LIVE_SHEET_GROUPS = [
   { id: 'core', title: 'Core Data Fields', note: 'Map Student Number or Student Email. Live rows merge onto the roster with that primary key.' },
-  { id: 'subjectChoice', title: 'Subject Choice Mapping', note: 'The live sheet is the source of truth for these choices. Other choice keys from a static import stay in place.' },
+  { id: 'subjectChoice', title: 'Subject Choice Mapping', note: 'The live sheet is the source of truth for choices and their scores. Other choice keys from a static import stay in place.' },
   { id: 'dashboard', title: 'Dashboard Fields', note: 'HL match and the support flag are optional. Every other column on this sheet is ingested as a live dashboard field. Toggle those columns under Dashboard Fields.' },
 ] as const;
 
@@ -83,6 +83,8 @@ export const LIVE_SHEET_FIELDS = [
   { group: 'core', key: 'studentEmail', label: 'Student Email', hint: 'primary key' },
   { group: 'subjectChoice', key: 'primary', label: 'Primary choice', hint: 'required' },
   { group: 'subjectChoice', key: 'secondary', label: 'Secondary choice', hint: '' },
+  { group: 'subjectChoice', key: 'primaryScore', label: 'Choice 1 Score', hint: '' },
+  { group: 'subjectChoice', key: 'secondaryScore', label: 'Choice 2 Score', hint: '' },
   { group: 'subjectChoice', key: 'interdisciplinary', label: 'Is Interdisciplinary?', hint: '' },
   { group: 'dashboard', key: 'hl', label: 'HL match', hint: '' },
   { group: 'dashboard', key: 'support', label: 'Support flag', hint: '' },
@@ -91,6 +93,8 @@ export const LIVE_SHEET_FIELDS = [
 export interface AllocationSettings {
   primaryChoiceKey: string;
   secondaryChoiceKey: string;
+  primaryChoiceScoreKey: string;
+  secondaryChoiceScoreKey: string;
   interdisciplinaryKey: string;
   hlColumn: string;
   supportColumn: string;
@@ -197,7 +201,7 @@ export interface DeskStudent {
   requestedSubjects: { name: string; colour: string; shortName?: string }[];
   /** Distinct tags parsed from a comma-separated support flag cell. */
   supportFlags: string[];
-  choices: { primary: string; secondary: string; interdisciplinary: boolean };
+  choices: { primary: string; secondary: string; primaryScore: string; secondaryScore: string; interdisciplinary: boolean };
   /** Coordinator flag stored on the allocation workspace. */
   isFlagged: boolean;
   flagNote: string;
@@ -249,6 +253,8 @@ export function emptySettings(): AllocationSettings {
   return {
     primaryChoiceKey: '',
     secondaryChoiceKey: '',
+    primaryChoiceScoreKey: 'choice1_score',
+    secondaryChoiceScoreKey: 'choice2_score',
     interdisciplinaryKey: '',
     hlColumn: '',
     supportColumn: '',
@@ -271,7 +277,7 @@ export function emptySettings(): AllocationSettings {
 export function emptyColumnMappings(): LiveColumnMappings {
   return {
     core: { studentNumber: '', studentEmail: '' },
-    subjectChoice: { primary: '', secondary: '', interdisciplinary: '' },
+    subjectChoice: { primary: '', secondary: '', primaryScore: '', secondaryScore: '', interdisciplinary: '' },
     dashboard: { hl: '', support: '' },
   };
 }
@@ -1489,6 +1495,8 @@ export function settingsFromDoc(doc: Doc | null): AllocationSettings {
   return {
     primaryChoiceKey: text(doc.primaryChoiceKey),
     secondaryChoiceKey: text(doc.secondaryChoiceKey),
+    primaryChoiceScoreKey: text(doc.primaryChoiceScoreKey) || base.primaryChoiceScoreKey,
+    secondaryChoiceScoreKey: text(doc.secondaryChoiceScoreKey) || base.secondaryChoiceScoreKey,
     interdisciplinaryKey: text(doc.interdisciplinaryKey),
     hlColumn: text(doc.hlColumn),
     supportColumn: text(doc.supportColumn),
@@ -1549,6 +1557,8 @@ export function columnMappingsFrom(value: unknown): LiveColumnMappings {
     subjectChoice: {
       primary: text(source.subjectChoice?.primary),
       secondary: text(source.subjectChoice?.secondary),
+      primaryScore: text(source.subjectChoice?.primaryScore),
+      secondaryScore: text(source.subjectChoice?.secondaryScore),
       interdisciplinary: text(source.subjectChoice?.interdisciplinary),
     },
     dashboard: {
@@ -1599,12 +1609,16 @@ export function settingsForLiveLink(
   };
   if (text(next.columnMappings.subjectChoice.primary) && !next.primaryChoiceKey) next.primaryChoiceKey = 'choice1';
   if (text(next.columnMappings.subjectChoice.secondary) && !next.secondaryChoiceKey) next.secondaryChoiceKey = 'choice2';
+  if (!next.primaryChoiceScoreKey) next.primaryChoiceScoreKey = 'choice1_score';
+  if (!next.secondaryChoiceScoreKey) next.secondaryChoiceScoreKey = 'choice2_score';
   if (text(next.columnMappings.subjectChoice.interdisciplinary) && !next.interdisciplinaryKey) next.interdisciplinaryKey = 'interdisciplinary';
   if (text(next.columnMappings.dashboard.hl)) next.hlColumn = next.columnMappings.dashboard.hl;
   if (text(next.columnMappings.dashboard.support)) next.supportColumn = next.columnMappings.dashboard.support;
   const choiceKeys = new Set(next.detectedChoiceKeys);
   if (text(next.columnMappings.subjectChoice.primary)) choiceKeys.add(next.primaryChoiceKey || 'choice1');
   if (text(next.columnMappings.subjectChoice.secondary)) choiceKeys.add(next.secondaryChoiceKey || 'choice2');
+  if (text(next.columnMappings.subjectChoice.primaryScore)) choiceKeys.add(next.primaryChoiceScoreKey);
+  if (text(next.columnMappings.subjectChoice.secondaryScore)) choiceKeys.add(next.secondaryChoiceScoreKey);
   if (text(next.columnMappings.subjectChoice.interdisciplinary)) choiceKeys.add(next.interdisciplinaryKey || 'interdisciplinary');
   next.detectedChoiceKeys = [...choiceKeys].sort();
   return ingestLiveHeaders(next, headers);
@@ -1711,6 +1725,8 @@ export interface LiveParsedRow {
   studentEmail: string;
   primary: string | number | boolean | '';
   secondary: string | number | boolean | '';
+  primaryScore: string | number | boolean | '';
+  secondaryScore: string | number | boolean | '';
   interdisciplinary: string | number | boolean | '';
   hl: string | number | boolean | '';
   support: string | number | boolean | '';
@@ -1741,6 +1757,8 @@ export function parseLiveSheet(grid: Grid, mappings: LiveColumnMappings): { rows
     studentEmail: mappedColumn(headers, mappings.core.studentEmail),
     primary: mappedColumn(headers, mappings.subjectChoice.primary),
     secondary: mappedColumn(headers, mappings.subjectChoice.secondary),
+    primaryScore: mappedColumn(headers, mappings.subjectChoice.primaryScore),
+    secondaryScore: mappedColumn(headers, mappings.subjectChoice.secondaryScore),
     interdisciplinary: mappedColumn(headers, mappings.subjectChoice.interdisciplinary),
     hl: mappedColumn(headers, mappings.dashboard.hl),
     support: mappedColumn(headers, mappings.dashboard.support),
@@ -1755,6 +1773,8 @@ export function parseLiveSheet(grid: Grid, mappings: LiveColumnMappings): { rows
       studentEmail: columns.studentEmail < 0 ? '' : normalizeEmail(row[columns.studentEmail]),
       primary: cellAt(row, columns.primary),
       secondary: cellAt(row, columns.secondary),
+      primaryScore: cellAt(row, columns.primaryScore),
+      secondaryScore: cellAt(row, columns.secondaryScore),
       interdisciplinary: cellAt(row, columns.interdisciplinary),
       hl: cellAt(row, columns.hl),
       support: cellAt(row, columns.support),
@@ -1815,6 +1835,8 @@ export function mergeLiveChoiceRow(
   const mappings = settings.columnMappings;
   if (text(mappings.subjectChoice.primary)) assignLiveValue(subjectChoices, settings.primaryChoiceKey || 'choice1', row.primary);
   if (text(mappings.subjectChoice.secondary)) assignLiveValue(subjectChoices, settings.secondaryChoiceKey || 'choice2', row.secondary);
+  if (text(mappings.subjectChoice.primaryScore)) assignLiveValue(subjectChoices, settings.primaryChoiceScoreKey || 'choice1_score', row.primaryScore);
+  if (text(mappings.subjectChoice.secondaryScore)) assignLiveValue(subjectChoices, settings.secondaryChoiceScoreKey || 'choice2_score', row.secondaryScore);
   if (text(mappings.subjectChoice.interdisciplinary)) assignLiveValue(subjectChoices, settings.interdisciplinaryKey || 'interdisciplinary', row.interdisciplinary);
   Object.keys(row.fields || {}).forEach((key) => assignLiveValue(dynamicData, key, row.fields[key]));
   if (text(mappings.dashboard.hl)) assignLiveValue(dynamicData, settings.hlColumn || mappings.dashboard.hl, row.hl);
@@ -1848,6 +1870,8 @@ export function settingsAfterWorkspaceIngest(
   const mappings = settings.columnMappings;
   if (text(mappings.subjectChoice.primary)) choices.add(settings.primaryChoiceKey || 'choice1');
   if (text(mappings.subjectChoice.secondary)) choices.add(settings.secondaryChoiceKey || 'choice2');
+  if (text(mappings.subjectChoice.primaryScore)) choices.add(settings.primaryChoiceScoreKey || 'choice1_score');
+  if (text(mappings.subjectChoice.secondaryScore)) choices.add(settings.secondaryChoiceScoreKey || 'choice2_score');
   if (text(mappings.subjectChoice.interdisciplinary)) choices.add(settings.interdisciplinaryKey || 'interdisciplinary');
   if (text(mappings.dashboard.hl) && settings.hlColumn) dynamic.add(settings.hlColumn);
   if (text(mappings.dashboard.support) && settings.supportColumn) dynamic.add(settings.supportColumn);
@@ -1894,6 +1918,8 @@ function mappedLiveHeaders(mappings: LiveColumnMappings): string[] {
     mappings.core.studentEmail,
     mappings.subjectChoice.primary,
     mappings.subjectChoice.secondary,
+    mappings.subjectChoice.primaryScore,
+    mappings.subjectChoice.secondaryScore,
     mappings.subjectChoice.interdisciplinary,
     mappings.dashboard.hl,
     mappings.dashboard.support,
@@ -1905,6 +1931,8 @@ function liveOwnedChoiceKeys(settings: AllocationSettings): string[] {
   const mappings = settings.columnMappings;
   if (text(mappings.subjectChoice.primary)) keys.push(settings.primaryChoiceKey || 'choice1');
   if (text(mappings.subjectChoice.secondary)) keys.push(settings.secondaryChoiceKey || 'choice2');
+  if (text(mappings.subjectChoice.primaryScore)) keys.push(settings.primaryChoiceScoreKey || 'choice1_score');
+  if (text(mappings.subjectChoice.secondaryScore)) keys.push(settings.secondaryChoiceScoreKey || 'choice2_score');
   if (text(mappings.subjectChoice.interdisciplinary)) keys.push(settings.interdisciplinaryKey || 'interdisciplinary');
   return keys;
 }
@@ -2104,6 +2132,8 @@ export function applySavedConfig(current: AllocationSettings, incoming: Doc): Al
     ...current,
     primaryChoiceKey: allowedKey(incoming.primaryChoiceKey, choiceKeys),
     secondaryChoiceKey: allowedKey(incoming.secondaryChoiceKey, choiceKeys),
+    primaryChoiceScoreKey: current.primaryChoiceScoreKey || 'choice1_score',
+    secondaryChoiceScoreKey: current.secondaryChoiceScoreKey || 'choice2_score',
     interdisciplinaryKey: allowedKey(incoming.interdisciplinaryKey, choiceKeys),
     hlColumn: allowedKey(incoming.hlColumn, dynamicKeys),
     supportColumn: allowedKey(incoming.supportColumn, dynamicKeys),
@@ -2461,6 +2491,8 @@ export function buildDesk(input: {
       const choices = {
         primary: choiceText(workspace?.subjectChoices, input.settings.primaryChoiceKey),
         secondary: choiceText(workspace?.subjectChoices, input.settings.secondaryChoiceKey),
+        primaryScore: choiceText(workspace?.subjectChoices, input.settings.primaryChoiceScoreKey),
+        secondaryScore: choiceText(workspace?.subjectChoices, input.settings.secondaryChoiceScoreKey),
         interdisciplinary: interdisciplinaryMarked(choiceSource, input.settings, { ...(workspace?.dynamicData || {}), ...member }),
       };
       const assignedSubject = subjectNamesForLoad(token?.assignedSubject || '', catalogue)[0] || '';

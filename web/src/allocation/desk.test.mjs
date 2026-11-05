@@ -91,6 +91,8 @@ test('allocation desk tags, filter, column order, supervisor cues, and token loa
       students: [],
     });
     assert.match(settingsHtml, /value="drafts"[^>]*checked/);
+    assert.doesNotMatch(settingsHtml, /id="alloc-primary-score"/);
+    assert.doesNotMatch(settingsHtml, /id="alloc-secondary-score"/);
     assert.match(settingsHtml, /id="alloc-backfill-preview"/);
     assert.match(settingsHtml, /Selected Subject/);
     assert.match(deskMod.allocationConfirmCopy('drafts'), /Published tokens stay as they are/);
@@ -107,6 +109,23 @@ test('allocation desk tags, filter, column order, supervisor cues, and token loa
     assert.doesNotMatch(html, /\["Psychology"/);
     assert.match(html, /data-alloc-subject-filter="Psychology"/);
     assert.match(html, /data-alloc-subject-filter="Theater"/);
+    const scoredChoices = deskMod.allocationSubjectChoiceMarkup(student({
+      choices: {
+        primary: '["Psychology","Theater"]',
+        secondary: '',
+        primaryScore: 'A&',
+        secondaryScore: '87.5',
+        interdisciplinary: false,
+      },
+    }), desk());
+    assert.match(scoredChoices, /<span class="alloc-choice-kicker">1:<\/span>/);
+    assert.match(scoredChoices, /Psychology \(A&amp;\)<\/label>/);
+    assert.match(scoredChoices, /<span class="alloc-choice-kicker">2:<\/span>/);
+    assert.match(scoredChoices, /\(87\.5\)/);
+    const unscoredChoices = deskMod.allocationSubjectChoiceMarkup(student({
+      choices: { primary: '["Psychology","Theater"]', secondary: '', primaryScore: '', secondaryScore: '', interdisciplinary: false },
+    }), desk());
+    assert.doesNotMatch(unscoredChoices, /\(\s*\)/);
 
     const row = deskMod.allocationRowMarkup(student({}), supervisors(), [], {});
     const cells = row.split('</td>');
@@ -552,7 +571,7 @@ test('allocation desk tags, filter, column order, supervisor cues, and token loa
     state.allocationLiveUrl = 'https://docs.google.com/spreadsheets/d/abc123_XYZ-000000000000/edit';
     state.allocationLiveTab = 'Choices';
     state.allocationLiveTabs = ['Choices', 'Notes'];
-    state.allocationLiveHeaders = ['Student Email', 'First choice', 'HL subjects'];
+    state.allocationLiveHeaders = ['Student Email', 'First choice', 'Choice 1 Score', 'Choice 2 Score', 'HL subjects'];
     state.allocationLiveDraft = null;
     state.allocationLiveBusy = '';
     const liveDesk = {
@@ -569,7 +588,7 @@ test('allocation desk tags, filter, column order, supervisor cues, and token loa
         liveSheetUrl: state.allocationLiveUrl,
         columnMappings: {
           core: { studentNumber: '', studentEmail: 'Student Email' },
-          subjectChoice: { primary: '', secondary: '', interdisciplinary: '' },
+          subjectChoice: { primary: '', secondary: '', primaryScore: '', secondaryScore: '', interdisciplinary: '' },
           dashboard: { hl: '', support: '' },
         },
       },
@@ -580,13 +599,17 @@ test('allocation desk tags, filter, column order, supervisor cues, and token loa
     const blocked = deskMod.allocationSettingsMarkup(liveDesk);
     assert.match(blocked, /Core Data Fields/);
     assert.match(blocked, /Subject Choice Mapping/);
+    assert.match(blocked, /data-live-map="subjectChoice.primaryScore"/);
+    assert.match(blocked, /Choice 1 Score/);
+    assert.match(blocked, /data-live-map="subjectChoice.secondaryScore"/);
+    assert.match(blocked, /Choice 2 Score/);
     assert.match(blocked, /Dashboard Fields/);
     assert.match(blocked, /id="alloc-live-tab"/);
     assert.match(blocked, /id="alloc-live-save"[^>]*disabled/);
     assert.match(blocked, /Map Primary choice before saving/);
     state.allocationLiveDraft = {
       core: { studentNumber: '', studentEmail: 'Student Email' },
-      subjectChoice: { primary: 'First choice', secondary: '', interdisciplinary: '' },
+      subjectChoice: { primary: 'First choice', secondary: '', primaryScore: 'Choice 1 Score', secondaryScore: 'Choice 2 Score', interdisciplinary: '' },
       dashboard: { hl: '', support: '' },
     };
     const ready = deskMod.allocationSettingsMarkup(liveDesk);
@@ -922,6 +945,64 @@ test('suggestions, department rows, and the HOD drawer', async () => {
     state.allocationLoadView = 'assigned';
     const drawer = deskMod.allocationLoadPanel(hodDesk, supervisors());
     assert.match(drawer, /Suggested taken/);
+  } finally {
+    await server.close();
+  }
+});
+
+test('coordinator token overview summarizes workflow stages and drilldown IDs', async () => {
+  const server = await createServer({ server: { middlewareMode: true }, appType: 'custom', logLevel: 'error' });
+  try {
+    const deskMod = await server.ssrLoadModule('/src/allocation/desk.js');
+    const stateMod = await server.ssrLoadModule('/src/shared/state.js');
+    const state = stateMod.state;
+    state.allocationView = 'dashboard';
+    state.allocationLoadView = 'overview';
+    state.allocationHodStatus = {
+      byDepartment: {
+        humanities: { department: 'Humanities', submitted: true },
+        arts: { department: 'Arts', submitted: false },
+      },
+    };
+    const workflow = desk();
+    workflow.subjects = [
+      { name: 'Psychology', department: 'Humanities' },
+      { name: 'Theater', department: 'Arts' },
+    ];
+    workflow.tokenRows = [
+      { id: 'p1', staffId: 'psy@school.edu', status: 'available', eligibleSubjects: ['Psychology'], studentId: '' },
+      { id: 't1', staffId: 'art@school.edu', status: 'draft', eligibleSubjects: ['Theater'], studentId: 'mark@school.edu', assignedSubject: 'Theater' },
+    ];
+    workflow.students = [
+      student({ selectedSubject: 'Psychology', suggestedStaffId: 'psy@school.edu', suggestedSubject: 'Psychology' }),
+      student({ studentId: 'pat@school.edu', displayName: 'Jones, Pat', sortName: 'jones, pat', selectedSubject: 'Psychology' }),
+      student({ studentId: 'mark@school.edu', displayName: 'Lee, Mark', sortName: 'lee, mark', selectedSubject: 'Theater', token: { staffId: 'art@school.edu', status: 'draft', assignedSubject: 'Theater' } }),
+      student({ studentId: 'sam@school.edu', displayName: 'Smith, Sam', sortName: 'smith, sam' }),
+    ];
+
+    const overview = deskMod.allocationCoordinatorOverview(workflow);
+    assert.deepEqual(overview.subject, { selected: 3, needed: 1 });
+    assert.deepEqual(overview.proposal, { needsProposal: 1, awaitingApproval: 1, stale: 0 });
+    assert.deepEqual(overview.assignment, { drafts: 1, published: 0 });
+    assert.deepEqual(overview.drilldowns['proposal-review'], ['jane@school.edu']);
+    assert.deepEqual(overview.drilldowns['subject-needed'], ['sam@school.edu']);
+    assert.deepEqual(overview.drilldowns['department:Humanities'], ['jane@school.edu', 'pat@school.edu']);
+    assert.equal(overview.departments.find((item) => item.department === 'Humanities').submitted, true);
+    assert.equal(overview.subjects.find((item) => item.subject === 'Psychology').shortfall, 1);
+
+    const html = deskMod.allocationLoadPanel(workflow, supervisors());
+    assert.match(html, /Subject decisions/);
+    assert.match(html, /HOD proposals/);
+    assert.match(html, /Coordinator assignment/);
+    assert.match(html, /Proposal subject changed/);
+    assert.match(html, /over capacity/);
+    assert.match(html, /HOD submitted/);
+
+    state.allocationOverviewDrilldown = {
+      ids: overview.drilldowns['proposal-review'],
+      label: overview.drilldownLabels['proposal-review'],
+    };
+    assert.deepEqual(deskMod.visibleAllocationStudents(workflow).map((item) => item.studentId), ['jane@school.edu']);
   } finally {
     await server.close();
   }
