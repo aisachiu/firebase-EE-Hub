@@ -127,6 +127,32 @@ window.eeWatchCohorts = function(handlers) {
   };
 };
 
+window.eeServerSettingsStatus = 'idle';
+window.eeServerSettingsData = null;
+
+let stopServerWatch = function() {};
+
+function syncServerWatch(user) {
+  stopServerWatch();
+  stopServerWatch = function() {};
+  if (!user) {
+    window.eeServerSettingsStatus = 'signed-out';
+    window.eeServerSettingsData = null;
+    return;
+  }
+  window.eeServerSettingsStatus = 'pending';
+  stopServerWatch = onSnapshot(doc(db, 'settings', 'server'), function(snap) {
+    const data = snap.exists() ? snap.data() : {};
+    window.eeServerSettingsData = data;
+    window.eeServerSettingsStatus = 'ready';
+    if (typeof window.eeOnServerSettings === 'function') window.eeOnServerSettings(data);
+  }, function(error) {
+    console.error('Could not read settings/server.', error);
+    window.eeServerSettingsStatus = 'error';
+    if (typeof window.eeOnServerSettingsError === 'function') window.eeOnServerSettingsError(error);
+  });
+}
+
 window.eeSignIn = function() {
   return signInWithPopup(auth, new GoogleAuthProvider());
 };
@@ -153,6 +179,7 @@ window.eeAuthReady = new Promise(function(resolve) {
 
 onAuthStateChanged(auth, function(user) {
   window.eeUser = user;
+  syncServerWatch(user);
   if (typeof window.eeOnAuth === 'function') window.eeOnAuth(user);
 });
 

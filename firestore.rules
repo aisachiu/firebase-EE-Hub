@@ -78,6 +78,15 @@ service cloud.firestore {
       }
     }
 
+    // Maintenance mode and the daily-job switches. Any signed-in client may
+    // listen so the app can redirect before painting a page. Writes stay on
+    // Cloud Functions, which check coordinator access and the note length.
+    // The document stores no email addresses.
+    match /settings/server {
+      allow read: if signedIn();
+      allow write: if false;
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }

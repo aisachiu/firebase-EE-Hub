@@ -15,10 +15,19 @@ import { AllocationOp } from './store';
 import { HubUser } from './permissions';
 import { Doc, HubError, normalizeEmail, nowIso, shortId, text } from './util';
 
-type AuditKind = 'allocation' | 'token-add' | 'token-update' | 'token-remove';
+type AuditKind = 'allocation' | 'token-add' | 'token-update' | 'token-remove' | 'subject';
+
+interface SubjectAuditChange {
+  studentId: string;
+  before: string;
+  after: string;
+  beforeSuggestedStaffId?: string;
+  beforeSuggestedSubject?: string;
+}
 
 interface AuditWriter {
   allocation(input: { studentId: string; before?: TokenRecord; after?: TokenRecord }): Promise<void>;
+  subject(change: SubjectAuditChange): Promise<void>;
   tokenAdd(token: TokenRecord): Promise<void>;
   tokenUpdate(before: TokenRecord, eligibleSubjects: string[]): Promise<void>;
   tokenRemove(token: TokenRecord): Promise<void>;
@@ -116,6 +125,24 @@ async function startAuditWriter(app: App, user: HubUser, cohortId: string): Prom
         beforeBypass: assignmentBypass(before),
       });
     },
+    async subject(change) {
+      const before = text(change.before);
+      const after = text(change.after);
+      if (before.toLowerCase() === after.toLowerCase()) return;
+      await write({
+        kind: 'subject' satisfies AuditKind,
+        action: after ? 'Selected subject' : 'Cleared subject',
+        studentId: normalizeEmail(change.studentId),
+        studentName: studentName(change.studentId),
+        subject: after || before,
+        teacherId: '',
+        teacher: '',
+        beforeSelectedSubject: before,
+        afterSelectedSubject: after,
+        beforeSuggestedStaffId: normalizeEmail(change.beforeSuggestedStaffId),
+        beforeSuggestedSubject: text(change.beforeSuggestedSubject),
+      });
+    },
     async tokenAdd(token) {
       await write(tokenEntry('token-add', 'Token added', token, teacherName, studentName));
     },
@@ -151,6 +178,12 @@ function tokenEntry(
     tokenId: token.id,
     tokenSnapshot: snapshotToken(token),
   };
+}
+
+export async function logSelectedSubject(app: App, user: HubUser, cohortId: string, change: SubjectAuditChange): Promise<void> {
+  if (text(change.before).toLowerCase() === text(change.after).toLowerCase()) return;
+  const writer = await startAuditWriter(app, user, cohortId);
+  await writer.subject(change);
 }
 
 export async function logAllocationDrafts(
@@ -261,6 +294,28 @@ export async function undoAllocationAudit(app: App, cohortId: unknown, logId: un
         const current = workspaceBy.get(studentId) || emptyWorkspace(studentId, now);
         if (current.pendingClear !== plan.pendingClear) {
           workspaceBy.set(studentId, { ...current, pendingClear: plan.pendingClear, updatedAt: now });
+          dirty.add(studentId);
+        }
+        continue;
+      }
+      if (kind === 'subject') {
+        const studentId = normalizeEmail(entry.studentId);
+        if (!studentId) throw new HubError('That audit entry has no student.');
+        const assigned = working.find((token) => normalizeEmail(token.allocatedTo) === studentId && token.status !== 'available');
+        if (assigned?.status === 'committed') throw new HubError('This allocation is published. Unpublish it before undoing.');
+        if (assigned) throw new HubError('Clear the assigned token before undoing this subject change.');
+        const current = workspaceBy.get(studentId) || emptyWorkspace(studentId, now);
+        const restored = text(entry.beforeSelectedSubject);
+        const suggestionStaff = normalizeEmail(entry.beforeSuggestedStaffId);
+        const suggestionSubject = text(entry.beforeSuggestedSubject);
+        if (text(current.selectedSubject) !== restored || normalizeEmail(current.suggestedStaffId) !== suggestionStaff || text(current.suggestedSubject) !== suggestionSubject) {
+          workspaceBy.set(studentId, {
+            ...current,
+            selectedSubject: restored,
+            suggestedStaffId: suggestionStaff,
+            suggestedSubject: suggestionSubject,
+            updatedAt: now,
+          });
           dirty.add(studentId);
         }
         continue;

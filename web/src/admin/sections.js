@@ -1,4 +1,5 @@
 import { renderEmailDesk } from './email.js';
+import { renderServerSettings } from './server.js';
 import { renderFormDesigner } from './forms.js';
 import { renderDriveAccount, renderDriveFolderPanel } from './google.js';
 import { renderPathwayPlanner } from './pathway.js';
@@ -19,6 +20,7 @@ import { renderShell } from '../navigation.js';
 export const adminSections = [
   ['cohorts', 'Cohorts'], ['driveAccount', 'Google account'], ['sheetSync', 'Sheets'], ['cohortMembers', 'Students in cohorts'], ['pathway', 'Phases & milestones'],
   ['emailNotifications', 'Email notifications'],
+  ['serverSettings', 'Server'],
   ['studentTasks', 'Student Tasks'],
   ['studentPages', 'Student Pages'],
   ['allocationSettings', 'Allocation'],
@@ -78,6 +80,10 @@ export function loadAdminSection() {
     renderEmailDesk(target, { back: false });
     return;
   }
+  if (state.adminEntity === 'serverSettings') {
+    renderServerSettings(target);
+    return;
+  }
   if (state.adminEntity === 'driveAccount') {
     renderDriveAccount(target);
     return;
@@ -129,7 +135,7 @@ export function loadAdminSection() {
 }
 
 export function refreshAdminSectionSilently() {
-  if (state.adminEntity === 'pathway' || state.adminEntity === 'emailNotifications' || state.adminEntity === 'driveAccount' || state.adminEntity === 'sheetSync') return;
+  if (state.adminEntity === 'pathway' || state.adminEntity === 'emailNotifications' || state.adminEntity === 'driveAccount' || state.adminEntity === 'sheetSync' || state.adminEntity === 'serverSettings') return;
   if (state.adminEntity === 'staffUsers' && state.staffPane === 'quotas') {
     renderStaffQuotas(document.getElementById('admin-content'));
     return;

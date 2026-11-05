@@ -8,6 +8,7 @@ import { googleOAuthSecrets } from './googleAuth';
 import { verifiedGoogleEmail } from './identity';
 import { runScheduledNotifications } from './notifications';
 import { SWEEP_CRON, SWEEP_TIME_ZONE } from './schedules';
+import { scheduledJobEnabled } from './serverSettings';
 import { App } from './session';
 import { Store } from './store';
 import { HubError, text } from './util';
@@ -65,6 +66,10 @@ export const notificationSweep = onSchedule({
     email: 'notifications@ee-hub',
     timeZone,
   };
+  if (!(await scheduledJobEnabled(app, 'notificationSweep'))) {
+    console.log('notificationSweep skipped: email notifications are turned off in settings/server.');
+    return;
+  }
   await runScheduledNotifications(app);
 });
 
@@ -81,6 +86,10 @@ export const docCommentSweep = onSchedule({
     email: 'doc-comments@ee-hub',
     timeZone,
   };
+  if (!(await scheduledJobEnabled(app, 'docCommentSweep'))) {
+    console.log('docCommentSweep skipped: the comment sweep is turned off in settings/server.');
+    return;
+  }
   const summary = await runDocCommentSweep(app);
   console.log('docCommentSweep', JSON.stringify(summary));
 });

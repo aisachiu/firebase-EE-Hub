@@ -1,5 +1,8 @@
+import { emptyServerSettings } from './serverSettings.js';
+
 export const state = {
   user: null,
+  serverSettings: emptyServerSettings(),
   view: 'home',
   cohortId: '',
   selectedStudent: null,
@@ -14,10 +17,14 @@ export const state = {
   allocationLoadView: 'subject',
   allocationDrawerOpen: false,
   allocationSupport: 'all',
+  allocationNeedSupport: 'all',
+  allocationFlaggedFilter: 'all',
   allocationSubjectFilter: [],
-  allocationAllocatedFilter: [],
+  allocationSelectedSubjectFilter: [],
   allocationTeacherFilter: [],
   allocationSupportFlags: [],
+  allocationFilterDraft: null,
+  allocationFilterSnapshot: null,
   allocationOpenStudent: '',
   allocationAssignedOpen: {},
   allocationDataSelected: [],
