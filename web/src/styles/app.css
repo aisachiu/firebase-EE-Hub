@@ -963,6 +963,26 @@ body.has-alloc-drawer.alloc-drawer-open { padding-right: clamp(300px, 34vw, 420p
 .alloc-load p { margin: 0 0 6px; }
 .alloc-workflow-overview { display: grid; gap: 12px; padding: 12px; }
 .alloc-workflow-phase { min-width: 0; padding: 10px; background: white; border: 1px solid var(--line); }
+.alloc-workflow-table-wrap { max-width: 100%; }
+.alloc-workflow-table { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 11px; font-variant-numeric: tabular-nums; }
+.alloc-workflow-table th, .alloc-workflow-table td { padding: 4px 2px; border-bottom: 1px solid var(--line); text-align: center; white-space: nowrap; }
+.alloc-workflow-table th:first-child { width: 17%; }
+.alloc-workflow-table td:nth-child(2) { width: 17%; }
+.alloc-workflow-table td:nth-child(3) { width: 8%; }
+.alloc-workflow-table td:nth-child(4) { width: 20%; }
+.alloc-workflow-table td:nth-child(5) { width: 12%; }
+.alloc-workflow-table td:nth-child(6), .alloc-workflow-table td:nth-child(7) { width: 10%; }
+.alloc-workflow-table thead th { color: var(--muted); font-size: 9px; letter-spacing: 0; }
+.alloc-workflow-table thead button, .alloc-workflow-subject, .alloc-workflow-count { padding: 1px; border: 0; background: transparent; color: var(--link, #176b87); font: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.alloc-workflow-table thead button { color: inherit; font-size: inherit; font-weight: 700; }
+.alloc-workflow-table th:first-child, .alloc-workflow-table td:first-child { text-align: left; }
+.alloc-workflow-table tbody th { font-weight: 600; }
+.alloc-workflow-subject { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.alloc-metric-pair { display: inline-flex; align-items: baseline; justify-content: center; gap: 1px; }
+.alloc-workflow-count { min-width: 12px; }
+.alloc-workflow-table .alloc-meter { width: 24px; height: 3px; margin: 2px auto 0; }
+.alloc-workflow-filter { display: flex; align-items: center; gap: 8px; width: fit-content; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; font-size: 12px; }
+.alloc-workflow-filter button { min-width: 28px; padding: 2px 6px; }
 .alloc-workflow-phase h3 { margin: 0 0 8px; font-size: 13px; }
 .alloc-workflow-phase h4 { margin: 12px 0 4px; color: var(--muted); font-size: 10px; letter-spacing: .05em; text-transform: uppercase; }
 .alloc-workflow-phase ul { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; }
@@ -971,9 +991,11 @@ body.has-alloc-drawer.alloc-drawer-open { padding-right: clamp(300px, 34vw, 420p
 .alloc-overview-count:disabled { opacity: .6; cursor: default; }
 .alloc-overview-count strong { font-variant-numeric: tabular-nums; }
 .alloc-overview-subject, .alloc-overview-department { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
-.alloc-overview-department { padding: 6px 0; border-bottom: 1px solid var(--line); }
-.alloc-overview-department > strong { min-width: 95px; }
-.alloc-overview-department > span { color: var(--muted); font-size: 11px; }
+.alloc-overview-department { display: block; padding: 6px 0; border-bottom: 1px solid var(--line); }
+.alloc-overview-department-heading { display: flex; align-items: center; gap: 8px; }
+.alloc-overview-department-heading > strong { min-width: 95px; }
+.alloc-overview-department-heading > span { color: var(--muted); font-size: 11px; }
+.alloc-hod-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .alloc-overview-department .alloc-overview-count { min-height: 28px; font-size: 11px; }
 .alloc-workflow-phase > .muted { margin: 10px 0 0; font-size: 11px; }
 .alloc-overview-return { display: flex; align-items: center; justify-content: space-between; gap: 8px; }

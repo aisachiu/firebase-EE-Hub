@@ -503,12 +503,10 @@ test('allocation desk tags, filter, column order, supervisor cues, and token loa
     const modal = deskMod.allocationInterdisciplinaryModalMarkup(student({
       choices: { primary: 'Psychology', secondary: 'Theater', interdisciplinary: true },
     }), desk());
-    assert.match(modal, /id="alloc-inter-token"/);
     assert.match(modal, /id="alloc-inter-modal-subject"/);
+    assert.equal((modal.match(/<select\b/g) || []).length, 1);
+    assert.doesNotMatch(modal, /alloc-inter-token|Teacher token|Choose a token|Dr Psy|Mx Art|Pat Open/);
     assert.match(modal, /<option value="Biology" selected>Biology<\/option>/);
-    assert.match(modal, /Dr Psy/);
-    assert.match(modal, /Mx Art/);
-    assert.match(modal, /Pat Open/);
     delete state.allocationInterdisciplinary['jane@school.edu'];
     delete state.allocationInterdisciplinarySubject['jane@school.edu'];
     state.allocationOpenStudent = 'mark@school.edu';
@@ -1001,10 +999,10 @@ test('coordinator token overview summarizes workflow stages and drilldown IDs', 
       { id: 't1', staffId: 'art@school.edu', status: 'draft', eligibleSubjects: ['Theater'], studentId: 'mark@school.edu', assignedSubject: 'Theater' },
     ];
     workflow.students = [
-      student({ selectedSubject: 'Psychology', suggestedStaffId: 'psy@school.edu', suggestedSubject: 'Psychology' }),
-      student({ studentId: 'pat@school.edu', displayName: 'Jones, Pat', sortName: 'jones, pat', selectedSubject: 'Psychology' }),
-      student({ studentId: 'mark@school.edu', displayName: 'Lee, Mark', sortName: 'lee, mark', selectedSubject: 'Theater', token: { staffId: 'art@school.edu', status: 'draft', assignedSubject: 'Theater' } }),
-      student({ studentId: 'sam@school.edu', displayName: 'Smith, Sam', sortName: 'smith, sam' }),
+      student({ selectedSubject: 'Psychology', choices: { primary: 'Psychology', secondary: 'Theater' }, requestedSubjects: [psychology, theater], suggestedStaffId: 'psy@school.edu', suggestedSubject: 'Psychology' }),
+      student({ studentId: 'pat@school.edu', displayName: 'Jones, Pat', sortName: 'jones, pat', selectedSubject: 'Psychology', choices: { primary: 'Psychology', secondary: 'Theater' }, requestedSubjects: [psychology, theater] }),
+      student({ studentId: 'mark@school.edu', displayName: 'Lee, Mark', sortName: 'lee, mark', selectedSubject: 'Theater', choices: { primary: 'Theater', secondary: 'Theater' }, requestedSubjects: [theater], token: { staffId: 'art@school.edu', status: 'draft', assignedSubject: 'Theater' } }),
+      student({ studentId: 'sam@school.edu', displayName: 'Smith, Sam', sortName: 'smith, sam', choices: { primary: 'Theater', secondary: 'Psychology' }, requestedSubjects: [theater, psychology] }),
     ];
 
     const overview = deskMod.allocationCoordinatorOverview(workflow);
@@ -1016,14 +1014,58 @@ test('coordinator token overview summarizes workflow stages and drilldown IDs', 
     assert.deepEqual(overview.drilldowns['department:Humanities'], ['jane@school.edu', 'pat@school.edu']);
     assert.equal(overview.departments.find((item) => item.department === 'Humanities').submitted, true);
     assert.equal(overview.subjects.find((item) => item.subject === 'Psychology').shortfall, 1);
+    const psychologySummary = overview.subjects.find((item) => item.subject === 'Psychology');
+    assert.deepEqual({
+      pool: psychologySummary.poolIds.length,
+      choice1: psychologySummary.poolChoice1Ids.length,
+      undrafted: psychologySummary.undraftedIds.length,
+      drafted: psychologySummary.draftedIds.length,
+      allocated: psychologySummary.allocated,
+      total: psychologySummary.total,
+      remaining: psychologySummary.remaining,
+    }, { pool: 3, choice1: 2, undrafted: 1, drafted: 2, allocated: 0, total: 1, remaining: -1 });
+    const theaterSummary = overview.subjects.find((item) => item.subject === 'Theater');
+    assert.deepEqual({
+      pool: theaterSummary.poolIds.length,
+      choice1: theaterSummary.poolChoice1Ids.length,
+      undrafted: theaterSummary.undraftedIds.length,
+      undraftedChoice1: theaterSummary.undraftedChoice1Ids.length,
+    }, { pool: 4, choice1: 2, undrafted: 1, undraftedChoice1: 1 });
 
     const html = deskMod.allocationLoadPanel(workflow, supervisors());
-    assert.match(html, /Subject decisions/);
-    assert.match(html, /HOD proposals/);
+    assert.match(html, /Subject Allocation summary/);
+    assert.match(html, /Subject Drafted/);
+    assert.match(html, /Pool \(1\)/);
+    assert.match(html, /Undrafted \(1\)/);
+    assert.match(html, /data-alloc-workflow-filter="subject-pool" data-alloc-workflow-subject="Psychology" aria-label="TTL for Psychology: 1"/);
+    assert.match(html, /data-alloc-load="hod-overview"/);
+    assert.doesNotMatch(html, /<h3>HOD Proposals<\/h3>/);
     assert.match(html, /Coordinator assignment/);
-    assert.match(html, /Proposal subject changed/);
-    assert.match(html, /over capacity/);
-    assert.match(html, /HOD submitted/);
+    state.allocationLoadView = 'hod-overview';
+    const hodHtml = deskMod.allocationLoadPanel(workflow, supervisors());
+    assert.match(hodHtml, /HOD Proposals/);
+    assert.match(hodHtml, /Proposal subject changed/);
+    assert.match(hodHtml, /HOD submitted/);
+    assert.match(hodHtml, /alloc-overview-department-heading[\s\S]*?alloc-hod-actions/);
+    state.allocationLoadView = 'overview';
+
+    state.allocationStatus = 'all';
+    state.allocationNeedSupport = 'all';
+    state.allocationFlaggedFilter = 'all';
+    state.allocationSupportFlags = [];
+    state.allocationSubjectFilter = [];
+    state.allocationSelectedSubjectFilter = [];
+    state.allocationTeacherFilter = [];
+    state.allocationCustomFilters = {};
+    state.allocationQuery = '';
+    state.allocationWorkflowFilter = { type: 'subject-pool', subject: 'Psychology' };
+    state.allocationFilterSnapshot = null;
+    state.allocationOverviewDrilldown = null;
+    assert.deepEqual(deskMod.visibleAllocationStudents(workflow).map((item) => item.studentId), ['jane@school.edu', 'pat@school.edu', 'sam@school.edu']);
+    state.allocationWorkflowFilter = { type: 'subject-undrafted-choice1', subject: 'Theater' };
+    assert.deepEqual(deskMod.visibleAllocationStudents(workflow).map((item) => item.studentId), ['sam@school.edu']);
+    state.allocationWorkflowFilter = { type: 'subject-allocated', subject: 'Theater' };
+    assert.deepEqual(deskMod.visibleAllocationStudents(workflow).map((item) => item.studentId), ['mark@school.edu']);
 
     state.allocationOverviewDrilldown = {
       ids: overview.drilldowns['proposal-review'],
