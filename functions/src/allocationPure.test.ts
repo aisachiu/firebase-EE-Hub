@@ -1098,11 +1098,13 @@ test('interdisciplinary token eligibility includes the workspace second subject 
   assert.equal(workspace.interdisciplinarySubject, 'Biology');
 });
 
-test('allocation draft sheets export and ingest selected subject, suggestion, and draft tokens', () => {
+test('allocation draft sheets export and ingest workspace interdisciplinary fields with draft allocations', () => {
   const rows = allocationExportRows([{
     studentId: JANE,
     displayName: 'Jane Doe',
     selectedSubject: 'History',
+    selectedInterdisciplinary: true,
+    interdisciplinarySubject: 'Theater',
     suggestedStaffId: SMITH,
     suggestedSubject: 'History',
     token: { staffId: SMITH, assignedSubject: 'History', status: 'draft' },
@@ -1115,15 +1117,41 @@ test('allocation draft sheets export and ingest selected subject, suggestion, an
       { key: 'SelectedSubject', showOnCard: true, filterable: false, sortable: false, colorScale: false, expanded: false, source: 'static' },
     ],
   });
-  assert.deepEqual(rows[0].slice(0, 8), ['StudentId', 'Display Name', 'Status', 'SupervisorEmail', 'AssignedSubject', 'SelectedSubject', 'SuggestedStaffEmail', 'SuggestedSubject']);
+  assert.deepEqual(rows[0].slice(0, 10), [
+    'StudentId',
+    'Display Name',
+    'Status',
+    'SupervisorEmail',
+    'AssignedSubject',
+    'SelectedSubject',
+    'SuggestedStaffEmail',
+    'SuggestedSubject',
+    'SelectedInterdisciplinary',
+    'InterdisciplinarySubject',
+  ]);
   assert.equal(rows[0].includes('Y10 GPA'), true);
   assert.equal(rows[0].filter((header) => header === 'SelectedSubject').length, 1);
-  assert.deepEqual(rows[1].slice(0, 8), [JANE, 'Jane Doe', 'Draft', SMITH, 'History', 'History', SMITH, 'History']);
+  assert.deepEqual(rows[1].slice(0, 10), [JANE, 'Jane Doe', 'Draft', SMITH, 'History', 'History', SMITH, 'History', true, 'Theater']);
   assert.equal(allocationTab('ALLOCATIONS 2026')?.kind, 'drafts');
   assert.equal(allocationTab('ALLOCATIONS: 2026')?.cohortId, '2026');
 
   const parsed = parseAllocationDraftGrid({ title: 'ALLOCATIONS 2026', rows });
   assert.equal(parsed.warnings.length, 0);
+  const clearRow = parseAllocationDraftGrid({
+    title: 'ALLOCATIONS 2026',
+    rows: [
+      ['StudentId', 'SelectedInterdisciplinary', 'InterdisciplinarySubject'],
+      [JANE, '', ''],
+    ],
+  });
+  assert.equal(clearRow.rows[0].selectedInterdisciplinary, false);
+  assert.equal(clearRow.rows[0].interdisciplinarySubject, '');
+  const oldFormatRow = parseAllocationDraftGrid({
+    title: 'ALLOCATIONS 2026',
+    rows: [['StudentId'], [JANE]],
+  });
+  assert.equal(oldFormatRow.rows[0].selectedInterdisciplinary, undefined);
+  assert.equal(oldFormatRow.rows[0].interdisciplinarySubject, undefined);
   const open = token({ id: 'open', staffId: SMITH, status: 'available', eligibleSubjects: ['History'] });
   const kept = {
     studentId: JANE,
@@ -1142,13 +1170,15 @@ test('allocation draft sheets export and ingest selected subject, suggestion, an
     tokens: [open],
     workspaces: [kept],
     roster: [{ studentId: JANE }],
-    activeSubjects: ['History'],
+    activeSubjects: ['History', 'Theater'],
     now: '2026-11-05T00:00:00.000Z',
   });
   assert.equal(plan.writing, 1);
   assert.equal(plan.workspaceWrites[0].selectedSubject, 'History');
   assert.equal(plan.workspaceWrites[0].suggestedStaffId, SMITH);
   assert.equal(plan.workspaceWrites[0].suggestedSubject, 'History');
+  assert.equal(plan.workspaceWrites[0].selectedInterdisciplinary, true);
+  assert.equal(plan.workspaceWrites[0].interdisciplinarySubject, 'Theater');
   assert.equal(plan.workspaceWrites[0].isFlagged, true);
   assert.equal(plan.workspaceWrites[0].flagNote, 'keep');
   assert.equal(plan.workspaceWrites[0].dynamicData['Y10 GPA'], 3.4);
@@ -1162,11 +1192,33 @@ test('allocation draft sheets export and ingest selected subject, suggestion, an
     tokens: plan.tokenWrites,
     workspaces: plan.workspaceWrites,
     roster: [{ studentId: JANE }],
-    activeSubjects: ['History'],
+    activeSubjects: ['History', 'Theater'],
     now: '2026-11-05T00:00:00.000Z',
   });
   assert.equal(again.writing, 0);
   assert.equal(again.tokenWrites.length, 0);
+
+  const cleared = planAllocationDraftIngest({
+    rows: clearRow.rows,
+    tokens: plan.tokenWrites,
+    workspaces: plan.workspaceWrites,
+    roster: [{ studentId: JANE }],
+    activeSubjects: ['History', 'Theater'],
+    now: '2026-11-05T00:00:00.000Z',
+  });
+  assert.equal(cleared.workspaceWrites[0].selectedInterdisciplinary, false);
+  assert.equal(cleared.workspaceWrites[0].interdisciplinarySubject, '');
+
+  const unchanged = planAllocationDraftIngest({
+    rows: [{ studentId: JANE }],
+    tokens: plan.tokenWrites,
+    workspaces: plan.workspaceWrites,
+    roster: [{ studentId: JANE }],
+    activeSubjects: ['History', 'Theater'],
+    now: '2026-11-05T00:00:00.000Z',
+  });
+  assert.equal(unchanged.writing, 0);
+  assert.equal(unchanged.workspaceWrites.length, 0);
 });
 
 test('draft ingest leaves a published token in place and can release a draft', () => {

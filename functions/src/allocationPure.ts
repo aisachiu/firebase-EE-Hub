@@ -2658,6 +2658,8 @@ const ALLOCATION_DRAFT_HEADERS = [
   'SelectedSubject',
   'SuggestedStaffEmail',
   'SuggestedSubject',
+  'SelectedInterdisciplinary',
+  'InterdisciplinarySubject',
 ] as const;
 
 export function allocationExportRows(students: DeskStudent[], settings: AllocationSettings): (string | number | boolean)[][] {
@@ -2677,6 +2679,8 @@ export function allocationExportRows(students: DeskStudent[], settings: Allocati
       student.selectedSubject || '',
       student.suggestedStaffId || '',
       student.suggestedSubject || '',
+      student.selectedInterdisciplinary === true,
+      student.interdisciplinarySubject || '',
     ];
     cards.forEach((key) => {
       const value = student.dynamicData[key];
@@ -2697,6 +2701,8 @@ export interface AllocationDraftSheetRow {
   selectedSubject?: string;
   suggestedStaffEmail?: string;
   suggestedSubject?: string;
+  selectedInterdisciplinary?: boolean;
+  interdisciplinarySubject?: string;
 }
 
 export function parseAllocationDraftGrid(grid: Grid): { rows: AllocationDraftSheetRow[]; warnings: string[] } {
@@ -2709,6 +2715,8 @@ export function parseAllocationDraftGrid(grid: Grid): { rows: AllocationDraftShe
   const selectedIndex = headerIndex(headers, ['selectedsubject', 'selected subject']);
   const suggestedStaffIndex = headerIndex(headers, ['suggestedstaffemail', 'suggested staff email']);
   const suggestedSubjectIndex = headerIndex(headers, ['suggestedsubject', 'suggested subject']);
+  const interdisciplinaryIndex = headerIndex(headers, ['selectedinterdisciplinary', 'selected interdisciplinary']);
+  const interdisciplinarySubjectIndex = headerIndex(headers, ['interdisciplinarysubject', 'interdisciplinary subject']);
   const warnings: string[] = [];
   const seen = new Set<string>();
   const rows: AllocationDraftSheetRow[] = [];
@@ -2727,12 +2735,25 @@ export function parseAllocationDraftGrid(grid: Grid): { rows: AllocationDraftShe
     const selectedSubject = cell(row, selectedIndex);
     const suggestedStaffEmail = cell(row, suggestedStaffIndex);
     const suggestedSubject = cell(row, suggestedSubjectIndex);
+    const interdisciplinary = cell(row, interdisciplinaryIndex);
+    const interdisciplinarySubject = cell(row, interdisciplinarySubjectIndex);
     if (status !== undefined) entry.status = status;
     if (supervisorEmail !== undefined) entry.supervisorEmail = supervisorEmail;
     if (assignedSubject !== undefined) entry.assignedSubject = assignedSubject;
     if (selectedSubject !== undefined) entry.selectedSubject = selectedSubject;
     if (suggestedStaffEmail !== undefined) entry.suggestedStaffEmail = suggestedStaffEmail;
     if (suggestedSubject !== undefined) entry.suggestedSubject = suggestedSubject;
+    if (interdisciplinary !== undefined) {
+      const normalized = interdisciplinary.toLowerCase();
+      if (!normalized || normalized === 'false' || normalized === 'no' || normalized === '0') {
+        entry.selectedInterdisciplinary = false;
+      } else if (normalized === 'true' || normalized === 'yes' || normalized === '1') {
+        entry.selectedInterdisciplinary = true;
+      } else {
+        warnings.push(`${grid.title} row ${line} SelectedInterdisciplinary must be true or false.`);
+      }
+    }
+    if (interdisciplinarySubject !== undefined) entry.interdisciplinarySubject = interdisciplinarySubject;
     if (seen.has(studentId)) warnings.push(`${grid.title} repeats ${studentId}. The last row is kept.`);
     seen.add(studentId);
     const existing = rows.findIndex((item) => item.studentId === studentId);
@@ -2880,6 +2901,7 @@ export function planAllocationDraftIngest(input: {
     );
     Object.assign(next, workspaceBefore);
     applySheetSubject(row, next, input.activeSubjects, warnings);
+    applySheetInterdisciplinary(row, next, input.activeSubjects, warnings);
     applySheetSuggestion(row, prior, next, input.activeSubjects, warnings);
     applySheetToken(row, studentId, tokens, roster.get(studentId) || '', next, warnings, draftChanges);
     const after = heldToken(tokens, studentId);
@@ -2920,6 +2942,28 @@ function applySheetSubject(row: AllocationDraftSheetRow, next: WorkspaceRecord, 
     return;
   }
   next.selectedSubject = canonical;
+}
+
+function applySheetInterdisciplinary(row: AllocationDraftSheetRow, next: WorkspaceRecord, active: string[], warnings: string[]): void {
+  if (row.selectedInterdisciplinary !== undefined) {
+    next.selectedInterdisciplinary = row.selectedInterdisciplinary;
+    if (!row.selectedInterdisciplinary) {
+      next.interdisciplinarySubject = '';
+      return;
+    }
+  }
+  if (row.interdisciplinarySubject === undefined) return;
+  const raw = row.interdisciplinarySubject.trim();
+  if (!raw) {
+    next.interdisciplinarySubject = '';
+    return;
+  }
+  const canonical = namedActiveSubject(raw, active);
+  if (!canonical) {
+    warnings.push(`${row.studentId}: ${raw} is not an active subject. Interdisciplinary subject was left unchanged.`);
+    return;
+  }
+  next.interdisciplinarySubject = canonical;
 }
 
 function applySheetSuggestion(
