@@ -68,6 +68,7 @@ import {
   suggestionCapacity,
   tokenDepartmentNames,
   workspaceFromDoc,
+  workspaceWithLegacyTokenInterdisciplinary,
   interdisciplinarySignal,
   requestedSubjectNames,
   resolveRequestedSubjects,
@@ -86,8 +87,6 @@ function token(partial: Partial<TokenRecord> & Pick<TokenRecord, 'id' | 'staffId
     eligibleSubjects: ['History'],
     allocatedTo: '',
     assignedSubject: '',
-    interdisciplinary: false,
-    interdisciplinarySubject: '',
     createdAt: '2026-10-18T00:00:00.000Z',
     ...partial,
   };
@@ -295,7 +294,7 @@ test('publish writes drafts and clears a released supervisor', () => {
   assert.equal(publishedAllocationSubject('  ', { choice1: 'Biology' }, ''), '');
 });
 
-test('the desk marks first and second choice, HL and SL subjects, and support flags from the saved columns', () => {
+test('the desk marks first and second choice, their live-sheet scores, HL and SL subjects, and support flags', () => {
   const settings = mergeDetected(emptySettings(), ['choice1', 'choice2', 'interdisciplinary'], ['Y10 GPA', 'HL', 'Academic Flag']);
   settings.hlColumn = 'HL';
   settings.supportColumn = 'Academic Flag';
@@ -307,7 +306,7 @@ test('the desk marks first and second choice, HL and SL subjects, and support fl
     ],
     workspaces: [{
       studentId: JANE,
-      subjectChoices: { choice1: 'History', choice2: 'Eng Lit', interdisciplinary: true },
+      subjectChoices: { choice1: 'History', choice2: 'Eng Lit', choice1_score: 'A-', choice2_score: 87.5, interdisciplinary: true },
       dynamicData: { 'Y10 GPA': 3.4, HL: 'Bio, Chem', 'Academic Flag': 'Needs Support' },
       pendingClear: false,
       updatedAt: '',
@@ -333,6 +332,8 @@ test('the desk marks first and second choice, HL and SL subjects, and support fl
   assert.equal(diplomaLevelFlag('History', { Subjects: 'Biology (HL), History (SL), Mathematics SL' }, ''), 'sl');
   assert.equal(diplomaLevelFlag('Art', { Subjects: 'Biology (HL), History (SL), Mathematics SL' }, ''), 'miss');
   assert.equal(desk.students[0].flags.needsSupport, true);
+  assert.equal(desk.students[0].choices.primaryScore, 'A-');
+  assert.equal(desk.students[0].choices.secondaryScore, '87.5');
   assert.equal(desk.students[0].choices.interdisciplinary, true);
   assert.equal(desk.supervisors[0].displayName, 'Mr. Smith');
   assert.equal(desk.supervisors[0].used, 1);
@@ -357,6 +358,8 @@ test('the desk marks first and second choice, HL and SL subjects, and support fl
     ],
   });
   assert.equal(saved.primaryChoiceKey, 'choice1');
+  assert.equal(saved.primaryChoiceScoreKey, 'choice1_score');
+  assert.equal(saved.secondaryChoiceScoreKey, 'choice2_score');
   assert.equal(saved.secondaryChoiceKey, '');
   assert.equal(saved.columns.find((column) => column.key === 'Y10 GPA')?.sortable, true);
   assert.equal(saved.columns.find((column) => column.key === 'Y10 GPA')?.colorScale, false);
@@ -676,8 +679,8 @@ test('a draft is refused when the EE subject does not match the supervisor token
     interdisciplinary: true,
     interdisciplinarySubject: 'Eng Lit',
   });
-  assert.equal(marked.tokens[0].interdisciplinary, true);
-  assert.equal(marked.tokens[0].interdisciplinarySubject, 'Eng Lit');
+  assert.equal(Object.hasOwn(marked.tokens[0], 'interdisciplinary'), false);
+  assert.equal(Object.hasOwn(marked.tokens[0], 'interdisciplinarySubject'), false);
   assert.equal(marked.tokens[0].assignedSubject, 'History');
   const cleared = planDraft({
     studentId: JANE,
@@ -689,8 +692,7 @@ test('a draft is refused when the EE subject does not match the supervisor token
     interdisciplinary: false,
     interdisciplinarySubject: 'Eng Lit',
   });
-  assert.equal(cleared.tokens[0].interdisciplinary, false);
-  assert.equal(cleared.tokens[0].interdisciplinarySubject, '');
+  assert.equal(cleared.changed, false);
   const saved = applySavedConfig(mergeDetected(emptySettings(), ['choice1'], ['Notes']), {
     primaryChoiceKey: 'choice1',
     columns: [{ key: 'Notes', showOnCard: false, filterable: false, sortable: false, expanded: true }],
@@ -700,11 +702,11 @@ test('a draft is refused when the EE subject does not match the supervisor token
   assert.deepEqual(saved.columnMappings, emptyColumnMappings());
 });
 
-test('live sheet mappings merge choice data onto static auxiliary columns', () => {
-  const headers = ['Student Number', 'Student Email', 'First choice', 'HL subjects', 'Mentor note'];
+test('live sheet mappings merge choice data and scores onto static auxiliary columns', () => {
+  const headers = ['Student Number', 'Student Email', 'First choice', 'Choice 1 Score', 'Choice 2 Score', 'HL subjects', 'Mentor note'];
   const mappings = columnMappingsFrom({
     core: { studentNumber: 'Student Number', studentEmail: 'Student Email' },
-    subjectChoice: { primary: 'First choice' },
+    subjectChoice: { primary: 'First choice', primaryScore: 'Choice 1 Score', secondaryScore: 'Choice 2 Score' },
     dashboard: { hl: 'HL subjects' },
   });
   assert.match(liveLinkProblems(emptyColumnMappings(), headers)[0], /Student Number or Student Email/);
@@ -716,9 +718,9 @@ test('live sheet mappings merge choice data onto static auxiliary columns', () =
     title: 'Choices',
     rows: [
       headers,
-      ['20260001', JANE, 'Physics', 'Bio', 'Bring sources'],
+      ['20260001', JANE, 'Physics', 'A-', 87.5, 'Bio', 'Bring sources'],
       ['', '', '', '', ''],
-      ['999', 'missing@vsa.edu', 'Art', '', ''],
+      ['999', 'missing@vsa.edu', 'Art', '', '', '', ''],
     ],
   }, mappings);
   assert.equal(parsed.rows.length, 2);
@@ -727,10 +729,16 @@ test('live sheet mappings merge choice data onto static auxiliary columns', () =
   assert.equal(parsed.rows[0].fields['Mentor note'], 'Bring sources');
   assert.equal(parsed.rows[0].fields['HL subjects'], 'Bio');
   assert.equal(parsed.rows[0].fields['First choice'], 'Physics');
+  assert.equal(parsed.rows[0].primaryScore, 'A-');
+  assert.equal(parsed.rows[0].secondaryScore, 87.5);
   assert.equal(parsed.rows[0].fields['Student Email'], undefined);
   const settings = settingsForLiveLink(emptySettings(), 'https://docs.google.com/spreadsheets/d/abc123_XYZ-000000000000/edit', 'abc123_XYZ-000000000000', 'Choices', mappings, headers);
   assert.equal(liveSheetLinked(settings), true);
   assert.equal(settings.primaryChoiceKey, 'choice1');
+  assert.equal(settings.primaryChoiceScoreKey, 'choice1_score');
+  assert.equal(settings.secondaryChoiceScoreKey, 'choice2_score');
+  assert.ok(settings.detectedChoiceKeys.includes('choice1_score'));
+  assert.ok(settings.detectedChoiceKeys.includes('choice2_score'));
   assert.equal(settings.hlColumn, 'HL subjects');
   assert.equal(settings.sheetName, 'Choices');
   assert.ok(settings.detectedDynamicKeys.includes('Mentor note'));
@@ -754,7 +762,7 @@ test('live sheet mappings merge choice data onto static auxiliary columns', () =
     core: { studentEmail: 'Student Email' },
     subjectChoice: { primary: 'First choice' },
   });
-  const emailRow = parseLiveSheet({ title: 'Choices', rows: [headers, ['', MARK, 'Art', '']] }, emailOnly).rows[0];
+  const emailRow = parseLiveSheet({ title: 'Choices', rows: [headers, ['', MARK, 'Art', '', '', '', '']] }, emailOnly).rows[0];
   assert.equal(resolveLiveStudent(emailRow, index, emailOnly).studentId, MARK);
   const merged = mergeLiveChoiceRow({
     studentId: JANE,
@@ -765,6 +773,8 @@ test('live sheet mappings merge choice data onto static auxiliary columns', () =
   }, parsed.rows[0], settings, JANE, '2026-10-29T00:00:00.000Z');
   assert.equal(merged.subjectChoices.choice1, 'Physics');
   assert.equal(merged.subjectChoices.choice2, 'Eng Lit');
+  assert.equal(merged.subjectChoices.choice1_score, 'A-');
+  assert.equal(merged.subjectChoices.choice2_score, 87.5);
   assert.equal(merged.dynamicData['Y10 GPA'], 'Weak');
   assert.equal(merged.dynamicData['HL subjects'], 'Bio');
   assert.equal(merged.dynamicData['Mentor note'], 'Bring sources');
@@ -864,6 +874,8 @@ test('workspace fields round-trip and survive choice merges', () => {
     studentEmail: '',
     primary: 'Physics',
     secondary: '',
+    primaryScore: '',
+    secondaryScore: '',
     interdisciplinary: '',
     hl: '',
     support: '',
@@ -1054,15 +1066,45 @@ test('an interdisciplinary draft can take any available token', () => {
   assert.equal(allowed.changed, true);
   assert.equal(allowed.tokens[0].id, 'art');
   assert.equal(allowed.tokens[0].assignedSubject, 'History');
-  assert.equal(allowed.tokens[0].interdisciplinary, true);
-  assert.equal(allowed.tokens[0].interdisciplinarySubject, 'Biology');
+  assert.equal(Object.hasOwn(allowed.tokens[0], 'interdisciplinary'), false);
+  assert.equal(Object.hasOwn(allowed.tokens[0], 'interdisciplinarySubject'), false);
 });
 
-test('allocation draft sheets export and ingest selected subject, suggestion, and draft tokens', () => {
+test('interdisciplinary token eligibility includes the workspace second subject and migrates legacy token fields', () => {
+  const secondSubjectToken = token({ id: 'biology', staffId: SMITH, status: 'available', eligibleSubjects: ['Biology'] });
+  const matched = planDraft({
+    studentId: JANE,
+    staffId: SMITH,
+    subject: 'History',
+    tokens: [secondSubjectToken],
+    memberSupervisorId: '',
+    pendingClear: false,
+    interdisciplinary: true,
+    interdisciplinarySubject: 'Biology',
+  });
+  assert.equal(matched.changed, true);
+  const legacyToken = tokenFromDoc({
+    id: 'legacy',
+    staffId: SMITH,
+    allocatedTo: JANE,
+    assignedSubject: 'History',
+    status: 'draft',
+    interdisciplinary: true,
+    interdisciplinarySubject: 'Biology',
+  });
+  assert.ok(legacyToken);
+  const workspace = workspaceWithLegacyTokenInterdisciplinary(workspaceFromDoc({}, JANE), legacyToken);
+  assert.equal(workspace.selectedInterdisciplinary, true);
+  assert.equal(workspace.interdisciplinarySubject, 'Biology');
+});
+
+test('allocation draft sheets export and ingest workspace interdisciplinary fields with draft allocations', () => {
   const rows = allocationExportRows([{
     studentId: JANE,
     displayName: 'Jane Doe',
     selectedSubject: 'History',
+    selectedInterdisciplinary: true,
+    interdisciplinarySubject: 'Theater',
     suggestedStaffId: SMITH,
     suggestedSubject: 'History',
     token: { staffId: SMITH, assignedSubject: 'History', status: 'draft' },
@@ -1075,15 +1117,41 @@ test('allocation draft sheets export and ingest selected subject, suggestion, an
       { key: 'SelectedSubject', showOnCard: true, filterable: false, sortable: false, colorScale: false, expanded: false, source: 'static' },
     ],
   });
-  assert.deepEqual(rows[0].slice(0, 8), ['StudentId', 'Display Name', 'Status', 'SupervisorEmail', 'AssignedSubject', 'SelectedSubject', 'SuggestedStaffEmail', 'SuggestedSubject']);
+  assert.deepEqual(rows[0].slice(0, 10), [
+    'StudentId',
+    'Display Name',
+    'Status',
+    'SupervisorEmail',
+    'AssignedSubject',
+    'SelectedSubject',
+    'SuggestedStaffEmail',
+    'SuggestedSubject',
+    'SelectedInterdisciplinary',
+    'InterdisciplinarySubject',
+  ]);
   assert.equal(rows[0].includes('Y10 GPA'), true);
   assert.equal(rows[0].filter((header) => header === 'SelectedSubject').length, 1);
-  assert.deepEqual(rows[1].slice(0, 8), [JANE, 'Jane Doe', 'Draft', SMITH, 'History', 'History', SMITH, 'History']);
+  assert.deepEqual(rows[1].slice(0, 10), [JANE, 'Jane Doe', 'Draft', SMITH, 'History', 'History', SMITH, 'History', true, 'Theater']);
   assert.equal(allocationTab('ALLOCATIONS 2026')?.kind, 'drafts');
   assert.equal(allocationTab('ALLOCATIONS: 2026')?.cohortId, '2026');
 
   const parsed = parseAllocationDraftGrid({ title: 'ALLOCATIONS 2026', rows });
   assert.equal(parsed.warnings.length, 0);
+  const clearRow = parseAllocationDraftGrid({
+    title: 'ALLOCATIONS 2026',
+    rows: [
+      ['StudentId', 'SelectedInterdisciplinary', 'InterdisciplinarySubject'],
+      [JANE, '', ''],
+    ],
+  });
+  assert.equal(clearRow.rows[0].selectedInterdisciplinary, false);
+  assert.equal(clearRow.rows[0].interdisciplinarySubject, '');
+  const oldFormatRow = parseAllocationDraftGrid({
+    title: 'ALLOCATIONS 2026',
+    rows: [['StudentId'], [JANE]],
+  });
+  assert.equal(oldFormatRow.rows[0].selectedInterdisciplinary, undefined);
+  assert.equal(oldFormatRow.rows[0].interdisciplinarySubject, undefined);
   const open = token({ id: 'open', staffId: SMITH, status: 'available', eligibleSubjects: ['History'] });
   const kept = {
     studentId: JANE,
@@ -1102,13 +1170,15 @@ test('allocation draft sheets export and ingest selected subject, suggestion, an
     tokens: [open],
     workspaces: [kept],
     roster: [{ studentId: JANE }],
-    activeSubjects: ['History'],
+    activeSubjects: ['History', 'Theater'],
     now: '2026-11-05T00:00:00.000Z',
   });
   assert.equal(plan.writing, 1);
   assert.equal(plan.workspaceWrites[0].selectedSubject, 'History');
   assert.equal(plan.workspaceWrites[0].suggestedStaffId, SMITH);
   assert.equal(plan.workspaceWrites[0].suggestedSubject, 'History');
+  assert.equal(plan.workspaceWrites[0].selectedInterdisciplinary, true);
+  assert.equal(plan.workspaceWrites[0].interdisciplinarySubject, 'Theater');
   assert.equal(plan.workspaceWrites[0].isFlagged, true);
   assert.equal(plan.workspaceWrites[0].flagNote, 'keep');
   assert.equal(plan.workspaceWrites[0].dynamicData['Y10 GPA'], 3.4);
@@ -1122,11 +1192,33 @@ test('allocation draft sheets export and ingest selected subject, suggestion, an
     tokens: plan.tokenWrites,
     workspaces: plan.workspaceWrites,
     roster: [{ studentId: JANE }],
-    activeSubjects: ['History'],
+    activeSubjects: ['History', 'Theater'],
     now: '2026-11-05T00:00:00.000Z',
   });
   assert.equal(again.writing, 0);
   assert.equal(again.tokenWrites.length, 0);
+
+  const cleared = planAllocationDraftIngest({
+    rows: clearRow.rows,
+    tokens: plan.tokenWrites,
+    workspaces: plan.workspaceWrites,
+    roster: [{ studentId: JANE }],
+    activeSubjects: ['History', 'Theater'],
+    now: '2026-11-05T00:00:00.000Z',
+  });
+  assert.equal(cleared.workspaceWrites[0].selectedInterdisciplinary, false);
+  assert.equal(cleared.workspaceWrites[0].interdisciplinarySubject, '');
+
+  const unchanged = planAllocationDraftIngest({
+    rows: [{ studentId: JANE }],
+    tokens: plan.tokenWrites,
+    workspaces: plan.workspaceWrites,
+    roster: [{ studentId: JANE }],
+    activeSubjects: ['History', 'Theater'],
+    now: '2026-11-05T00:00:00.000Z',
+  });
+  assert.equal(unchanged.writing, 0);
+  assert.equal(unchanged.workspaceWrites.length, 0);
 });
 
 test('draft ingest leaves a published token in place and can release a draft', () => {

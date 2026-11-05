@@ -418,7 +418,7 @@ test('multiple EE subjects persist on the staff record and in bulk', async () =>
   ]);
 });
 
-test('choice edits enforce Yes or No and an interdisciplinary token publishes onto the student', async () => {
+test('interdisciplinary selection persists on workspace and publishes to the student, not the token', async () => {
   const app = appFor();
   await seed(app);
   await applyAllocationIngest(app, '2026', SHEET, 'workspace', { workbook: workbook([workspaceGrid]) });
@@ -444,9 +444,12 @@ test('choice edits enforce Yes or No and an interdisciplinary token publishes on
   await app.store.set(COLLECTIONS.studentUsers, JANE, { StudentId: JANE, DisplayName: 'Jane Doe', subject: '' });
   await assert.rejects(draftAllocation(app, '2026', JANE, SMITH, 'Biology', true), /does not match/);
   await draftAllocation(app, '2026', JANE, SMITH, 'History', true, 'Theatre');
+  const workspace = await app.store.getWorkspace('2026', JANE);
+  assert.equal(workspace?.selectedInterdisciplinary, true);
+  assert.equal(workspace?.interdisciplinarySubject, 'Theatre');
   const drafted = (await app.store.listTokens('2026')).find((token) => token.allocatedTo === JANE);
-  assert.equal(drafted?.interdisciplinary, true);
-  assert.equal(drafted?.interdisciplinarySubject, 'Theatre');
+  assert.equal(Object.hasOwn(drafted || {}, 'interdisciplinary'), false);
+  assert.equal(Object.hasOwn(drafted || {}, 'interdisciplinarySubject'), false);
   await commitAllocations(app, '2026');
   assert.equal((await app.store.getMember('2026', JANE))?.interdisciplinary, true);
   assert.equal((await app.store.getMember('2026', JANE))?.Interdisciplinary, true);
@@ -454,6 +457,8 @@ test('choice edits enforce Yes or No and an interdisciplinary token publishes on
   assert.equal((await app.store.get(COLLECTIONS.studentUsers, JANE))?.Interdisciplinary, true);
   assert.equal((await app.store.get(COLLECTIONS.studentUsers, JANE))?.interdisciplinary, true);
   assert.equal((await app.store.get(COLLECTIONS.studentUsers, JANE))?.InterdisciplinarySubject, 'Theatre');
+  const storedToken = (await app.store.listTokens('2026')).find((token) => token.allocatedTo === JANE);
+  assert.equal(Object.hasOwn(storedToken || {}, 'interdisciplinary'), false);
   const board = await listCohortTokens(app, '2026');
   const held = board.tokens.find((token) => token.allocatedTo === JANE);
   assert.equal(held?.studentName, 'Doe, Jane');
@@ -481,9 +486,9 @@ test('a live sheet link merges choice rows onto static auxiliary data', async ()
     {
       title: 'Choices',
       rows: [
-        ['Student Number', 'Student Email', 'First choice', 'HL subjects', 'Mentor note'],
-        ['20260001', JANE, 'Physics', 'Bio', 'Bring sources'],
-        ['999', 'missing@vsa.edu', 'Art', '', ''],
+        ['Student Number', 'Student Email', 'First choice', 'Choice 1 Score', 'Choice 2 Score', 'HL subjects', 'Mentor note'],
+        ['20260001', JANE, 'Physics', 'A-', 87.5, 'Bio', 'Bring sources'],
+        ['999', 'missing@vsa.edu', 'Art', '', '', '', ''],
       ],
     },
   ]);
@@ -500,14 +505,14 @@ test('a live sheet link merges choice rows onto static auxiliary data', async ()
   assert.deepEqual(tabs.tabs, ['COHORTDATA: 2026', 'Choices']);
   assert.equal(tabs.spreadsheetId, 'abc123_XYZ-000000000000');
   const headers = await getLiveSheetHeaders(app, '2026', { url: SHEET }, 'Choices', { workbook: sheets });
-  assert.deepEqual(headers.headers, ['Student Number', 'Student Email', 'First choice', 'HL subjects', 'Mentor note']);
+  assert.deepEqual(headers.headers, ['Student Number', 'Student Email', 'First choice', 'Choice 1 Score', 'Choice 2 Score', 'HL subjects', 'Mentor note']);
 
   const link = {
     url: SHEET,
     sheetName: 'Choices',
     columnMappings: {
       core: { studentNumber: 'Student Number', studentEmail: 'Student Email' },
-      subjectChoice: { primary: 'First choice', secondary: '', interdisciplinary: '' },
+      subjectChoice: { primary: 'First choice', secondary: '', primaryScore: 'Choice 1 Score', secondaryScore: 'Choice 2 Score', interdisciplinary: '' },
       dashboard: { hl: 'HL subjects', support: '' },
     },
   };
@@ -528,6 +533,8 @@ test('a live sheet link merges choice rows onto static auxiliary data', async ()
   assert.equal(saved.liveSheetTab, 'Choices');
   assert.equal(saved.liveSheetUrl, SHEET);
   assert.equal(saved.columnMappings.subjectChoice.primary, 'First choice');
+  assert.equal(saved.columnMappings.subjectChoice.primaryScore, 'Choice 1 Score');
+  assert.equal(saved.columnMappings.subjectChoice.secondaryScore, 'Choice 2 Score');
   assert.equal(saved.primaryChoiceKey, 'choice1');
   assert.equal(saved.hlColumn, 'HL subjects');
   assert.equal(saved.columns.find((column) => column.key === 'Mentor note')?.source, 'live');
@@ -544,6 +551,8 @@ test('a live sheet link merges choice rows onto static auxiliary data', async ()
   const jane = await app.store.getWorkspace('2026', JANE);
   assert.equal(jane?.subjectChoices.choice1, 'Physics');
   assert.equal(jane?.subjectChoices.choice2, 'Eng Lit');
+  assert.equal(jane?.subjectChoices.choice1_score, 'A-');
+  assert.equal(jane?.subjectChoices.choice2_score, 87.5);
   assert.equal(jane?.dynamicData['Y10 GPA'], 'Weak');
   assert.equal(jane?.dynamicData['HL subjects'], 'Bio');
   assert.equal(jane?.dynamicData['Mentor note'], 'Bring sources');
@@ -576,6 +585,8 @@ test('a live sheet link merges choice rows onto static auxiliary data', async ()
   const afterStatic = await app.store.getWorkspace('2026', JANE);
   assert.equal(afterStatic?.subjectChoices.choice1, 'Physics');
   assert.equal(afterStatic?.subjectChoices.choice2, 'Drama');
+  assert.equal(afterStatic?.subjectChoices.choice1_score, 'A-');
+  assert.equal(afterStatic?.subjectChoices.choice2_score, 87.5);
   assert.equal(afterStatic?.dynamicData['Y10 GPA'], 'Strong');
   assert.equal(afterStatic?.dynamicData['HL subjects'], 'Bio');
   assert.equal(afterStatic?.dynamicData['Mentor note'], 'Bring sources');
@@ -758,8 +769,8 @@ test('a head of department suggests and certifies, and a coordinator approves', 
   const approved = await approveAllocationSuggestion(app, '2026', JANE);
   assert.equal(approved.changed, true);
   const after = await store.getWorkspace('2026', JANE);
-  assert.equal(after?.suggestedStaffId, '');
-  assert.equal(after?.suggestedSubject, '');
+  assert.equal(after?.suggestedStaffId, SMITH);
+  assert.equal(after?.suggestedSubject, 'History');
   assert.equal(after?.selectedSubject, 'History');
   assert.equal((await app.store.listTokens('2026')).find((token) => token.allocatedTo === JANE)?.status, 'draft');
   assert.equal((await app.store.listTokens('2026')).find((token) => token.allocatedTo === JANE)?.assignedSubject, 'History');
@@ -780,6 +791,7 @@ test('a head of department suggests and certifies, and a coordinator approves', 
   await assert.rejects(setAllocationSubject(hod, '2026', MARK, 'History'), /Access denied/);
   const bulk = await batchApproveAllocationSuggestions(app, '2026', [JANE, MARK]);
   assert.equal(bulk.assigned.includes(JANE), false);
+  assert.equal(bulk.skipped.some((row) => row.studentId === JANE && /already assigned/i.test(row.reason)), true);
   assert.equal(bulk.skipped.some((row) => row.studentId === MARK && /No suggestion/.test(row.reason)), true);
   await suggestAllocation(hod, '2026', JANE, SMITH);
   await suggestAllocation(hod, '2026', MARK, SMITH);
@@ -787,7 +799,8 @@ test('a head of department suggests and certifies, and a coordinator approves', 
   const skipped = await batchApproveAllocationSuggestions(app, '2026', [JANE, MARK]);
   assert.equal(skipped.skipped.some((row) => row.studentId === JANE && /published/i.test(row.reason)), true);
   assert.equal(skipped.assigned.includes(MARK), true);
-  assert.equal((await store.getWorkspace('2026', MARK))?.suggestedStaffId, '');
+  assert.equal((await store.getWorkspace('2026', MARK))?.suggestedStaffId, SMITH);
+  assert.equal((await store.getWorkspace('2026', MARK))?.suggestedSubject, 'History');
 });
 
 test('allocation draft export ingests selected subject, suggestion, and the draft token', async () => {
@@ -887,7 +900,7 @@ test('selecting and clearing a subject is recorded in the allocation audit log',
     suggestedStaffId: SMITH,
     suggestedSubject: 'History',
   });
-  const cleared = await setAllocationSubject(app, '2026', JANE, '');
+  const cleared = await setAllocationSubject(app, '2026', JANE, '', true);
   assert.equal(cleared.selectedSubject, '');
   assert.equal(cleared.suggestedStaffId, '');
   const clearLog = (await store.listAllocationAudits('2026')).find((row) => row.action === 'Cleared subject' && row.studentId === JANE);
@@ -900,7 +913,13 @@ test('selecting and clearing a subject is recorded in the allocation audit log',
   assert.equal(restored?.suggestedSubject, 'History');
   await applyAllocationIngest(app, '2026', SHEET, 'tokens', { workbook: workbook([tokenGrid]) });
   await draftAllocation(app, '2026', JANE, SMITH, 'History');
-  await assert.rejects(setAllocationSubject(app, '2026', JANE, 'Biology'), /assigned token/);
+  await assert.rejects(setAllocationSubject(app, '2026', JANE, 'Biology'), /Confirm clearing/);
+  const changed = await setAllocationSubject(app, '2026', JANE, 'Biology', true);
+  assert.equal(changed.selectedSubject, 'Biology');
+  assert.equal(changed.tokenCleared, true);
+  assert.equal((await store.getWorkspace('2026', JANE))?.suggestedStaffId, '');
+  assert.equal((await store.getWorkspace('2026', JANE))?.suggestedSubject, '');
+  assert.equal((await app.store.listTokens('2026')).some((token) => token.allocatedTo === JANE), false);
   await undoAllocationAudit(app, '2026', textId(picked));
   assert.equal((await store.getWorkspace('2026', JANE))?.selectedSubject, '');
   assert.equal((await app.store.listTokens('2026')).some((token) => token.allocatedTo === JANE), false);

@@ -76,8 +76,8 @@ export function pendingSettled(student, edit) {
   if (!staffId) return !student || !student.token;
   if (!student || !student.token || student.token.status !== 'draft') return false;
   if (emailOf(student.token.staffId) !== staffId) return false;
-  if ((student.token.interdisciplinary === true) !== (edit.interdisciplinary === true)) return false;
-  if (String(student.token.interdisciplinarySubject || '').toLowerCase() !== String(edit.interdisciplinarySubject || '').toLowerCase()) return false;
+  if ((student.selectedInterdisciplinary === true) !== (edit.interdisciplinary === true)) return false;
+  if (String(student.interdisciplinarySubject || '').toLowerCase() !== String(edit.interdisciplinarySubject || '').toLowerCase()) return false;
   return String(student.token.assignedSubject || '').toLowerCase() === String(edit.subject || '').toLowerCase();
 }
 
@@ -163,9 +163,24 @@ export function overlayPendingSubjects(desk, pending) {
       next.suggestedSubject = '';
       next.suggestedStaffName = '';
     }
+    if (edit.clearAllocation) {
+      next.token = null;
+      next.pendingClear = false;
+      next.flags = Object.assign({}, student.flags, {
+        drafted: false,
+        committed: false,
+        subjectMatch: 'none',
+        hlMatch: 'none',
+      });
+    }
     return next;
   });
-  return Object.assign({}, desk, { students: students });
+  const updated = Object.assign({}, desk, {
+    students: students,
+    supervisors: supervisorsAfterMoves(desk.supervisors || [], desk.students || [], students),
+  });
+  if (Array.isArray(desk.tokenRows)) updated.tokenRows = tokenRowsAfterEdits(desk.tokenRows, desk.students || [], students);
+  return updated;
 }
 
 export function overlayPendingSuggestions(desk, pending) {
@@ -265,6 +280,8 @@ export function overlayPendingEdits(desk, pending) {
     if (!emailOf(edit.staffId)) {
       return Object.assign({}, student, {
         token: null,
+        selectedInterdisciplinary: edit.interdisciplinary === true,
+        interdisciplinarySubject: edit.interdisciplinarySubject || '',
         pendingClear: !!(student.flags && student.flags.committed) || student.pendingClear,
         flags: Object.assign({}, student.flags, { drafted: false, committed: false, subjectMatch: 'none', hlMatch: 'none' }),
       });
@@ -273,14 +290,14 @@ export function overlayPendingEdits(desk, pending) {
     const prior = student.token;
     return Object.assign({}, student, {
       pendingClear: false,
+      selectedInterdisciplinary: edit.interdisciplinary === true,
+      interdisciplinarySubject: edit.interdisciplinarySubject || '',
       token: {
         id: prior && emailOf(prior.staffId) === emailOf(edit.staffId) ? prior.id : (edit.tokenId || 'pending'),
         staffId: emailOf(edit.staffId),
         staffName: person ? person.displayName : (edit.staffId || ''),
         eligibleSubjects: person && person.eligibleSubjects ? person.eligibleSubjects.slice() : (prior && prior.eligibleSubjects ? prior.eligibleSubjects.slice() : []),
         assignedSubject: edit.subject || '',
-        interdisciplinary: edit.interdisciplinary === true,
-        interdisciplinarySubject: edit.interdisciplinarySubject || '',
         status: 'draft',
       },
       flags: Object.assign({}, student.flags, {
@@ -308,7 +325,6 @@ function sameHeldToken(prior, next) {
   if (!prior || !next) return false;
   return emailOf(prior.staffId) === emailOf(next.staffId)
     && String(prior.assignedSubject || '').toLowerCase() === String(next.assignedSubject || '').toLowerCase()
-    && (prior.interdisciplinary === true) === (next.interdisciplinary === true)
     && String(prior.status || '') === String(next.status || '');
 }
 
@@ -322,8 +338,6 @@ function releaseTokenRow(rows, studentId, token) {
   row.studentId = '';
   row.studentName = '';
   row.assignedSubject = '';
-  row.interdisciplinary = false;
-  row.interdisciplinarySubject = '';
 }
 
 function takeTokenRow(rows, student, token) {
@@ -344,8 +358,6 @@ function takeTokenRow(rows, student, token) {
   row.studentId = student.studentId;
   row.studentName = student.displayName || student.studentId;
   row.assignedSubject = token.assignedSubject || '';
-  row.interdisciplinary = token.interdisciplinary === true;
-  row.interdisciplinarySubject = token.interdisciplinarySubject || '';
 }
 
 function tokenRowsAfterEdits(rows, beforeStudents, afterStudents) {

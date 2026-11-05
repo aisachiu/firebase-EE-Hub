@@ -15,9 +15,9 @@ export interface TokenRecord {
   eligibleSubjects: string[];
   allocatedTo: string;
   assignedSubject: string;
-  /** Coordinator marked this allocated token as an interdisciplinary EE. */
-  interdisciplinary: boolean;
-  interdisciplinarySubject: string;
+  /** Read-only migration fields from token records written by older versions. */
+  legacySelectedInterdisciplinary?: boolean;
+  legacyInterdisciplinarySubject?: string;
   status: TokenStatus;
   createdAt: string;
 }
@@ -32,6 +32,8 @@ export interface WorkspaceRecord {
   flagNote?: string;
   /** Subject the coordinator selected for allocation. Empty until a chip is clicked. */
   selectedSubject?: string;
+  selectedInterdisciplinary?: boolean;
+  interdisciplinarySubject?: string;
   /** Staff email suggested by the head of department. A token is chosen only when a coordinator approves. */
   suggestedStaffId?: string;
   /** selectedSubject at the time of the suggestion. */
@@ -54,7 +56,7 @@ export interface ColumnFlag {
 
 export interface LiveColumnMappings {
   core: { studentNumber: string; studentEmail: string };
-  subjectChoice: { primary: string; secondary: string; interdisciplinary: string };
+  subjectChoice: { primary: string; secondary: string; primaryScore: string; secondaryScore: string; interdisciplinary: string };
   dashboard: { hl: string; support: string };
 }
 
@@ -74,7 +76,7 @@ export const LIVE_SYNC_COOLDOWN_MS = 60_000;
 
 export const LIVE_SHEET_GROUPS = [
   { id: 'core', title: 'Core Data Fields', note: 'Map Student Number or Student Email. Live rows merge onto the roster with that primary key.' },
-  { id: 'subjectChoice', title: 'Subject Choice Mapping', note: 'The live sheet is the source of truth for these choices. Other choice keys from a static import stay in place.' },
+  { id: 'subjectChoice', title: 'Subject Choice Mapping', note: 'The live sheet is the source of truth for choices and their scores. Other choice keys from a static import stay in place.' },
   { id: 'dashboard', title: 'Dashboard Fields', note: 'HL match and the support flag are optional. Every other column on this sheet is ingested as a live dashboard field. Toggle those columns under Dashboard Fields.' },
 ] as const;
 
@@ -83,6 +85,8 @@ export const LIVE_SHEET_FIELDS = [
   { group: 'core', key: 'studentEmail', label: 'Student Email', hint: 'primary key' },
   { group: 'subjectChoice', key: 'primary', label: 'Primary choice', hint: 'required' },
   { group: 'subjectChoice', key: 'secondary', label: 'Secondary choice', hint: '' },
+  { group: 'subjectChoice', key: 'primaryScore', label: 'Choice 1 Score', hint: '' },
+  { group: 'subjectChoice', key: 'secondaryScore', label: 'Choice 2 Score', hint: '' },
   { group: 'subjectChoice', key: 'interdisciplinary', label: 'Is Interdisciplinary?', hint: '' },
   { group: 'dashboard', key: 'hl', label: 'HL match', hint: '' },
   { group: 'dashboard', key: 'support', label: 'Support flag', hint: '' },
@@ -91,6 +95,8 @@ export const LIVE_SHEET_FIELDS = [
 export interface AllocationSettings {
   primaryChoiceKey: string;
   secondaryChoiceKey: string;
+  primaryChoiceScoreKey: string;
+  secondaryChoiceScoreKey: string;
   interdisciplinaryKey: string;
   hlColumn: string;
   supportColumn: string;
@@ -158,8 +164,6 @@ export interface DeskToken {
   staffName: string;
   eligibleSubjects: string[];
   assignedSubject: string;
-  interdisciplinary: boolean;
-  interdisciplinarySubject: string;
   status: 'draft' | 'committed';
 }
 
@@ -172,8 +176,6 @@ export interface DeskTokenRow {
   studentId: string;
   studentName: string;
   assignedSubject: string;
-  interdisciplinary: boolean;
-  interdisciplinarySubject: string;
 }
 
 export interface AllocationChoiceRow {
@@ -197,11 +199,13 @@ export interface DeskStudent {
   requestedSubjects: { name: string; colour: string; shortName?: string }[];
   /** Distinct tags parsed from a comma-separated support flag cell. */
   supportFlags: string[];
-  choices: { primary: string; secondary: string; interdisciplinary: boolean };
+  choices: { primary: string; secondary: string; primaryScore: string; secondaryScore: string; interdisciplinary: boolean };
   /** Coordinator flag stored on the allocation workspace. */
   isFlagged: boolean;
   flagNote: string;
   selectedSubject: string;
+  selectedInterdisciplinary: boolean;
+  interdisciplinarySubject: string;
   suggestedStaffId: string;
   suggestedSubject: string;
   suggestedStaffName: string;
@@ -249,6 +253,8 @@ export function emptySettings(): AllocationSettings {
   return {
     primaryChoiceKey: '',
     secondaryChoiceKey: '',
+    primaryChoiceScoreKey: 'choice1_score',
+    secondaryChoiceScoreKey: 'choice2_score',
     interdisciplinaryKey: '',
     hlColumn: '',
     supportColumn: '',
@@ -271,7 +277,7 @@ export function emptySettings(): AllocationSettings {
 export function emptyColumnMappings(): LiveColumnMappings {
   return {
     core: { studentNumber: '', studentEmail: '' },
-    subjectChoice: { primary: '', secondary: '', interdisciplinary: '' },
+    subjectChoice: { primary: '', secondary: '', primaryScore: '', secondaryScore: '', interdisciplinary: '' },
     dashboard: { hl: '', support: '' },
   };
 }
@@ -417,8 +423,6 @@ export function planTokenTopUp(existing: TokenRecord[], rows: ParsedTokenRow[], 
           eligibleSubjects: row.eligibleSubjects.slice(),
           allocatedTo: '',
           assignedSubject: '',
-          interdisciplinary: false,
-          interdisciplinarySubject: '',
           status: 'available',
           createdAt: now,
         });
@@ -470,9 +474,7 @@ export function planDraft(input: {
   if (current && current.status === 'committed') {
     const same = !!staffId
       && current.staffId === staffId
-      && current.assignedSubject === subject
-      && (current.interdisciplinary === true) === interdisciplinary
-      && current.interdisciplinarySubject === interdisciplinarySubject;
+      && current.assignedSubject === subject;
     if (same) return { tokens: [], pendingClear: input.pendingClear, changed: false, error: '', code: '' };
     return {
       tokens: [],
@@ -486,7 +488,7 @@ export function planDraft(input: {
     if (!current) return { tokens: [], pendingClear: input.pendingClear, changed: false, error: '', code: '' };
     const published = !!input.memberSupervisorId && input.memberSupervisorId === current.staffId;
     return {
-      tokens: [{ ...current, allocatedTo: '', assignedSubject: '', interdisciplinary: false, interdisciplinarySubject: '', status: 'available' }],
+      tokens: [tokenForAssignment(current, { allocatedTo: '', assignedSubject: '', status: 'available' })],
       pendingClear: published ? true : input.pendingClear,
       changed: true,
       error: '',
@@ -496,7 +498,7 @@ export function planDraft(input: {
   if (current && current.staffId === staffId && (!requestedToken || requestedToken === current.id)) {
     let assignedSubject = subject;
     if (!bypassSubject) {
-      const mismatch = subjectMismatch(subject, current.eligibleSubjects);
+      const mismatch = tokenSubjectMismatch(subject, interdisciplinary, interdisciplinarySubject, current.eligibleSubjects);
       if (mismatch) {
         assignedSubject = overrideSubject ? (current.eligibleSubjects[0] || '') : '';
         if (!assignedSubject || subjectMismatch(assignedSubject, current.eligibleSubjects)) {
@@ -504,12 +506,11 @@ export function planDraft(input: {
         }
       }
     }
-    const sameFlag = (current.interdisciplinary === true) === interdisciplinary;
-    if (current.assignedSubject === assignedSubject && sameFlag && current.interdisciplinarySubject === interdisciplinarySubject) {
+    if (current.assignedSubject === assignedSubject) {
       return { tokens: [], pendingClear: input.pendingClear, changed: false, error: '', code: '' };
     }
     return {
-      tokens: [{ ...current, assignedSubject, interdisciplinary, interdisciplinarySubject, status: 'draft' }],
+      tokens: [tokenForAssignment(current, { assignedSubject, status: 'draft' })],
       pendingClear: false,
       changed: true,
       error: '',
@@ -525,18 +526,7 @@ export function planDraft(input: {
   }
   let preferred = requestedToken ? available.find((token) => token.id === requestedToken) : undefined;
   let assignedSubject = subject;
-  if (!preferred) {
-    preferred = subject
-      ? available.find((token) => bypassSubject || subjectsOverlap(subject, token.eligibleSubjects))
-      : available[0];
-  }
-  if (!preferred && overrideSubject && !bypassSubject) {
-    preferred = available.find((token) => token.eligibleSubjects.length);
-    assignedSubject = preferred ? preferred.eligibleSubjects[0] : subject;
-  }
-  if (!preferred && bypassSubject) preferred = available[0];
-  if (bypassSubject) assignedSubject = subject;
-  if (!preferred || (!bypassSubject && assignedSubject && !subjectsOverlap(assignedSubject, preferred.eligibleSubjects))) {
+  if (preferred && !bypassSubject && subject && tokenSubjectMismatch(subject, interdisciplinary, interdisciplinarySubject, preferred.eligibleSubjects)) {
     return {
       tokens: [],
       pendingClear: input.pendingClear,
@@ -545,9 +535,42 @@ export function planDraft(input: {
       code: 'conflict',
     };
   }
-  const updates: TokenRecord[] = [{ ...preferred, allocatedTo: studentId, assignedSubject, interdisciplinary, interdisciplinarySubject, status: 'draft' }];
-  if (current) updates.push({ ...current, allocatedTo: '', assignedSubject: '', interdisciplinary: false, interdisciplinarySubject: '', status: 'available' });
+  if (!preferred) {
+    preferred = subject
+      ? available.find((token) => bypassSubject || !tokenSubjectMismatch(subject, interdisciplinary, interdisciplinarySubject, token.eligibleSubjects))
+      : available[0];
+  }
+  if (!preferred && overrideSubject && !bypassSubject) {
+    preferred = available.find((token) => token.eligibleSubjects.length);
+    assignedSubject = preferred ? preferred.eligibleSubjects[0] : subject;
+  }
+  if (!preferred && bypassSubject) preferred = available[0];
+  if (bypassSubject) assignedSubject = subject;
+  if (!preferred || (!bypassSubject && assignedSubject && tokenSubjectMismatch(assignedSubject, interdisciplinary, interdisciplinarySubject, preferred.eligibleSubjects))) {
+    return {
+      tokens: [],
+      pendingClear: input.pendingClear,
+      changed: false,
+      error: `${subject} does not match the supervisor's EE subjects.`,
+      code: 'conflict',
+    };
+  }
+  const updates: TokenRecord[] = [tokenForAssignment(preferred, { allocatedTo: studentId, assignedSubject, status: 'draft' })];
+  if (current) updates.push(tokenForAssignment(current, { allocatedTo: '', assignedSubject: '', status: 'available' }));
   return { tokens: updates, pendingClear: false, changed: true, error: '', code: '' };
+}
+
+function tokenForAssignment(token: TokenRecord, update: Partial<TokenRecord>): TokenRecord {
+  const current = { ...token };
+  delete current.legacySelectedInterdisciplinary;
+  delete current.legacyInterdisciplinarySubject;
+  return { ...current, ...update };
+}
+
+function tokenSubjectMismatch(subject: string, interdisciplinary: boolean, interdisciplinarySubject: string, eligible: string[]): string {
+  if (!subject || subjectsOverlap(subject, eligible)) return '';
+  if (interdisciplinary && interdisciplinarySubject && subjectsOverlap(interdisciplinarySubject, eligible)) return '';
+  return `${subject} does not match the supervisor's EE subjects.`;
 }
 
 function subjectMismatch(subject: string, eligible: string[]): string {
@@ -562,6 +585,8 @@ export function planBatchDraft(input: {
   tokens: TokenRecord[];
   supervisorByStudent: Record<string, string>;
   pendingClearByStudent: Record<string, boolean>;
+  selectedInterdisciplinaryByStudent?: Record<string, boolean>;
+  interdisciplinarySubjectByStudent?: Record<string, string>;
   overrideSubject?: boolean;
 }): BatchDraftPlan {
   const working = input.tokens.map((token) => ({ ...token, eligibleSubjects: token.eligibleSubjects.slice() }));
@@ -584,6 +609,8 @@ export function planBatchDraft(input: {
       tokens: working,
       memberSupervisorId: normalizeEmail(input.supervisorByStudent[studentId]),
       pendingClear: !!input.pendingClearByStudent[studentId],
+      interdisciplinary: input.selectedInterdisciplinaryByStudent?.[studentId] === true,
+      interdisciplinarySubject: text(input.interdisciplinarySubjectByStudent?.[studentId]),
       overrideSubject: input.overrideSubject === true,
     });
     if (plan.error) {
@@ -1209,6 +1236,8 @@ export function emptyWorkspaceRecord(studentId: string, now: string): WorkspaceR
     isFlagged: false,
     flagNote: '',
     selectedSubject: '',
+    selectedInterdisciplinary: undefined,
+    interdisciplinarySubject: '',
     suggestedStaffId: '',
     suggestedSubject: '',
     updatedAt: now,
@@ -1221,6 +1250,8 @@ function carriedWorkspace(existing: WorkspaceRecord | undefined) {
     isFlagged: existing?.isFlagged === true,
     flagNote: text(existing?.flagNote),
     selectedSubject: text(existing?.selectedSubject),
+    selectedInterdisciplinary: existing?.selectedInterdisciplinary === true,
+    interdisciplinarySubject: text(existing?.interdisciplinarySubject),
     suggestedStaffId: normalizeEmail(existing?.suggestedStaffId),
     suggestedSubject: text(existing?.suggestedSubject),
   };
@@ -1431,6 +1462,7 @@ export function tokenFromDoc(doc: Doc): TokenRecord | null {
   const raw = text(doc.status).toLowerCase();
   const allocatedTo = normalizeEmail(doc.allocatedTo);
   const status: TokenStatus = (raw === 'draft' || raw === 'committed') && allocatedTo ? raw : 'available';
+  const legacyInterdisciplinary = doc.interdisciplinary === true || doc.Interdisciplinary === true;
   return {
     id,
     cohortId: text(doc.cohortId),
@@ -1438,8 +1470,8 @@ export function tokenFromDoc(doc: Doc): TokenRecord | null {
     eligibleSubjects: subjectLoadNames(doc.eligibleSubjects),
     allocatedTo: status === 'available' ? '' : allocatedTo,
     assignedSubject: status === 'available' ? '' : text(doc.assignedSubject),
-    interdisciplinary: status !== 'available' && doc.interdisciplinary === true,
-    interdisciplinarySubject: status !== 'available' && doc.interdisciplinary === true ? text(doc.interdisciplinarySubject || doc.InterdisciplinarySubject) : '',
+    legacySelectedInterdisciplinary: status !== 'available' && legacyInterdisciplinary,
+    legacyInterdisciplinarySubject: status !== 'available' && legacyInterdisciplinary ? text(doc.interdisciplinarySubject || doc.InterdisciplinarySubject) : '',
     status,
     createdAt: text(doc.createdAt),
   };
@@ -1456,7 +1488,20 @@ export function workspaceFromDoc(doc: Doc, id: string): WorkspaceRecord {
     selectedSubject: text(doc.selectedSubject),
     suggestedStaffId: normalizeEmail(doc.suggestedStaffId),
     suggestedSubject: text(doc.suggestedSubject),
+    selectedInterdisciplinary: typeof doc.selectedInterdisciplinary === 'boolean' ? doc.selectedInterdisciplinary : undefined,
+    interdisciplinarySubject: text(doc.interdisciplinarySubject),
     updatedAt: text(doc.updatedAt),
+  };
+}
+
+export function workspaceWithLegacyTokenInterdisciplinary(workspace: WorkspaceRecord, token: TokenRecord | undefined): WorkspaceRecord {
+  const selectedInterdisciplinary = workspace.selectedInterdisciplinary ?? token?.legacySelectedInterdisciplinary === true;
+  return {
+    ...workspace,
+    selectedInterdisciplinary,
+    interdisciplinarySubject: selectedInterdisciplinary
+      ? text(workspace.interdisciplinarySubject) || text(token?.legacyInterdisciplinarySubject)
+      : '',
   };
 }
 
@@ -1489,6 +1534,8 @@ export function settingsFromDoc(doc: Doc | null): AllocationSettings {
   return {
     primaryChoiceKey: text(doc.primaryChoiceKey),
     secondaryChoiceKey: text(doc.secondaryChoiceKey),
+    primaryChoiceScoreKey: text(doc.primaryChoiceScoreKey) || base.primaryChoiceScoreKey,
+    secondaryChoiceScoreKey: text(doc.secondaryChoiceScoreKey) || base.secondaryChoiceScoreKey,
     interdisciplinaryKey: text(doc.interdisciplinaryKey),
     hlColumn: text(doc.hlColumn),
     supportColumn: text(doc.supportColumn),
@@ -1549,6 +1596,8 @@ export function columnMappingsFrom(value: unknown): LiveColumnMappings {
     subjectChoice: {
       primary: text(source.subjectChoice?.primary),
       secondary: text(source.subjectChoice?.secondary),
+      primaryScore: text(source.subjectChoice?.primaryScore),
+      secondaryScore: text(source.subjectChoice?.secondaryScore),
       interdisciplinary: text(source.subjectChoice?.interdisciplinary),
     },
     dashboard: {
@@ -1599,12 +1648,16 @@ export function settingsForLiveLink(
   };
   if (text(next.columnMappings.subjectChoice.primary) && !next.primaryChoiceKey) next.primaryChoiceKey = 'choice1';
   if (text(next.columnMappings.subjectChoice.secondary) && !next.secondaryChoiceKey) next.secondaryChoiceKey = 'choice2';
+  if (!next.primaryChoiceScoreKey) next.primaryChoiceScoreKey = 'choice1_score';
+  if (!next.secondaryChoiceScoreKey) next.secondaryChoiceScoreKey = 'choice2_score';
   if (text(next.columnMappings.subjectChoice.interdisciplinary) && !next.interdisciplinaryKey) next.interdisciplinaryKey = 'interdisciplinary';
   if (text(next.columnMappings.dashboard.hl)) next.hlColumn = next.columnMappings.dashboard.hl;
   if (text(next.columnMappings.dashboard.support)) next.supportColumn = next.columnMappings.dashboard.support;
   const choiceKeys = new Set(next.detectedChoiceKeys);
   if (text(next.columnMappings.subjectChoice.primary)) choiceKeys.add(next.primaryChoiceKey || 'choice1');
   if (text(next.columnMappings.subjectChoice.secondary)) choiceKeys.add(next.secondaryChoiceKey || 'choice2');
+  if (text(next.columnMappings.subjectChoice.primaryScore)) choiceKeys.add(next.primaryChoiceScoreKey);
+  if (text(next.columnMappings.subjectChoice.secondaryScore)) choiceKeys.add(next.secondaryChoiceScoreKey);
   if (text(next.columnMappings.subjectChoice.interdisciplinary)) choiceKeys.add(next.interdisciplinaryKey || 'interdisciplinary');
   next.detectedChoiceKeys = [...choiceKeys].sort();
   return ingestLiveHeaders(next, headers);
@@ -1711,6 +1764,8 @@ export interface LiveParsedRow {
   studentEmail: string;
   primary: string | number | boolean | '';
   secondary: string | number | boolean | '';
+  primaryScore: string | number | boolean | '';
+  secondaryScore: string | number | boolean | '';
   interdisciplinary: string | number | boolean | '';
   hl: string | number | boolean | '';
   support: string | number | boolean | '';
@@ -1741,6 +1796,8 @@ export function parseLiveSheet(grid: Grid, mappings: LiveColumnMappings): { rows
     studentEmail: mappedColumn(headers, mappings.core.studentEmail),
     primary: mappedColumn(headers, mappings.subjectChoice.primary),
     secondary: mappedColumn(headers, mappings.subjectChoice.secondary),
+    primaryScore: mappedColumn(headers, mappings.subjectChoice.primaryScore),
+    secondaryScore: mappedColumn(headers, mappings.subjectChoice.secondaryScore),
     interdisciplinary: mappedColumn(headers, mappings.subjectChoice.interdisciplinary),
     hl: mappedColumn(headers, mappings.dashboard.hl),
     support: mappedColumn(headers, mappings.dashboard.support),
@@ -1755,6 +1812,8 @@ export function parseLiveSheet(grid: Grid, mappings: LiveColumnMappings): { rows
       studentEmail: columns.studentEmail < 0 ? '' : normalizeEmail(row[columns.studentEmail]),
       primary: cellAt(row, columns.primary),
       secondary: cellAt(row, columns.secondary),
+      primaryScore: cellAt(row, columns.primaryScore),
+      secondaryScore: cellAt(row, columns.secondaryScore),
       interdisciplinary: cellAt(row, columns.interdisciplinary),
       hl: cellAt(row, columns.hl),
       support: cellAt(row, columns.support),
@@ -1815,6 +1874,8 @@ export function mergeLiveChoiceRow(
   const mappings = settings.columnMappings;
   if (text(mappings.subjectChoice.primary)) assignLiveValue(subjectChoices, settings.primaryChoiceKey || 'choice1', row.primary);
   if (text(mappings.subjectChoice.secondary)) assignLiveValue(subjectChoices, settings.secondaryChoiceKey || 'choice2', row.secondary);
+  if (text(mappings.subjectChoice.primaryScore)) assignLiveValue(subjectChoices, settings.primaryChoiceScoreKey || 'choice1_score', row.primaryScore);
+  if (text(mappings.subjectChoice.secondaryScore)) assignLiveValue(subjectChoices, settings.secondaryChoiceScoreKey || 'choice2_score', row.secondaryScore);
   if (text(mappings.subjectChoice.interdisciplinary)) assignLiveValue(subjectChoices, settings.interdisciplinaryKey || 'interdisciplinary', row.interdisciplinary);
   Object.keys(row.fields || {}).forEach((key) => assignLiveValue(dynamicData, key, row.fields[key]));
   if (text(mappings.dashboard.hl)) assignLiveValue(dynamicData, settings.hlColumn || mappings.dashboard.hl, row.hl);
@@ -1848,6 +1909,8 @@ export function settingsAfterWorkspaceIngest(
   const mappings = settings.columnMappings;
   if (text(mappings.subjectChoice.primary)) choices.add(settings.primaryChoiceKey || 'choice1');
   if (text(mappings.subjectChoice.secondary)) choices.add(settings.secondaryChoiceKey || 'choice2');
+  if (text(mappings.subjectChoice.primaryScore)) choices.add(settings.primaryChoiceScoreKey || 'choice1_score');
+  if (text(mappings.subjectChoice.secondaryScore)) choices.add(settings.secondaryChoiceScoreKey || 'choice2_score');
   if (text(mappings.subjectChoice.interdisciplinary)) choices.add(settings.interdisciplinaryKey || 'interdisciplinary');
   if (text(mappings.dashboard.hl) && settings.hlColumn) dynamic.add(settings.hlColumn);
   if (text(mappings.dashboard.support) && settings.supportColumn) dynamic.add(settings.supportColumn);
@@ -1894,6 +1957,8 @@ function mappedLiveHeaders(mappings: LiveColumnMappings): string[] {
     mappings.core.studentEmail,
     mappings.subjectChoice.primary,
     mappings.subjectChoice.secondary,
+    mappings.subjectChoice.primaryScore,
+    mappings.subjectChoice.secondaryScore,
     mappings.subjectChoice.interdisciplinary,
     mappings.dashboard.hl,
     mappings.dashboard.support,
@@ -1905,6 +1970,8 @@ function liveOwnedChoiceKeys(settings: AllocationSettings): string[] {
   const mappings = settings.columnMappings;
   if (text(mappings.subjectChoice.primary)) keys.push(settings.primaryChoiceKey || 'choice1');
   if (text(mappings.subjectChoice.secondary)) keys.push(settings.secondaryChoiceKey || 'choice2');
+  if (text(mappings.subjectChoice.primaryScore)) keys.push(settings.primaryChoiceScoreKey || 'choice1_score');
+  if (text(mappings.subjectChoice.secondaryScore)) keys.push(settings.secondaryChoiceScoreKey || 'choice2_score');
   if (text(mappings.subjectChoice.interdisciplinary)) keys.push(settings.interdisciplinaryKey || 'interdisciplinary');
   return keys;
 }
@@ -2104,6 +2171,8 @@ export function applySavedConfig(current: AllocationSettings, incoming: Doc): Al
     ...current,
     primaryChoiceKey: allowedKey(incoming.primaryChoiceKey, choiceKeys),
     secondaryChoiceKey: allowedKey(incoming.secondaryChoiceKey, choiceKeys),
+    primaryChoiceScoreKey: current.primaryChoiceScoreKey || 'choice1_score',
+    secondaryChoiceScoreKey: current.secondaryChoiceScoreKey || 'choice2_score',
     interdisciplinaryKey: allowedKey(incoming.interdisciplinaryKey, choiceKeys),
     hlColumn: allowedKey(incoming.hlColumn, dynamicKeys),
     supportColumn: allowedKey(incoming.supportColumn, dynamicKeys),
@@ -2454,6 +2523,12 @@ export function buildDesk(input: {
       const held = tokensByStudent.get(studentId) || [];
       if (held.length > 1) warnings.push(`${studentId} has more than one token.`);
       const token = held.find((item) => item.status === 'draft') || held[0] || null;
+      const selectedInterdisciplinary = workspace?.selectedInterdisciplinary
+        ?? token?.legacySelectedInterdisciplinary
+        ?? false;
+      const interdisciplinarySubject = selectedInterdisciplinary
+        ? text(workspace?.interdisciplinarySubject) || text(token?.legacyInterdisciplinarySubject)
+        : '';
       const choiceSource = input.choiceSources && input.choiceSources.has(studentId)
         ? input.choiceSources.get(studentId)
         : workspace?.subjectChoices;
@@ -2461,6 +2536,8 @@ export function buildDesk(input: {
       const choices = {
         primary: choiceText(workspace?.subjectChoices, input.settings.primaryChoiceKey),
         secondary: choiceText(workspace?.subjectChoices, input.settings.secondaryChoiceKey),
+        primaryScore: choiceText(workspace?.subjectChoices, input.settings.primaryChoiceScoreKey),
+        secondaryScore: choiceText(workspace?.subjectChoices, input.settings.secondaryChoiceScoreKey),
         interdisciplinary: interdisciplinaryMarked(choiceSource, input.settings, { ...(workspace?.dynamicData || {}), ...member }),
       };
       const assignedSubject = subjectNamesForLoad(token?.assignedSubject || '', catalogue)[0] || '';
@@ -2479,6 +2556,8 @@ export function buildDesk(input: {
         isFlagged: workspace?.isFlagged === true,
         flagNote: text(workspace?.flagNote),
         selectedSubject: text(workspace?.selectedSubject),
+        selectedInterdisciplinary,
+        interdisciplinarySubject,
         suggestedStaffId: normalizeEmail(workspace?.suggestedStaffId),
         suggestedSubject: text(workspace?.suggestedSubject),
         suggestedStaffName: names.get(normalizeEmail(workspace?.suggestedStaffId)) || '',
@@ -2490,8 +2569,6 @@ export function buildDesk(input: {
           staffName: names.get(token.staffId) || token.staffId,
           eligibleSubjects: eligible.slice(),
           assignedSubject,
-          interdisciplinary: token.interdisciplinary === true,
-          interdisciplinarySubject: token.interdisciplinarySubject,
           status: token.status as 'draft' | 'committed',
         } : null,
         choices,
@@ -2551,8 +2628,6 @@ export function buildDesk(input: {
       studentId: token.allocatedTo,
       studentName: token.allocatedTo ? (studentNames.get(token.allocatedTo) || token.allocatedTo) : '',
       assignedSubject: subjectNamesForLoad(token.assignedSubject, catalogue)[0] || '',
-      interdisciplinary: token.interdisciplinary === true,
-      interdisciplinarySubject: token.interdisciplinarySubject,
     })),
     choiceRows: choiceRowsFrom(input.members, input.workspaces),
     settings: input.settings,
@@ -2583,6 +2658,8 @@ const ALLOCATION_DRAFT_HEADERS = [
   'SelectedSubject',
   'SuggestedStaffEmail',
   'SuggestedSubject',
+  'SelectedInterdisciplinary',
+  'InterdisciplinarySubject',
 ] as const;
 
 export function allocationExportRows(students: DeskStudent[], settings: AllocationSettings): (string | number | boolean)[][] {
@@ -2602,6 +2679,8 @@ export function allocationExportRows(students: DeskStudent[], settings: Allocati
       student.selectedSubject || '',
       student.suggestedStaffId || '',
       student.suggestedSubject || '',
+      student.selectedInterdisciplinary === true,
+      student.interdisciplinarySubject || '',
     ];
     cards.forEach((key) => {
       const value = student.dynamicData[key];
@@ -2622,6 +2701,8 @@ export interface AllocationDraftSheetRow {
   selectedSubject?: string;
   suggestedStaffEmail?: string;
   suggestedSubject?: string;
+  selectedInterdisciplinary?: boolean;
+  interdisciplinarySubject?: string;
 }
 
 export function parseAllocationDraftGrid(grid: Grid): { rows: AllocationDraftSheetRow[]; warnings: string[] } {
@@ -2634,6 +2715,8 @@ export function parseAllocationDraftGrid(grid: Grid): { rows: AllocationDraftShe
   const selectedIndex = headerIndex(headers, ['selectedsubject', 'selected subject']);
   const suggestedStaffIndex = headerIndex(headers, ['suggestedstaffemail', 'suggested staff email']);
   const suggestedSubjectIndex = headerIndex(headers, ['suggestedsubject', 'suggested subject']);
+  const interdisciplinaryIndex = headerIndex(headers, ['selectedinterdisciplinary', 'selected interdisciplinary']);
+  const interdisciplinarySubjectIndex = headerIndex(headers, ['interdisciplinarysubject', 'interdisciplinary subject']);
   const warnings: string[] = [];
   const seen = new Set<string>();
   const rows: AllocationDraftSheetRow[] = [];
@@ -2652,12 +2735,25 @@ export function parseAllocationDraftGrid(grid: Grid): { rows: AllocationDraftShe
     const selectedSubject = cell(row, selectedIndex);
     const suggestedStaffEmail = cell(row, suggestedStaffIndex);
     const suggestedSubject = cell(row, suggestedSubjectIndex);
+    const interdisciplinary = cell(row, interdisciplinaryIndex);
+    const interdisciplinarySubject = cell(row, interdisciplinarySubjectIndex);
     if (status !== undefined) entry.status = status;
     if (supervisorEmail !== undefined) entry.supervisorEmail = supervisorEmail;
     if (assignedSubject !== undefined) entry.assignedSubject = assignedSubject;
     if (selectedSubject !== undefined) entry.selectedSubject = selectedSubject;
     if (suggestedStaffEmail !== undefined) entry.suggestedStaffEmail = suggestedStaffEmail;
     if (suggestedSubject !== undefined) entry.suggestedSubject = suggestedSubject;
+    if (interdisciplinary !== undefined) {
+      const normalized = interdisciplinary.toLowerCase();
+      if (!normalized || normalized === 'false' || normalized === 'no' || normalized === '0') {
+        entry.selectedInterdisciplinary = false;
+      } else if (normalized === 'true' || normalized === 'yes' || normalized === '1') {
+        entry.selectedInterdisciplinary = true;
+      } else {
+        warnings.push(`${grid.title} row ${line} SelectedInterdisciplinary must be true or false.`);
+      }
+    }
+    if (interdisciplinarySubject !== undefined) entry.interdisciplinarySubject = interdisciplinarySubject;
     if (seen.has(studentId)) warnings.push(`${grid.title} repeats ${studentId}. The last row is kept.`);
     seen.add(studentId);
     const existing = rows.findIndex((item) => item.studentId === studentId);
@@ -2763,7 +2859,7 @@ export function planDraftTokenBackfill(input: {
 export interface AllocationDraftIngestPlan {
   workspaceWrites: WorkspaceRecord[];
   tokenWrites: TokenRecord[];
-  draftChanges: { studentId: string; before?: TokenRecord; after?: TokenRecord }[];
+  draftChanges: { studentId: string; before?: TokenRecord; after?: TokenRecord; beforeWorkspace?: WorkspaceRecord; afterWorkspace?: WorkspaceRecord }[];
   warnings: string[];
   rows: AllocationPreviewRow[];
   writing: number;
@@ -2799,7 +2895,13 @@ export function planAllocationDraftIngest(input: {
       return;
     }
     const next = prior ? copyWorkspace(prior, input.now) : emptyWorkspaceRecord(studentId, input.now);
+    const workspaceBefore = workspaceWithLegacyTokenInterdisciplinary(
+      next,
+      beforeToken === 'conflict' ? undefined : beforeToken,
+    );
+    Object.assign(next, workspaceBefore);
     applySheetSubject(row, next, input.activeSubjects, warnings);
+    applySheetInterdisciplinary(row, next, input.activeSubjects, warnings);
     applySheetSuggestion(row, prior, next, input.activeSubjects, warnings);
     applySheetToken(row, studentId, tokens, roster.get(studentId) || '', next, warnings, draftChanges);
     const after = heldToken(tokens, studentId);
@@ -2811,6 +2913,11 @@ export function planAllocationDraftIngest(input: {
       return;
     }
     if (draftFieldsChanged(prior, next)) workspaceWrites.push(next);
+    const draftChange = draftChanges.find((change) => change.studentId === studentId);
+    if (draftChange) {
+      draftChange.beforeWorkspace = prior || emptyWorkspaceRecord(studentId, '');
+      draftChange.afterWorkspace = next;
+    }
     rows.push({ id: studentId, action: prior || hubToken ? 'Update' : 'Add', incoming, hub });
   });
   const tokenWrites = tokens.filter((token) => {
@@ -2835,6 +2942,28 @@ function applySheetSubject(row: AllocationDraftSheetRow, next: WorkspaceRecord, 
     return;
   }
   next.selectedSubject = canonical;
+}
+
+function applySheetInterdisciplinary(row: AllocationDraftSheetRow, next: WorkspaceRecord, active: string[], warnings: string[]): void {
+  if (row.selectedInterdisciplinary !== undefined) {
+    next.selectedInterdisciplinary = row.selectedInterdisciplinary;
+    if (!row.selectedInterdisciplinary) {
+      next.interdisciplinarySubject = '';
+      return;
+    }
+  }
+  if (row.interdisciplinarySubject === undefined) return;
+  const raw = row.interdisciplinarySubject.trim();
+  if (!raw) {
+    next.interdisciplinarySubject = '';
+    return;
+  }
+  const canonical = namedActiveSubject(raw, active);
+  if (!canonical) {
+    warnings.push(`${row.studentId}: ${raw} is not an active subject. Interdisciplinary subject was left unchanged.`);
+    return;
+  }
+  next.interdisciplinarySubject = canonical;
 }
 
 function applySheetSuggestion(
@@ -2899,7 +3028,7 @@ function applySheetToken(
   memberSupervisorId: string,
   workspace: WorkspaceRecord,
   warnings: string[],
-  draftChanges: { studentId: string; before?: TokenRecord; after?: TokenRecord }[],
+  draftChanges: { studentId: string; before?: TokenRecord; after?: TokenRecord; beforeWorkspace?: WorkspaceRecord; afterWorkspace?: WorkspaceRecord }[],
 ): void {
   if (row.supervisorEmail === undefined) return;
   const current = heldToken(tokens, studentId);
@@ -2950,7 +3079,7 @@ function commitSheetDraft(
   workspace: WorkspaceRecord,
   before: TokenRecord | undefined,
   warnings: string[],
-  draftChanges: { studentId: string; before?: TokenRecord; after?: TokenRecord }[],
+  draftChanges: { studentId: string; before?: TokenRecord; after?: TokenRecord; beforeWorkspace?: WorkspaceRecord; afterWorkspace?: WorkspaceRecord }[],
 ): void {
   const plan = planDraft({
     studentId,
@@ -2959,8 +3088,8 @@ function commitSheetDraft(
     tokens,
     memberSupervisorId,
     pendingClear: workspace.pendingClear,
-    interdisciplinary: before?.interdisciplinary === true,
-    interdisciplinarySubject: before?.interdisciplinarySubject || '',
+    interdisciplinary: workspace.selectedInterdisciplinary === true,
+    interdisciplinarySubject: workspace.interdisciplinarySubject || '',
   });
   if (plan.error) {
     warnings.push(`${studentId}: ${plan.error}`);
@@ -2973,7 +3102,13 @@ function commitSheetDraft(
   });
   workspace.pendingClear = plan.pendingClear;
   const after = heldToken(tokens, studentId);
-  draftChanges.push({ studentId, before, after: after && after !== 'conflict' ? after : undefined });
+  draftChanges.push({
+    studentId,
+    before,
+    after: after && after !== 'conflict' ? after : undefined,
+    beforeWorkspace: workspace,
+    afterWorkspace: workspace,
+  });
 }
 
 function sheetDraftStatus(value: string | undefined): '' | 'committed' | 'draft' | 'unallocated' {
@@ -3017,15 +3152,20 @@ function copyWorkspace(workspace: WorkspaceRecord, now: string): WorkspaceRecord
     selectedSubject: text(workspace.selectedSubject),
     suggestedStaffId: normalizeEmail(workspace.suggestedStaffId),
     suggestedSubject: text(workspace.suggestedSubject),
+    selectedInterdisciplinary: workspace.selectedInterdisciplinary === true,
+    interdisciplinarySubject: text(workspace.interdisciplinarySubject),
     updatedAt: now,
   };
 }
 
 function draftFieldsChanged(before: WorkspaceRecord | undefined, after: WorkspaceRecord): boolean {
-  if (!before) return !!(after.selectedSubject || after.suggestedStaffId || after.suggestedSubject || after.pendingClear);
+  if (!before) return !!(after.selectedSubject || after.suggestedStaffId || after.suggestedSubject
+    || after.selectedInterdisciplinary || after.interdisciplinarySubject || after.pendingClear);
   return text(before.selectedSubject) !== after.selectedSubject
     || normalizeEmail(before.suggestedStaffId) !== after.suggestedStaffId
     || text(before.suggestedSubject) !== after.suggestedSubject
+    || (before.selectedInterdisciplinary === true) !== (after.selectedInterdisciplinary === true)
+    || text(before.interdisciplinarySubject) !== text(after.interdisciplinarySubject)
     || (before.pendingClear === true) !== after.pendingClear;
 }
 
@@ -3034,8 +3174,6 @@ function tokenAssignmentChanged(before: TokenRecord, after: TokenRecord): boolea
     || before.status !== after.status
     || before.allocatedTo !== after.allocatedTo
     || before.assignedSubject !== after.assignedSubject
-    || before.interdisciplinary !== after.interdisciplinary
-    || before.interdisciplinarySubject !== after.interdisciplinarySubject
     || before.eligibleSubjects.join('\n') !== after.eligibleSubjects.join('\n');
 }
 
