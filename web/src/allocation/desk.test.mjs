@@ -475,8 +475,11 @@ test('allocation desk tags, filter, column order, supervisor cues, and token loa
     assert.doesNotMatch(html, /Resync Live Choice Data/);
     assert.match(html, /class="alloc-drawer"/);
     assert.match(html, /id="alloc-drawer-peek"/);
-    assert.match(html, />Token Overview</);
+    assert.match(html, />Overview</);
+    assert.doesNotMatch(html, />Token Overview</);
     assert.doesNotMatch(html, />Token load</);
+    assert.doesNotMatch(html, /data-alloc-load="subject"/);
+    assert.doesNotMatch(html, /Subject capacity/);
     assert.doesNotMatch(html, /class="alloc-side"/);
 
     const sehs = 'Sports, Exercise, and Health Science (SEHS)';
@@ -949,6 +952,98 @@ test('allocation listeners unsubscribe when the dashboard is left', async () => 
   }
 });
 
+test('department selector does not defer live allocation repaint', async () => {
+  const server = await createServer({ server: { middlewareMode: true }, appType: 'custom', logLevel: 'error' });
+  try {
+    const deskMod = await server.ssrLoadModule('/src/allocation/desk.js');
+    const activeControl = function(selector) {
+      return {
+        closest(value) { return value === '#alloc-body' ? {} : null; },
+        matches(value) {
+          if (value === '#alloc-hod-department') return selector === '#alloc-hod-department';
+          return value === 'select, input, textarea';
+        },
+      };
+    };
+    assert.equal(deskMod.shouldHoldAllocationPaint(activeControl('#alloc-hod-department')), false);
+    assert.equal(deskMod.shouldHoldAllocationPaint(activeControl('select')), true);
+  } finally {
+    await server.close();
+  }
+});
+
+test('allocation overviews repaint on live snapshots in dashboard and department views', async () => {
+  const server = await createServer({ server: { middlewareMode: true }, appType: 'custom', logLevel: 'error' });
+  const previousWindow = globalThis.window;
+  try {
+    globalThis.window = globalThis;
+    let handlers;
+    window.eeCall = function() { return new Promise(function() {}); };
+    window.eeWatchAllocation = function(cohortId, nextHandlers) {
+      assert.equal(cohortId, '2026');
+      handlers = nextHandlers;
+      return function() {};
+    };
+    const live = await server.ssrLoadModule('/src/allocation/realtime.js');
+    const stateMod = await server.ssrLoadModule('/src/shared/state.js');
+    const state = stateMod.state;
+    state.cohortId = '2026';
+    state.section = 'allocation';
+    state.allocationView = 'dashboard';
+    let paints = 0;
+    live.setAllocationPainter(function() { paints += 1; });
+    live.beginAllocationWatch('2026');
+
+    const sources = {
+      members: [],
+      workspace: [],
+      tokens: [],
+      settings: null,
+      hodStatus: null,
+      staff: [],
+      subjects: [],
+      auditLogs: [],
+    };
+    handlers.onData(sources);
+    assert.equal(paints, 1);
+    assert.equal(state.allocationDesk.students.length, 0);
+
+    state.allocationView = 'hod';
+    handlers.onData({
+      ...sources,
+      members: [{ StudentId: 'jane@school.edu', Surname: 'Doe', 'First Name': 'Jane', eeActive: true }],
+      workspace: [{
+        id: 'jane@school.edu',
+        studentId: 'jane@school.edu',
+        subjectChoices: { choice1: 'Economics' },
+        selectedSubject: 'Economics',
+      }],
+    });
+    assert.equal(paints, 2);
+    assert.equal(state.allocationDesk.students[0].selectedSubject, 'Economics');
+
+    state.allocationView = 'dashboard';
+    handlers.onData({
+      ...sources,
+      members: [{ StudentId: 'jane@school.edu', Surname: 'Doe', 'First Name': 'Jane', eeActive: true }],
+      workspace: [{
+        id: 'jane@school.edu',
+        studentId: 'jane@school.edu',
+        subjectChoices: { choice1: 'History' },
+        selectedSubject: 'History',
+      }],
+    });
+    assert.equal(paints, 3);
+    assert.equal(state.allocationDesk.students[0].selectedSubject, 'History');
+    live.releaseAllocationWatch();
+    live.setAllocationPainter(null);
+  } finally {
+    if (previousWindow === undefined) delete globalThis.window;
+    else globalThis.window = previousWindow;
+    await server.close();
+  }
+});
+
 test('suggestions, department rows, and the HOD drawer', async () => {
   const server = await createServer({ server: { middlewareMode: true }, appType: 'custom', logLevel: 'error' });
   try {
@@ -1096,14 +1191,16 @@ test('coordinator token overview summarizes workflow stages and drilldown IDs', 
     }, { pool: 4, choice1: 2, undrafted: 1, undraftedChoice1: 1 });
 
     const html = deskMod.allocationLoadPanel(workflow, supervisors());
-    assert.match(html, /Subject Allocation summary/);
+    assert.doesNotMatch(html, /Subject Allocation summary/);
+    assert.doesNotMatch(html, /<h3>/);
     assert.match(html, /Subject Drafted/);
     assert.match(html, /Pool \(1\)/);
     assert.match(html, /Undrafted \(1\)/);
     assert.match(html, /data-alloc-workflow-filter="subject-pool" data-alloc-workflow-subject="Psychology" aria-label="TTL for Psychology: 1"/);
     assert.match(html, /data-alloc-load="hod-overview"/);
     assert.doesNotMatch(html, /<h3>HOD Proposals<\/h3>/);
-    assert.match(html, /Coordinator assignment/);
+    assert.doesNotMatch(html, /Coordinator assignment/);
+    assert.doesNotMatch(html, /Draft assignments/);
     state.allocationLoadView = 'hod-overview';
     const hodHtml = deskMod.allocationLoadPanel(workflow, supervisors());
     assert.match(hodHtml, /HOD Proposals/);
