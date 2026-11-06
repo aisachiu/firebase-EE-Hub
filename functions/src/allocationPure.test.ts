@@ -541,10 +541,40 @@ test('requested subjects unwrap JSON cells and Choice columns into catalogue nam
     subjects,
     choiceSources: new Map([[JANE, { choice1: { subject: 'Psychology' }, choice2: 'Theater', interdisciplinary: 'deciding' }]]),
   });
+
   assert.deepEqual(desk.students[0].requestedSubjects.map((item) => item.name), ['Psychology', 'Theater']);
   assert.equal(desk.students[0].choices.interdisciplinary, true);
   assert.equal(interdisciplinarySignal('no'), false);
   assert.equal(interdisciplinarySignal(true), true);
+});
+
+test('requested subjects ignore choice score fields regardless of value type', () => {
+  const settings = {
+    primaryChoiceKey: 'choice1',
+    secondaryChoiceKey: 'choice2',
+    primaryChoiceScoreKey: 'choice1_score',
+    secondaryChoiceScoreKey: 'choice2_score',
+  };
+  assert.deepEqual(requestedSubjectNames({
+    choice1: 'Economics',
+    choice2: 'History',
+    choice1_score: '6',
+    choice2_score: '-',
+  }, settings), ['Economics', 'History']);
+  assert.deepEqual(requestedSubjectNames({
+    choice1: 'Economics',
+    choice2: 'History',
+    choice1_score: 6,
+  }, settings), ['Economics', 'History']);
+  assert.deepEqual(requestedSubjectNames({
+    choice1: 'Economics',
+    choice2: 'History',
+  }, settings), ['Economics', 'History']);
+  assert.deepEqual(requestedSubjectNames({
+    choice1: 'Economics',
+    choice2: 'History',
+    custom_score_field: 'A',
+  }, { ...settings, primaryChoiceScoreKey: 'custom_score_field' }), ['Economics', 'History']);
 });
 
 test('token load keeps a comma-joined subject string as one entry and still lists real arrays', () => {

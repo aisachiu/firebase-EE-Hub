@@ -2325,7 +2325,13 @@ export function interdisciplinaryMarked(choices: unknown, settings?: { interdisc
   return values.some((value) => interdisciplinarySignal(value));
 }
 
-export function requestedSubjectNames(choices: unknown, settings?: { primaryChoiceKey?: string; secondaryChoiceKey?: string; interdisciplinaryKey?: string }): string[] {
+export function requestedSubjectNames(choices: unknown, settings?: {
+  primaryChoiceKey?: string;
+  secondaryChoiceKey?: string;
+  primaryChoiceScoreKey?: string;
+  secondaryChoiceScoreKey?: string;
+  interdisciplinaryKey?: string;
+}): string[] {
   const ordered: string[] = [];
   const pushAll = (labels: string[]) => {
     labels.forEach((label) => {
@@ -2343,6 +2349,12 @@ export function requestedSubjectNames(choices: unknown, settings?: { primaryChoi
   const primary = text(settings?.primaryChoiceKey);
   const secondary = text(settings?.secondaryChoiceKey);
   const skip = interdisciplinarySkip(settings?.interdisciplinaryKey);
+  const scoreKeys = new Set([
+    'choice1_score',
+    'choice2_score',
+    text(settings?.primaryChoiceScoreKey).toLowerCase(),
+    text(settings?.secondaryChoiceScoreKey).toLowerCase(),
+  ].filter(Boolean));
   const used = new Set<string>();
   const take = (key: string) => {
     if (!key || used.has(key) || !Object.prototype.hasOwnProperty.call(record, key)) return;
@@ -2352,7 +2364,7 @@ export function requestedSubjectNames(choices: unknown, settings?: { primaryChoi
   take(primary);
   take(secondary);
   Object.keys(record).sort((left, right) => left.localeCompare(right, 'en', { sensitivity: 'base' })).forEach((key) => {
-    if (used.has(key) || skip.has(key.toLowerCase())) return;
+    if (used.has(key) || skip.has(key.toLowerCase()) || scoreKeys.has(key.toLowerCase())) return;
     used.add(key);
     pushAll(labelsFromChoiceValue(record[key], 0));
   });

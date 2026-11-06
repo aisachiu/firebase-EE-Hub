@@ -176,12 +176,15 @@ function refocusAllocationControl(attr, key, caret) {
   }
 }
 
-function allocationInteractionHeld() {
-  if (typeof document === 'undefined') return false;
-  const active = document.activeElement;
+export function shouldHoldAllocationPaint(active) {
   if (!active || !active.closest || !active.matches) return false;
   if (!active.closest('#alloc-body')) return false;
+  if (active.matches('#alloc-hod-department')) return false;
   return active.matches('select, input, textarea');
+}
+
+function allocationInteractionHeld() {
+  return typeof document !== 'undefined' && shouldHoldAllocationPaint(document.activeElement);
 }
 
 let interactionReleaseBound = false;
@@ -333,7 +336,7 @@ export function allocationDashboardMarkup(desk) {
         ${syncSlot}
       </div>
       ${desk.warnings && desk.warnings.length ? `<p class="notice">${escapeHtml(desk.warnings[0])}</p>` : ''}
-      ${overviewDrilldown ? `<div class="notice alloc-overview-return"><span>Showing ${escapeHtml(overviewDrilldown.label)} (${overviewDrilldown.ids.length})</span><button type="button" class="button secondary" id="alloc-overview-return">Back to Token Overview</button></div>` : ''}
+      ${overviewDrilldown ? `<div class="notice alloc-overview-return"><span>Showing ${escapeHtml(overviewDrilldown.label)} (${overviewDrilldown.ids.length})</span><button type="button" class="button secondary" id="alloc-overview-return">Back to Overview</button></div>` : ''}
       ${allocationWorkflowFilterMarkup()}
       ${allocationSection('alloc-filters', 'Filters', `<div class="alloc-filters">
         <div><label for="alloc-status">Status</label><select id="alloc-status">${allocationStatusOptionsMarkup()}</select></div>
@@ -1533,7 +1536,7 @@ function untiedTokenNote(count) {
 
 export function allocationLoadPanel(desk, supervisors) {
   const hod = state.allocationView === 'hod';
-  const validViews = hod ? ['subject', 'supervisor', 'assigned'] : ['overview', 'hod-overview', 'subject', 'supervisor', 'assigned'];
+  const validViews = hod ? ['subject', 'supervisor', 'assigned'] : ['overview', 'hod-overview', 'supervisor', 'assigned'];
   const view = validViews.indexOf(state.allocationLoadView) >= 0
     ? state.allocationLoadView
     : hod ? 'subject' : 'overview';
@@ -1555,7 +1558,7 @@ export function allocationLoadPanel(desk, supervisors) {
         : (supervisors.length ? supervisors.map(allocationLoadMarkup).join('') : '<div class="empty">No tokens yet. Build them in Staff users → EE quotas, or ingest a token sheet from Student Data.</div>');
   const buttons = hod
     ? [['subject', 'Subject'], ['supervisor', 'Supervisor'], ['assigned', assignedLabel]]
-    : [['overview', 'Subject Allocation'], ['hod-overview', 'HOD'], ['subject', 'Subject capacity'], ['supervisor', 'Supervisor'], ['assigned', 'Assigned tokens']];
+    : [['overview', 'Subject Allocation'], ['hod-overview', 'HOD'], ['supervisor', 'Supervisor'], ['assigned', 'Assigned tokens']];
   const tabs = buttons.map(function(item) {
     return `<button type="button" data-alloc-load="${item[0]}" aria-pressed="${view === item[0] ? 'true' : 'false'}">${item[1]}</button>`;
   }).join('');
@@ -1762,11 +1765,8 @@ export function allocationCoordinatorOverviewMarkup(desk) {
   }).join('');
   const selectedSummary = allocationOverviewDrillButton('subject-selected', 'Subject Drafted', overview.subject.selected)
     + allocationOverviewDrillButton('subject-needed', 'Need a Subject', overview.subject.needed);
-  const assignmentSummary = allocationOverviewDrillButton('assignment-draft', 'Draft assignments', overview.assignment.drafts)
-    + allocationOverviewDrillButton('assignment-published', 'Published', overview.assignment.published);
   return `<div class="alloc-workflow-overview">
-    <section class="alloc-workflow-phase"><h3>2. Subject Allocation summary</h3><div class="alloc-overview-counts">${selectedSummary}</div><p class="muted">Pool counts students choosing the subject as Choice 1 or Choice 2, regardless of drafting. Duplicate choices count once. Undrafted is the subset with no Subject Drafted.</p><div class="table-wrap alloc-workflow-table-wrap"><table class="alloc-workflow-table"><thead><tr>${headerMarkup}</tr></thead><tbody>${subjectRows || '<tr><td class="empty" colspan="7">No subjects available.</td></tr>'}</tbody></table></div></section>
-    <section class="alloc-workflow-phase"><h3>3. Coordinator assignment</h3><div class="alloc-overview-counts">${assignmentSummary}</div><p class="muted">Draft assignments are ready to review and publish. Published allocations are live.</p></section>
+    <section class="alloc-workflow-phase"><div class="alloc-overview-counts">${selectedSummary}</div><p class="muted">Pool counts students choosing the subject as Choice 1 or Choice 2, regardless of drafting. Duplicate choices count once. Undrafted is the subset with no Subject Drafted.</p><div class="table-wrap alloc-workflow-table-wrap"><table class="alloc-workflow-table"><thead><tr>${headerMarkup}</tr></thead><tbody>${subjectRows || '<tr><td class="empty" colspan="7">No subjects available.</td></tr>'}</tbody></table></div></section>
   </div>`;
 }
 
@@ -2106,10 +2106,10 @@ export function allocationHodMarkup(desk) {
 
 export function allocationDrawerMarkup(desk, supervisors) {
   const open = state.allocationDrawerOpen === true;
-  return `<aside id="alloc-drawer" class="alloc-drawer${open ? ' open' : ''}" aria-label="Token Overview">
-    <button type="button" class="alloc-drawer-peek" id="alloc-drawer-peek" aria-expanded="${open ? 'true' : 'false'}" aria-controls="alloc-drawer-panel">Token Overview</button>
+  return `<aside id="alloc-drawer" class="alloc-drawer${open ? ' open' : ''}" aria-label="Overview">
+    <button type="button" class="alloc-drawer-peek" id="alloc-drawer-peek" aria-expanded="${open ? 'true' : 'false'}" aria-controls="alloc-drawer-panel">Overview</button>
     <div class="alloc-drawer-panel" id="alloc-drawer-panel"${open ? '' : ' inert'} aria-hidden="${open ? 'false' : 'true'}">
-      <div class="alloc-drawer-bar"><strong>Token Overview</strong><button type="button" id="alloc-drawer-close">Close</button></div>
+      <div class="alloc-drawer-bar"><strong>Overview</strong><button type="button" id="alloc-drawer-close">Close</button></div>
       <div class="alloc-drawer-scroll">${allocationLoadPanel(desk, supervisors)}</div>
     </div>
   </aside>`;
