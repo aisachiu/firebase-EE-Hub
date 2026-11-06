@@ -975,8 +975,15 @@ test('department selector does not defer live allocation repaint', async () => {
 test('allocation overviews repaint on live snapshots in dashboard and department views', async () => {
   const server = await createServer({ server: { middlewareMode: true }, appType: 'custom', logLevel: 'error' });
   const previousWindow = globalThis.window;
+  const previousDocument = globalThis.document;
   try {
     globalThis.window = globalThis;
+    globalThis.document = {
+      getElementById() { return null; },
+      querySelector() { return null; },
+      addEventListener() {},
+      scrollingElement: null,
+    };
     let handlers;
     window.eeCall = function() { return new Promise(function() {}); };
     window.eeWatchAllocation = function(cohortId, nextHandlers) {
@@ -1040,6 +1047,8 @@ test('allocation overviews repaint on live snapshots in dashboard and department
   } finally {
     if (previousWindow === undefined) delete globalThis.window;
     else globalThis.window = previousWindow;
+    if (previousDocument === undefined) delete globalThis.document;
+    else globalThis.document = previousDocument;
     await server.close();
   }
 });
