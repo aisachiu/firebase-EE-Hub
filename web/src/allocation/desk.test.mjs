@@ -1245,3 +1245,202 @@ test('coordinator token overview summarizes workflow stages and drilldown IDs', 
     await server.close();
   }
 });
+
+test('allocation indicators count the filtered set against the active cohort', async () => {
+  const server = await createServer({ server: { middlewareMode: true }, appType: 'custom', logLevel: 'error' });
+  try {
+    const deskMod = await server.ssrLoadModule('/src/allocation/desk.js');
+    const stateMod = await server.ssrLoadModule('/src/shared/state.js');
+    const state = stateMod.state;
+    const bucketOf = function(summary, dimension, id) {
+      const group = summary.dimensions.find(function(item) { return item.id === dimension; });
+      return group.buckets.find(function(item) { return item.id === id; });
+    };
+    const counts = function(summary, dimension, id) {
+      const bucket = bucketOf(summary, dimension, id);
+      return { short: bucket.short, filtered: bucket.filtered, cohort: bucket.cohort };
+    };
+    assert.deepEqual(deskMod.ALLOCATION_INDICATOR_LEGEND.map(function(item) { return item.short; }), [
+      'No subject', 'Drafted', 'Allocated', 'Published', 'Ch1', 'Ch2', 'Miss', 'HL', 'Not HL',
+    ]);
+    assert.deepEqual(deskMod.ALLOCATION_INDICATOR_LEGEND.map(function(item) { return item.title; }), [
+      'No subject drafted',
+      'Subject drafted, no token',
+      'Token assigned',
+      'Published allocation',
+      'First choice match',
+      'Second choice match',
+      'Choice mismatch (not first or second)',
+      'HL subject',
+      'Subject is not listed as HL',
+    ]);
+
+    const jane = student({ choices: { primary: 'Psychology', secondary: 'Theater', interdisciplinary: false } });
+    const pat = student({
+      studentId: 'pat@school.edu',
+      displayName: 'Jones, Pat',
+      sortName: 'jones, pat',
+      selectedSubject: 'Psychology',
+      choices: { primary: 'Psychology', secondary: 'Theater', interdisciplinary: false },
+      dynamicData: { HL: 'Psychology' },
+    });
+    const mark = student({
+      studentId: 'mark@school.edu',
+      displayName: 'Lee, Mark',
+      sortName: 'lee, mark',
+      selectedSubject: 'Theater',
+      choices: { primary: 'Psychology', secondary: 'Theater', interdisciplinary: false },
+      dynamicData: { HL: 'Psychology' },
+      token: { staffId: 'art@school.edu', status: 'draft', assignedSubject: 'Theater', staffName: 'Mx Art' },
+    });
+    const sam = student({
+      studentId: 'sam@school.edu',
+      displayName: 'Smith, Sam',
+      sortName: 'smith, sam',
+      selectedSubject: 'Biology',
+      choices: { primary: 'Psychology', secondary: 'Theater', interdisciplinary: false },
+      dynamicData: { HL: 'Psychology' },
+      flags: { committed: true, drafted: false, needsSupport: false, subjectMatch: 'none', hlMatch: 'none' },
+      token: { staffId: 'psy@school.edu', status: 'committed', assignedSubject: 'Biology', staffName: 'Dr Psy' },
+    });
+    const riley = student({
+      studentId: 'riley@school.edu',
+      displayName: 'Chen, Riley',
+      sortName: 'chen, riley',
+      selectedSubject: 'Psychology',
+      suggestedStaffId: 'psy@school.edu',
+      choices: { primary: 'Psychology', secondary: 'Theater', interdisciplinary: false },
+      dynamicData: { HL: 'Psychology' },
+    });
+    const settings = { columns: [], hlColumn: 'HL' };
+    const summary = deskMod.allocationIndicatorSummary([jane, pat, mark, sam], [jane, pat, mark, sam, riley], settings);
+    assert.equal(summary.filteredTotal, 4);
+    assert.equal(summary.cohortTotal, 5);
+    assert.deepEqual(counts(summary, 'status', 'idle'), { short: 'No subject', filtered: 1, cohort: 1 });
+    assert.deepEqual(counts(summary, 'status', 'drafted'), { short: 'Drafted', filtered: 1, cohort: 2 });
+    assert.deepEqual(counts(summary, 'status', 'allocated'), { short: 'Allocated', filtered: 1, cohort: 1 });
+    assert.deepEqual(counts(summary, 'status', 'published'), { short: 'Published', filtered: 1, cohort: 1 });
+    assert.deepEqual(counts(summary, 'choice', 'idle'), { short: 'No subject', filtered: 1, cohort: 1 });
+    assert.deepEqual(counts(summary, 'choice', 'match'), { short: 'Ch1', filtered: 1, cohort: 2 });
+    assert.deepEqual(counts(summary, 'choice', 'second'), { short: 'Ch2', filtered: 1, cohort: 1 });
+    assert.deepEqual(counts(summary, 'choice', 'miss'), { short: 'Miss', filtered: 1, cohort: 1 });
+    assert.deepEqual(counts(summary, 'hl', 'idle'), { short: 'No subject', filtered: 1, cohort: 1 });
+    assert.deepEqual(counts(summary, 'hl', 'match'), { short: 'HL', filtered: 1, cohort: 2 });
+    assert.deepEqual(counts(summary, 'hl', 'miss'), { short: 'Not HL', filtered: 2, cohort: 2 });
+    assert.deepEqual(deskMod.allocationIndicatorBucket(riley, settings), { status: 'drafted', choice: 'match', hl: 'match' });
+
+    const cohortDesk = desk();
+    cohortDesk.settings = settings;
+    cohortDesk.students = [jane, pat, mark, sam, riley];
+    state.allocationDesk = cohortDesk;
+    state.allocationView = 'dashboard';
+    state.allocationStatus = 'all';
+    state.allocationNeedSupport = 'all';
+    state.allocationFlaggedFilter = 'all';
+    state.allocationSupportFlags = [];
+    state.allocationSubjectFilter = [];
+    state.allocationSelectedSubjectFilter = [];
+    state.allocationTeacherFilter = [];
+    state.allocationCustomFilters = {};
+    state.allocationQuery = '';
+    state.allocationWorkflowFilter = null;
+    state.allocationIndicatorFilter = null;
+    state.allocationFilterDraft = null;
+    state.allocationFilterSnapshot = null;
+    state.allocationOverviewDrilldown = null;
+    state.adminTableSort = { 'alloc-desk': { key: 'name', dir: 1 } };
+
+    const section = deskMod.allocationIndicatorMarkup(cohortDesk);
+    assert.match(section, /<h3>Allocation indicators<\/h3>/);
+    assert.match(section, /Showing <strong>5<\/strong> \/ <strong>5<\/strong> students/);
+    assert.doesNotMatch(section, /data-alloc-load/);
+    assert.doesNotMatch(section, /Pool \(1\)/);
+    const legendAt = section.indexOf('class="alloc-legend alloc-indicator-legend"');
+    const legendEnd = section.indexOf('</div>', legendAt);
+    const legend = section.slice(legendAt, legendEnd);
+    assert.ok(legendAt >= 0 && legendEnd > legendAt);
+    assert.doesNotMatch(legend, /<br|<h[1-6]|<div/);
+    ['No subject', 'Drafted', 'Allocated', 'Published', 'Ch1', 'Ch2', 'Miss', 'HL', 'Not HL'].forEach(function(label) {
+      assert.match(legend, new RegExp('>' + label + '<'));
+    });
+    assert.match(legend, /title="No subject drafted"/);
+    assert.match(legend, /title="Subject drafted, no token"/);
+    assert.match(legend, /title="Token assigned"/);
+    assert.match(legend, /title="Published allocation"/);
+    assert.match(legend, /title="First choice match"/);
+    assert.match(legend, /title="Second choice match"/);
+    assert.match(legend, /title="Choice mismatch \(not first or second\)"/);
+    assert.match(legend, /title="HL subject"/);
+    assert.match(legend, /title="Subject is not listed as HL"/);
+    assert.match(legend, /class="alloc-mark idle status"/);
+    assert.match(legend, /class="alloc-mark published status"/);
+    assert.match(legend, /class="alloc-mark warn subject"/);
+    assert.match(legend, /class="alloc-mark on hl"/);
+    assert.match(section, /Drafted<strong>· 2 \/ 2<\/strong>/);
+    assert.match(section, /Ch1<strong>· 2 \/ 2<\/strong>/);
+    assert.match(section, /Not HL<strong>· 2 \/ 2<\/strong>/);
+    const draftedButton = section.match(/data-alloc-indicator="status" data-alloc-indicator-bucket="drafted"[^>]*/);
+    assert.ok(draftedButton);
+    assert.doesNotMatch(draftedButton[0], /disabled/);
+
+    state.allocationQuery = 'chen';
+    const queried = deskMod.allocationIndicatorMarkup(cohortDesk);
+    assert.match(queried, /Showing <strong>1<\/strong> \/ <strong>5<\/strong> students/);
+    assert.match(queried, /Drafted<strong>· 1 \/ 2<\/strong>/);
+    assert.match(queried, /No subject<strong>· 0 \/ 1<\/strong>/);
+    assert.match(queried, /Published<strong>· 0 \/ 1<\/strong>/);
+    const hiddenPublished = queried.match(/data-alloc-indicator="status" data-alloc-indicator-bucket="published"[^>]*/);
+    assert.ok(hiddenPublished);
+    assert.match(hiddenPublished[0], /disabled/);
+    assert.deepEqual(deskMod.visibleAllocationStudents(cohortDesk).map(function(item) { return item.studentId; }), ['riley@school.edu']);
+
+    state.allocationQuery = '';
+    state.allocationWorkflowFilter = { type: 'subject-selected' };
+    state.allocationIndicatorFilter = { dimension: 'choice', bucket: 'match' };
+    state.allocationFilterSnapshot = null;
+    const drilled = deskMod.allocationIndicatorMarkup(cohortDesk);
+    assert.match(drilled, /Showing <strong>2<\/strong> \/ <strong>5<\/strong> students/);
+    assert.match(drilled, /Ch1<strong>· 2 \/ 2<\/strong>/);
+    assert.match(drilled, /Ch2<strong>· 1 \/ 1<\/strong>/);
+    assert.match(drilled, /data-alloc-indicator="choice" data-alloc-indicator-bucket="match"[^>]*aria-pressed="true"/);
+    assert.deepEqual(deskMod.visibleAllocationStudents(cohortDesk).map(function(item) { return item.studentId; }), ['riley@school.edu', 'pat@school.edu']);
+
+    state.allocationWorkflowFilter = null;
+    state.allocationIndicatorFilter = { dimension: 'status', bucket: 'published' };
+    deskMod.commitAllocationFilterDraft(cohortDesk);
+    assert.deepEqual(state.allocationFilterSnapshot, ['sam@school.edu']);
+    assert.deepEqual(deskMod.visibleAllocationStudents(cohortDesk).map(function(item) { return item.studentId; }), ['sam@school.edu']);
+    const publishedView = deskMod.allocationIndicatorMarkup(cohortDesk);
+    assert.match(publishedView, /Showing <strong>1<\/strong> \/ <strong>5<\/strong> students/);
+    assert.match(publishedView, /Drafted<strong>· 2 \/ 2<\/strong>/);
+    assert.match(publishedView, /data-alloc-indicator="status" data-alloc-indicator-bucket="published"[^>]*aria-pressed="true"/);
+
+    const drawer = deskMod.allocationDrawerMarkup(cohortDesk, supervisors());
+    assert.ok(drawer.indexOf('Allocation indicators') < drawer.indexOf('data-alloc-load="overview"'));
+    assert.match(drawer, /Subject Allocation/);
+    state.allocationView = 'hod';
+    assert.doesNotMatch(deskMod.allocationDrawerMarkup(cohortDesk, supervisors()), /Allocation indicators/);
+    state.allocationView = 'dashboard';
+    state.allocationIndicatorFilter = { dimension: 'hl', bucket: 'match' };
+    const board = deskMod.allocationDashboardMarkup(cohortDesk);
+    assert.match(board, /Indicator: HL · HL/);
+    assert.match(board, /data-alloc-indicator-clear/);
+    deskMod.resetAllocationFilters();
+    assert.equal(state.allocationIndicatorFilter, null);
+    assert.equal(state.allocationWorkflowFilter, null);
+
+    const draftedRow = deskMod.allocationRowMarkup(pat, supervisors(), [], {});
+    assert.match(draftedRow, /class="alloc-mark off status" title="Subject drafted, no token"/);
+    assert.match(draftedRow, /class="alloc-mark on subject" title="First choice match"/);
+    assert.match(draftedRow, /class="alloc-mark on hl" title="HL subject"/);
+    const allocatedRow = deskMod.allocationRowMarkup(mark, supervisors(), [], {});
+    assert.match(allocatedRow, /class="alloc-mark on status" title="Allocated token"/);
+    assert.match(allocatedRow, /class="alloc-mark off subject" title="Second choice"/);
+    assert.match(allocatedRow, /class="alloc-mark warn hl" title="Subject is not listed as HL"/);
+    const publishedRow = deskMod.allocationRowMarkup(sam, supervisors(), [], {});
+    assert.match(publishedRow, /class="alloc-mark published status" title="Published allocation"/);
+    assert.match(publishedRow, /class="alloc-mark warn subject" title="Not first or second choice"/);
+  } finally {
+    await server.close();
+  }
+});
