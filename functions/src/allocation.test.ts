@@ -829,11 +829,19 @@ test('allocation draft export ingests selected subject, suggestion, and the draf
     now: new Date('2026-10-18T00:00:00.000Z'),
   });
   assert.equal(grids[0].title, 'ALLOCATIONS 2026');
+  const headers = grids[0].rows[0];
   const jane = grids[0].rows.find((row) => row[0] === JANE);
   assert.ok(jane);
   assert.equal(jane?.[2], 'Draft');
   assert.equal(jane?.[5], 'History');
   assert.equal(jane?.[6], SMITH);
+  const flagAt = headers.indexOf('IsFlagged');
+  const noteAt = headers.indexOf('FlagNote');
+  const clearAt = headers.indexOf('PendingClear');
+  assert.ok(flagAt > 9 && noteAt > flagAt && clearAt > noteAt);
+  assert.equal(jane?.[flagAt], true);
+  assert.equal(jane?.[noteAt], 'keep');
+  assert.equal(jane?.[clearAt], false);
   await draftAllocation(app, '2026', JANE, '', '');
   await store.setWorkspace('2026', JANE, {
     ...(await store.getWorkspace('2026', JANE) || {}),
@@ -852,6 +860,18 @@ test('allocation draft export ingests selected subject, suggestion, and the draf
   assert.equal(restored?.suggestedSubject, 'History');
   assert.equal(restored?.isFlagged, true);
   assert.equal(restored?.flagNote, 'keep');
+  assert.equal(restored?.pendingClear, false);
+  if (jane) {
+    jane[flagAt] = 'no';
+    jane[noteAt] = '';
+    jane[clearAt] = 'yes';
+  }
+  await applyAllocationIngest(app, '2026', SHEET, 'drafts', { workbook: workbook(grids) });
+  const edited = await store.getWorkspace('2026', JANE);
+  assert.equal(edited?.isFlagged, false);
+  assert.equal(edited?.flagNote, '');
+  assert.equal(edited?.pendingClear, true);
+  assert.equal(edited?.selectedSubject, 'History');
   const drafted = (await app.store.listTokens('2026')).find((token) => token.allocatedTo === JANE);
   assert.equal(drafted?.status, 'draft');
   assert.equal(drafted?.assignedSubject, 'History');

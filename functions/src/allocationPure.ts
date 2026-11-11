@@ -2672,6 +2672,9 @@ const ALLOCATION_DRAFT_HEADERS = [
   'SuggestedSubject',
   'SelectedInterdisciplinary',
   'InterdisciplinarySubject',
+  'IsFlagged',
+  'FlagNote',
+  'PendingClear',
 ] as const;
 
 export function allocationExportRows(students: DeskStudent[], settings: AllocationSettings): (string | number | boolean)[][] {
@@ -2693,6 +2696,9 @@ export function allocationExportRows(students: DeskStudent[], settings: Allocati
       student.suggestedSubject || '',
       student.selectedInterdisciplinary === true,
       student.interdisciplinarySubject || '',
+      student.isFlagged === true,
+      text(student.flagNote),
+      student.pendingClear === true,
     ];
     cards.forEach((key) => {
       const value = student.dynamicData[key];
@@ -2715,6 +2721,10 @@ export interface AllocationDraftSheetRow {
   suggestedSubject?: string;
   selectedInterdisciplinary?: boolean;
   interdisciplinarySubject?: string;
+  /** Undefined when that column is absent. A present blank checkbox clears to false. */
+  isFlagged?: boolean;
+  flagNote?: string;
+  pendingClear?: boolean;
 }
 
 export function parseAllocationDraftGrid(grid: Grid): { rows: AllocationDraftSheetRow[]; warnings: string[] } {
@@ -2729,6 +2739,9 @@ export function parseAllocationDraftGrid(grid: Grid): { rows: AllocationDraftShe
   const suggestedSubjectIndex = headerIndex(headers, ['suggestedsubject', 'suggested subject']);
   const interdisciplinaryIndex = headerIndex(headers, ['selectedinterdisciplinary', 'selected interdisciplinary']);
   const interdisciplinarySubjectIndex = headerIndex(headers, ['interdisciplinarysubject', 'interdisciplinary subject']);
+  const flaggedIndex = headerIndex(headers, ['isflagged', 'is flagged']);
+  const flagNoteIndex = headerIndex(headers, ['flagnote', 'flag note']);
+  const pendingClearIndex = headerIndex(headers, ['pendingclear', 'pending clear']);
   const warnings: string[] = [];
   const seen = new Set<string>();
   const rows: AllocationDraftSheetRow[] = [];
@@ -2749,23 +2762,26 @@ export function parseAllocationDraftGrid(grid: Grid): { rows: AllocationDraftShe
     const suggestedSubject = cell(row, suggestedSubjectIndex);
     const interdisciplinary = cell(row, interdisciplinaryIndex);
     const interdisciplinarySubject = cell(row, interdisciplinarySubjectIndex);
+    const flagged = cell(row, flaggedIndex);
+    const flagNote = cell(row, flagNoteIndex);
+    const pendingClear = cell(row, pendingClearIndex);
     if (status !== undefined) entry.status = status;
     if (supervisorEmail !== undefined) entry.supervisorEmail = supervisorEmail;
     if (assignedSubject !== undefined) entry.assignedSubject = assignedSubject;
     if (selectedSubject !== undefined) entry.selectedSubject = selectedSubject;
     if (suggestedStaffEmail !== undefined) entry.suggestedStaffEmail = suggestedStaffEmail;
     if (suggestedSubject !== undefined) entry.suggestedSubject = suggestedSubject;
-    if (interdisciplinary !== undefined) {
-      const normalized = interdisciplinary.toLowerCase();
-      if (!normalized || normalized === 'false' || normalized === 'no' || normalized === '0') {
-        entry.selectedInterdisciplinary = false;
-      } else if (normalized === 'true' || normalized === 'yes' || normalized === '1') {
-        entry.selectedInterdisciplinary = true;
-      } else {
-        warnings.push(`${grid.title} row ${line} SelectedInterdisciplinary must be true or false.`);
-      }
-    }
+    readSheetCheckbox(interdisciplinary, `${grid.title} row ${line} SelectedInterdisciplinary must be true or false.`, warnings, (checked) => {
+      entry.selectedInterdisciplinary = checked;
+    });
     if (interdisciplinarySubject !== undefined) entry.interdisciplinarySubject = interdisciplinarySubject;
+    readSheetCheckbox(flagged, `${grid.title} row ${line} IsFlagged must be true or false.`, warnings, (checked) => {
+      entry.isFlagged = checked;
+    });
+    if (flagNote !== undefined) entry.flagNote = flagNote;
+    readSheetCheckbox(pendingClear, `${grid.title} row ${line} PendingClear must be true or false.`, warnings, (checked) => {
+      entry.pendingClear = checked;
+    });
     if (seen.has(studentId)) warnings.push(`${grid.title} repeats ${studentId}. The last row is kept.`);
     seen.add(studentId);
     const existing = rows.findIndex((item) => item.studentId === studentId);
@@ -2878,7 +2894,7 @@ export interface AllocationDraftIngestPlan {
   skipped: number;
 }
 
-/** Restore selected subject, suggestion, and draft tokens from an ALLOCATIONS sheet. Published tokens stay put. */
+/** Restore selected subject, suggestion, coordinator flags, and draft tokens from an ALLOCATIONS sheet. Published tokens stay put. */
 export function planAllocationDraftIngest(input: {
   rows: AllocationDraftSheetRow[];
   tokens: TokenRecord[];
@@ -2915,6 +2931,7 @@ export function planAllocationDraftIngest(input: {
     applySheetSubject(row, next, input.activeSubjects, warnings);
     applySheetInterdisciplinary(row, next, input.activeSubjects, warnings);
     applySheetSuggestion(row, prior, next, input.activeSubjects, warnings);
+    applySheetDeskFields(row, next);
     applySheetToken(row, studentId, tokens, roster.get(studentId) || '', next, warnings, draftChanges);
     const after = heldToken(tokens, studentId);
     const shown = after === 'conflict' ? beforeTokenList(tokens, studentId)[0] : after;
@@ -2939,6 +2956,16 @@ export function planAllocationDraftIngest(input: {
   const skipped = rows.filter((row) => row.action === 'Skip').length;
   const writing = rows.filter((row) => row.action === 'Add' || row.action === 'Update').length;
   return { workspaceWrites, tokenWrites, draftChanges, warnings, rows, writing, skipped };
+}
+
+/**
+ * Flags and flag notes are workspace-owned. PendingClear is too, unless this row also
+ * changes the draft token: that token change sets PendingClear afterwards.
+ */
+function applySheetDeskFields(row: AllocationDraftSheetRow, next: WorkspaceRecord): void {
+  if (row.isFlagged !== undefined) next.isFlagged = row.isFlagged;
+  if (row.flagNote !== undefined) next.flagNote = row.flagNote;
+  if (row.pendingClear !== undefined) next.pendingClear = row.pendingClear;
 }
 
 function applySheetSubject(row: AllocationDraftSheetRow, next: WorkspaceRecord, active: string[], warnings: string[]): void {
@@ -3172,13 +3199,16 @@ function copyWorkspace(workspace: WorkspaceRecord, now: string): WorkspaceRecord
 
 function draftFieldsChanged(before: WorkspaceRecord | undefined, after: WorkspaceRecord): boolean {
   if (!before) return !!(after.selectedSubject || after.suggestedStaffId || after.suggestedSubject
-    || after.selectedInterdisciplinary || after.interdisciplinarySubject || after.pendingClear);
+    || after.selectedInterdisciplinary || after.interdisciplinarySubject || after.pendingClear
+    || after.isFlagged || text(after.flagNote));
   return text(before.selectedSubject) !== after.selectedSubject
     || normalizeEmail(before.suggestedStaffId) !== after.suggestedStaffId
     || text(before.suggestedSubject) !== after.suggestedSubject
     || (before.selectedInterdisciplinary === true) !== (after.selectedInterdisciplinary === true)
     || text(before.interdisciplinarySubject) !== text(after.interdisciplinarySubject)
-    || (before.pendingClear === true) !== after.pendingClear;
+    || (before.pendingClear === true) !== after.pendingClear
+    || (before.isFlagged === true) !== (after.isFlagged === true)
+    || text(before.flagNote) !== text(after.flagNote);
 }
 
 function tokenAssignmentChanged(before: TokenRecord, after: TokenRecord): boolean {
@@ -3199,6 +3229,29 @@ function allocationDraftSummary(
     ? 'Unallocated'
     : `${token.status === 'committed' ? 'Committed' : 'Draft'} ${token.staffId}${token.assignedSubject ? ` ${token.assignedSubject}` : ''}`;
   return `Selected ${selected} · Suggested ${suggested} · ${assignment}`;
+}
+
+/** Sheet checkboxes accept true/false, yes/no, and 1/0. A blank cell clears. An unrecognised value is left unset. */
+function sheetCheckbox(value: string): boolean | null {
+  const normalized = value.toLowerCase();
+  if (!normalized || normalized === 'false' || normalized === 'no' || normalized === '0') return false;
+  if (normalized === 'true' || normalized === 'yes' || normalized === '1') return true;
+  return null;
+}
+
+function readSheetCheckbox(
+  value: string | undefined,
+  warning: string,
+  warnings: string[],
+  assign: (checked: boolean) => void,
+): void {
+  if (value === undefined) return;
+  const checked = sheetCheckbox(value);
+  if (checked === null) {
+    warnings.push(warning);
+    return;
+  }
+  assign(checked);
 }
 
 function headerRow(grid: Grid): string[] {

@@ -83,6 +83,7 @@ export function replaceHeaderCohort(next) {
   state.allocationSupportFlags = [];
   state.allocationCustomFilters = {};
   state.allocationWorkflowFilter = null;
+  state.allocationIndicatorFilter = null;
   state.allocationFilterDraft = null;
   state.allocationFilterSnapshot = null;
   state.allocationQuery = '';

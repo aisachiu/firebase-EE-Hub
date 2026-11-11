@@ -991,6 +991,19 @@ body.has-alloc-drawer.alloc-drawer-open { padding-right: clamp(300px, 34vw, 420p
 .alloc-overview-count { display: inline-flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 34px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 3px; background: #f6f8f9; color: var(--ink); font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
 .alloc-overview-count:disabled { opacity: .6; cursor: default; }
 .alloc-overview-count strong { font-variant-numeric: tabular-nums; }
+.alloc-overview-count[aria-pressed="true"] { border-color: var(--ink); background: white; box-shadow: inset 3px 0 0 var(--ink); }
+.alloc-filter-chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 8px; }
+.alloc-filter-chips .alloc-workflow-filter { margin: 0; }
+.alloc-indicators { padding: 12px; border-bottom: 1px solid var(--line); background: white; }
+.alloc-indicators h3 { margin: 0; font-size: 13px; }
+.alloc-indicator-total { margin: 6px 0 8px; font-size: 12px; }
+.alloc-indicator-total strong { font-variant-numeric: tabular-nums; }
+.alloc-legend.alloc-indicator-legend { flex-wrap: wrap; gap: 4px 10px; margin: 0 0 8px; }
+.alloc-indicator-legend .alloc-legend-item { flex: none; gap: 3px; font-size: 11px; white-space: nowrap; }
+.alloc-indicator-group + .alloc-indicator-group { margin-top: 8px; }
+.alloc-indicator-group h4 { margin: 0 0 4px; color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
+.alloc-indicator-counts { display: flex; flex-direction: column; gap: 4px; }
+.alloc-indicator-counts .alloc-overview-count { width: 100%; }
 .alloc-overview-subject, .alloc-overview-department { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
 .alloc-overview-department { display: block; padding: 6px 0; border-bottom: 1px solid var(--line); }
 .alloc-overview-department-heading { display: flex; align-items: center; gap: 8px; }

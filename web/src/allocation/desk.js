@@ -337,7 +337,7 @@ export function allocationDashboardMarkup(desk) {
       </div>
       ${desk.warnings && desk.warnings.length ? `<p class="notice">${escapeHtml(desk.warnings[0])}</p>` : ''}
       ${overviewDrilldown ? `<div class="notice alloc-overview-return"><span>Showing ${escapeHtml(overviewDrilldown.label)} (${overviewDrilldown.ids.length})</span><button type="button" class="button secondary" id="alloc-overview-return">Back to Overview</button></div>` : ''}
-      ${allocationWorkflowFilterMarkup()}
+      ${allocationActiveFilterMarkup()}
       ${allocationSection('alloc-filters', 'Filters', `<div class="alloc-filters">
         <div><label for="alloc-status">Status</label><select id="alloc-status">${allocationStatusOptionsMarkup()}</select></div>
         <div><label for="alloc-sort">Sort by</label><select id="alloc-sort">${sortOption('name', 'Name')}${sortOption('supervisor', 'Supervisor')}${sortOption('subject', 'Requested subjects')}${sortOption('status', 'Status')}${columns.filter(function(column) { return column.sortable !== false; }).map(function(column) {
@@ -729,6 +729,7 @@ function allocationFiltersNarrow() {
   if ((state.allocationSelectedSubjectFilter || []).length) return true;
   if ((state.allocationTeacherFilter || []).length) return true;
   if (state.allocationWorkflowFilter) return true;
+  if (state.allocationIndicatorFilter && state.allocationIndicatorFilter.dimension && state.allocationIndicatorFilter.bucket) return true;
   const custom = state.allocationCustomFilters || {};
   return Object.keys(custom).some(function(key) {
     return allocationCustomSelections(custom, key).length > 0;
@@ -777,6 +778,7 @@ export function resetAllocationFilters() {
   state.allocationTeacherFilter = [];
   state.allocationCustomFilters = {};
   state.allocationWorkflowFilter = null;
+  state.allocationIndicatorFilter = null;
   state.allocationQuery = '';
   state.allocationCustomQueries = {};
   state.allocationCustomOpen = '';
@@ -2104,13 +2106,203 @@ export function allocationHodMarkup(desk) {
     </div></div>${allocationDrawerMarkup(desk, (desk && desk.supervisors) || [])}`;
 }
 
+/** Short labels for the one-line Overview legend. Hover text is the expanded meaning. */
+export const ALLOCATION_INDICATOR_LEGEND = [
+  { short: 'No subject', title: 'No subject drafted', mode: 'idle', kind: 'status' },
+  { short: 'Drafted', title: 'Subject drafted, no token', mode: 'off', kind: 'status' },
+  { short: 'Allocated', title: 'Token assigned', mode: 'on', kind: 'status' },
+  { short: 'Published', title: 'Published allocation', mode: 'published', kind: 'status' },
+  { short: 'Ch1', title: 'First choice match', mode: 'on', kind: 'subject' },
+  { short: 'Ch2', title: 'Second choice match', mode: 'off', kind: 'subject' },
+  { short: 'Miss', title: 'Choice mismatch (not first or second)', mode: 'warn', kind: 'subject' },
+  { short: 'HL', title: 'HL subject', mode: 'on', kind: 'hl' },
+  { short: 'Not HL', title: 'Subject is not listed as HL', mode: 'warn', kind: 'hl' },
+];
+
+const ALLOCATION_INDICATOR_DIMENSIONS = [
+  { id: 'status', label: 'Status' },
+  { id: 'choice', label: 'Choice' },
+  { id: 'hl', label: 'HL' },
+];
+
+const ALLOCATION_INDICATOR_BUCKETS = {
+  status: [
+    { id: 'idle', short: 'No subject', title: 'No subject drafted', markTitle: 'No subject drafted', mode: 'idle', kind: 'status' },
+    { id: 'drafted', short: 'Drafted', title: 'Subject drafted, no token', markTitle: 'Subject drafted, no token', mode: 'off', kind: 'status' },
+    { id: 'allocated', short: 'Allocated', title: 'Token assigned', markTitle: 'Allocated token', mode: 'on', kind: 'status' },
+    { id: 'published', short: 'Published', title: 'Published allocation', markTitle: 'Published allocation', mode: 'published', kind: 'status' },
+  ],
+  choice: [
+    { id: 'idle', short: 'No subject', title: 'No subject drafted', markTitle: 'No subject drafted', mode: 'idle', kind: 'subject' },
+    { id: 'match', short: 'Ch1', title: 'First choice match', markTitle: 'First choice match', mode: 'on', kind: 'subject' },
+    { id: 'second', short: 'Ch2', title: 'Second choice match', markTitle: 'Second choice', mode: 'off', kind: 'subject' },
+    { id: 'miss', short: 'Miss', title: 'Choice mismatch (not first or second)', markTitle: 'Not first or second choice', mode: 'warn', kind: 'subject' },
+  ],
+  hl: [
+    { id: 'idle', short: 'No subject', title: 'No subject drafted', markTitle: 'No subject drafted', mode: 'idle', kind: 'hl' },
+    { id: 'match', short: 'HL', title: 'HL subject', markTitle: 'HL subject', mode: 'on', kind: 'hl' },
+    { id: 'miss', short: 'Not HL', title: 'Subject is not listed as HL', markTitle: 'Subject is not listed as HL', mode: 'warn', kind: 'hl' },
+  ],
+};
+
+function allocationIndicatorSpec(dimension, id) {
+  const buckets = ALLOCATION_INDICATOR_BUCKETS[dimension] || [];
+  for (let index = 0; index < buckets.length; index += 1) {
+    if (buckets[index].id === id) return buckets[index];
+  }
+  return buckets[0];
+}
+
+function allocationIndicatorSettings(settings) {
+  if (settings && (settings.hlColumn || settings.columns)) return settings;
+  return (state.allocationDesk && state.allocationDesk.settings) || settings || {};
+}
+
+/** Status, choice, and HL buckets. Same order as the row mark icons. */
+export function allocationIndicatorBucket(student, settings) {
+  const selected = String(student && student.selectedSubject || '').trim();
+  const config = allocationIndicatorSettings(settings);
+  let status = 'drafted';
+  let choice = 'miss';
+  let hl = 'miss';
+  if (!selected) {
+    status = 'idle';
+    choice = 'idle';
+    hl = 'idle';
+  } else {
+    if (allocationIsPublished(student)) status = 'published';
+    else if (student && student.token) status = 'allocated';
+    const flag = choiceMatchFlag(selected, student.choices && student.choices.primary, student.choices && student.choices.secondary);
+    if (flag === 'match') choice = 'match';
+    else if (flag === 'second') choice = 'second';
+    const level = diplomaLevelFlag(selected, (student && student.dynamicData) || {}, config.hlColumn || '');
+    if (level === 'match') hl = 'match';
+  }
+  return { status: status, choice: choice, hl: hl };
+}
+
+export function allocationIndicatorFilterMatches(student, filter, desk) {
+  if (!filter || !filter.dimension || !filter.bucket) return true;
+  if (!ALLOCATION_INDICATOR_BUCKETS[filter.dimension]) return true;
+  const settings = (desk && desk.settings) || (state.allocationDesk && state.allocationDesk.settings) || {};
+  return allocationIndicatorBucket(student, settings)[filter.dimension] === filter.bucket;
+}
+
+/**
+ * Filtered counts use `filteredStudents`; cohort counts use `cohortStudents`.
+ * Each student lands in exactly one bucket per dimension.
+ */
+export function allocationIndicatorSummary(filteredStudents, cohortStudents, settings) {
+  const filtered = filteredStudents || [];
+  const cohort = cohortStudents || [];
+  const tally = function(students) {
+    const counts = { status: {}, choice: {}, hl: {} };
+    students.forEach(function(student) {
+      const bucket = allocationIndicatorBucket(student, settings);
+      counts.status[bucket.status] = (counts.status[bucket.status] || 0) + 1;
+      counts.choice[bucket.choice] = (counts.choice[bucket.choice] || 0) + 1;
+      counts.hl[bucket.hl] = (counts.hl[bucket.hl] || 0) + 1;
+    });
+    return counts;
+  };
+  const filteredCounts = tally(filtered);
+  const cohortCounts = tally(cohort);
+  return {
+    filteredTotal: filtered.length,
+    cohortTotal: cohort.length,
+    legend: ALLOCATION_INDICATOR_LEGEND,
+    dimensions: ALLOCATION_INDICATOR_DIMENSIONS.map(function(dimension) {
+      return {
+        id: dimension.id,
+        label: dimension.label,
+        buckets: ALLOCATION_INDICATOR_BUCKETS[dimension.id].map(function(bucket) {
+          return {
+            id: bucket.id,
+            short: bucket.short,
+            title: bucket.title,
+            filtered: filteredCounts[dimension.id][bucket.id] || 0,
+            cohort: cohortCounts[dimension.id][bucket.id] || 0,
+          };
+        }),
+      };
+    }),
+  };
+}
+
+function allocationIndicatorPopulation(desk) {
+  const drilldown = state.allocationOverviewDrilldown;
+  if (drilldown && Array.isArray(drilldown.ids)) {
+    const ids = new Set(drilldown.ids);
+    return (desk.students || []).filter(function(student) { return ids.has(student.studentId); });
+  }
+  return (desk.students || []).filter(function(student) {
+    return allocationQueryMatches(student, state.allocationQuery) && allocationStudentMatchesFilters(student, desk, { ignoreIndicator: true });
+  });
+}
+
+function allocationIndicatorLegendMarkup() {
+  const items = ALLOCATION_INDICATOR_LEGEND.map(function(entry) {
+    return `<span class="alloc-legend-item" title="${escapeHtml(entry.title)}" aria-label="${escapeHtml(entry.title)}">${allocationMark(entry.title, entry.mode, entry.kind)}<span>${escapeHtml(entry.short)}</span></span>`;
+  }).join('');
+  return `<div class="alloc-legend alloc-indicator-legend" aria-label="Allocation indicator key">${items}</div>`;
+}
+
+function allocationIndicatorButton(dimension, bucket) {
+  const active = !!(state.allocationIndicatorFilter
+    && state.allocationIndicatorFilter.dimension === dimension
+    && state.allocationIndicatorFilter.bucket === bucket.id);
+  const ratio = bucket.filtered + ' / ' + bucket.cohort;
+  return `<button type="button" class="alloc-overview-count" data-alloc-indicator="${escapeHtml(dimension)}" data-alloc-indicator-bucket="${escapeHtml(bucket.id)}" title="${escapeHtml(bucket.title)}" aria-label="${escapeHtml(bucket.title + ': ' + bucket.filtered + ' of ' + bucket.cohort)}" aria-pressed="${active ? 'true' : 'false'}"${bucket.filtered ? '' : ' disabled'}>${escapeHtml(bucket.short)}<strong>· ${escapeHtml(ratio)}</strong></button>`;
+}
+
+function allocationIndicatorDimensionLabel(id) {
+  const match = ALLOCATION_INDICATOR_DIMENSIONS.find(function(dimension) { return dimension.id === id; });
+  return match ? match.label : '';
+}
+
+function allocationIndicatorFilterMarkup() {
+  const filter = state.allocationIndicatorFilter;
+  if (!filter || !filter.dimension || !filter.bucket) return '';
+  const spec = allocationIndicatorSpec(filter.dimension, filter.bucket);
+  if (!spec) return '';
+  const label = allocationIndicatorDimensionLabel(filter.dimension) + ' · ' + spec.short;
+  return `<div class="alloc-workflow-filter"><span>Indicator: ${escapeHtml(label)}</span><button type="button" class="button secondary" data-alloc-indicator-clear aria-label="Clear indicator filter">×</button></div>`;
+}
+
+function allocationActiveFilterMarkup() {
+  const chips = allocationWorkflowFilterMarkup() + allocationIndicatorFilterMarkup();
+  return chips ? `<div class="alloc-filter-chips">${chips}</div>` : '';
+}
+
+/**
+ * Overview indicator section.
+ * Clicking a count replaces the previous indicator bucket and intersects it
+ * with the other desk filters (query, status, custom, workflow). Numerators
+ * omit the indicator filter so the other buckets stay available. Denominators
+ * count the whole active cohort. A filtered count of zero disables the button.
+ */
+export function allocationIndicatorMarkup(desk) {
+  const settings = (desk && desk.settings) || (state.allocationDesk && state.allocationDesk.settings) || {};
+  const cohort = (desk && desk.students) || [];
+  const summary = allocationIndicatorSummary(allocationIndicatorPopulation(desk), cohort, settings);
+  const visible = visibleAllocationStudents(desk).length;
+  const groups = summary.dimensions.map(function(dimension) {
+    const buttons = dimension.buckets.map(function(bucket) {
+      return allocationIndicatorButton(dimension.id, bucket);
+    }).join('');
+    return `<div class="alloc-indicator-group"><h4>${escapeHtml(dimension.label)}</h4><div class="alloc-indicator-counts">${buttons}</div></div>`;
+  }).join('');
+  return `<section class="alloc-indicators" aria-label="Allocation indicators"><h3>Allocation indicators</h3><p class="alloc-indicator-total">Showing <strong>${visible}</strong> / <strong>${summary.cohortTotal}</strong> students</p>${allocationIndicatorLegendMarkup()}<div class="alloc-indicator-groups">${groups}</div></section>`;
+}
+
 export function allocationDrawerMarkup(desk, supervisors) {
   const open = state.allocationDrawerOpen === true;
+  const indicators = state.allocationView === 'hod' ? '' : allocationIndicatorMarkup(desk);
   return `<aside id="alloc-drawer" class="alloc-drawer${open ? ' open' : ''}" aria-label="Overview">
     <button type="button" class="alloc-drawer-peek" id="alloc-drawer-peek" aria-expanded="${open ? 'true' : 'false'}" aria-controls="alloc-drawer-panel">Overview</button>
     <div class="alloc-drawer-panel" id="alloc-drawer-panel"${open ? '' : ' inert'} aria-hidden="${open ? 'false' : 'true'}">
       <div class="alloc-drawer-bar"><strong>Overview</strong><button type="button" id="alloc-drawer-close">Close</button></div>
-      <div class="alloc-drawer-scroll">${allocationLoadPanel(desk, supervisors)}</div>
+      <div class="alloc-drawer-scroll">${indicators}${allocationLoadPanel(desk, supervisors)}</div>
     </div>
   </aside>`;
 }
@@ -2131,7 +2323,7 @@ export function allocationSettingsMarkup(desk) {
   return `<p class="muted">Showing student data for the cohort selected in the header.</p>
     ${allocationSection('alloc-sync', 'Google Sheets sync', `<section class="alloc-panel">
         ${desk.driveReady ? '' : `<p class="notice">${escapeHtml(desk.driveError || 'Connect Google in Admin → Google account before ingesting sheets.')}</p>`}
-        <p class="doc-hint">Choose workspace, allocation drafts, or tokens, export a workbook if you need one, paste the link, then preview. Workspace ingest reads <code>COHORTDATA: ${escapeHtml(state.cohortId)}</code> and upserts by StudentId. Allocation draft ingest reads <code>ALLOCATIONS: ${escapeHtml(state.cohortId)}</code> and restores the selected subject, the suggested teacher, and draft tokens. Token ingest reads <code>SUPERVISORTOKENS: ${escapeHtml(state.cohortId)}</code> and tops up quotas. None of these deletes rows that are missing from the sheet. When a live choice sheet is linked, a workspace ingest keeps the live choice values and live dashboard columns, and still updates the other auxiliary columns.</p>
+        <p class="doc-hint">Choose workspace, allocation drafts, or tokens, export a workbook if you need one, paste the link, then preview. Workspace ingest reads <code>COHORTDATA: ${escapeHtml(state.cohortId)}</code> and upserts by StudentId. Allocation draft ingest reads <code>ALLOCATIONS: ${escapeHtml(state.cohortId)}</code> and restores the selected subject, the suggested teacher, coordinator flags, and draft tokens. Token ingest reads <code>SUPERVISORTOKENS: ${escapeHtml(state.cohortId)}</code> and tops up quotas. None of these deletes rows that are missing from the sheet. When a live choice sheet is linked, a workspace ingest keeps the live choice values and live dashboard columns, and still updates the other auxiliary columns.</p>
         <div class="sheet-choices" role="radiogroup" aria-label="Ingest kind">
           <label class="check-option"><input type="radio" name="alloc-ingest-kind" value="workspace" ${kind === 'workspace' ? 'checked' : ''}><span>Workspace data <span class="muted">COHORTDATA: ${escapeHtml(state.cohortId)}</span></span></label>
           <label class="check-option"><input type="radio" name="alloc-ingest-kind" value="drafts" ${kind === 'drafts' ? 'checked' : ''}><span>Allocation drafts <span class="muted">ALLOCATIONS: ${escapeHtml(state.cohortId)}</span></span></label>
@@ -2142,7 +2334,7 @@ export function allocationSettingsMarkup(desk) {
           <button type="button" class="button secondary" id="alloc-export-tokens">Export token sheet</button>
           <button type="button" class="button secondary" id="alloc-open-quotas">Open EE quotas</button>
         </div>
-        <p class="muted">Export allocation drafts writes an <code>ALLOCATIONS: ${escapeHtml(state.cohortId)}</code> tab with the drafted or published supervisor, Selected Subject, suggested teacher, SelectedInterdisciplinary, and InterdisciplinarySubject. Paste that spreadsheet back, choose Allocation drafts, and ingest to restore those fields. If either interdisciplinary column is present, blank cells clear that workspace value; older sheets without those columns leave it unchanged. Published tokens are not changed. Export token sheet writes <code>SUPERVISORTOKENS: ${escapeHtml(state.cohortId)}</code> from the EE quotas already saved on staff. Set those quotas before exporting tokens.</p>
+        <p class="muted">Export allocation drafts writes an <code>ALLOCATIONS: ${escapeHtml(state.cohortId)}</code> tab with the drafted or published supervisor, Selected Subject, suggested teacher, SelectedInterdisciplinary, InterdisciplinarySubject, IsFlagged, FlagNote, and PendingClear. Paste that spreadsheet back, choose Allocation drafts, and ingest to restore those fields. If those columns are present, blank cells clear that workspace value; older sheets without them leave it unchanged. Published tokens are not changed. Export token sheet writes <code>SUPERVISORTOKENS: ${escapeHtml(state.cohortId)}</code> from the EE quotas already saved on staff. Set those quotas before exporting tokens.</p>
         <p id="alloc-export-result" class="muted">${settings.lastExport ? 'Last draft export: ' + escapeHtml(allocationWhen(settings.lastExport)) : 'Drafts not exported yet'}${settings.lastWorkspaceSync ? ' · Workspace: ' + escapeHtml(allocationWhen(settings.lastWorkspaceSync)) : ''}${settings.lastTokenSync ? ' · Tokens: ' + escapeHtml(allocationWhen(settings.lastTokenSync)) : ''}</p>
         <div class="toolbar"><button type="button" class="button secondary" id="alloc-backfill-preview">Preview draft backfill</button></div>
         <p class="muted">Backfill fills an empty Selected Subject from each student's drafted token and copies that teacher into an empty suggestion. Published tokens, and any selected subject or suggestion already stored, stay as they are.</p>
@@ -2381,6 +2573,22 @@ export function bindAllocation(target, desk) {
   const clearWorkflowFilter = target.querySelector('[data-alloc-workflow-filter-clear]');
   if (clearWorkflowFilter) clearWorkflowFilter.addEventListener('click', function() {
     state.allocationWorkflowFilter = null;
+    applyAllocationFilters();
+  });
+  target.querySelectorAll('[data-alloc-indicator]').forEach(function(button) {
+    button.addEventListener('click', function() {
+      state.allocationIndicatorFilter = {
+        dimension: button.getAttribute('data-alloc-indicator') || '',
+        bucket: button.getAttribute('data-alloc-indicator-bucket') || '',
+      };
+      state.allocationOverviewDrilldown = null;
+      state.allocationDrawerOpen = true;
+      applyAllocationFilters();
+    });
+  });
+  const clearIndicatorFilter = target.querySelector('[data-alloc-indicator-clear]');
+  if (clearIndicatorFilter) clearIndicatorFilter.addEventListener('click', function() {
+    state.allocationIndicatorFilter = null;
     applyAllocationFilters();
   });
   target.querySelectorAll('[data-alloc-subject-filter]').forEach(function(button) {
@@ -3271,7 +3479,7 @@ export function allocationIngestKind() {
 
 export function allocationConfirmCopy(kind) {
   if (kind === 'tokens') return 'Apply this token top-up. Tokens missing from the sheet stay in the hub.';
-  if (kind === 'drafts') return 'Apply selected subjects, suggestions, and draft tokens from this sheet. Students missing from the sheet stay in the hub. Published tokens stay as they are.';
+  if (kind === 'drafts') return 'Apply selected subjects, suggestions, flags, and draft tokens from this sheet. Students missing from the sheet stay in the hub. Published tokens stay as they are.';
   return 'Apply this student upsert. Students missing from the sheet stay in the hub.';
 }
 
@@ -3733,7 +3941,7 @@ export function saveAllocationSettings() {
   }).catch(showError);
 }
 
-export function allocationStudentMatchesFilters(student, desk) {
+export function allocationStudentMatchesFilters(student, desk, options) {
   if (state.allocationStatus && state.allocationStatus !== 'all' && allocationStudentStatus(student) !== state.allocationStatus) return false;
   if (state.allocationNeedSupport === 'yes' && !(student.flags && student.flags.needsSupport)) return false;
   if (state.allocationFlaggedFilter === 'yes' && !allocationIsFlagged(student)) return false;
@@ -3751,6 +3959,7 @@ export function allocationStudentMatchesFilters(student, desk) {
   if (selectedSubjects.length && !selectedSubjects.some(function(name) { return sameSubjectName(name, student.selectedSubject || ''); })) return false;
   const teachers = state.allocationTeacherFilter || [];
   if (teachers.length && teachers.indexOf(student.token ? student.token.staffId : '') < 0) return false;
+  if (!(options && options.ignoreIndicator) && !allocationIndicatorFilterMatches(student, state.allocationIndicatorFilter, desk)) return false;
   if (!allocationWorkflowFilterMatches(student, state.allocationWorkflowFilter, desk)) return false;
   const customFilters = state.allocationCustomFilters || {};
   const filterableKeys = new Set(((((desk && desk.settings) || {}).columns) || []).filter(function(column) {
@@ -3891,29 +4100,18 @@ export function allocationSupervisorLabel(person) {
 }
 
 function allocationFirstMark(student) {
-  if (!String(student && student.selectedSubject || '').trim()) return allocationMark('No subject drafted', 'idle', 'status');
-  if (allocationIsPublished(student)) return allocationMark('Published allocation', 'published', 'status');
-  if (student && student.token) return allocationMark('Allocated token', 'on', 'status');
-  return allocationMark('Subject drafted, no token', 'off', 'status');
+  const spec = allocationIndicatorSpec('status', allocationIndicatorBucket(student).status);
+  return allocationMark(spec.markTitle, spec.mode, spec.kind);
 }
 
 function allocationChoiceMark(student) {
-  const selected = String(student && student.selectedSubject || '').trim();
-  if (!selected) return allocationMark('No subject drafted', 'idle', 'subject');
-  const flag = choiceMatchFlag(selected, student.choices && student.choices.primary, student.choices && student.choices.secondary);
-  if (flag === 'match') return allocationMark('First choice match', 'on', 'subject');
-  if (flag === 'second') return allocationMark('Second choice', 'off', 'subject');
-  if (flag === 'miss') return allocationMark('Not first or second choice', 'warn', 'subject');
-  return allocationMark('Not first or second choice', 'warn', 'subject');
+  const spec = allocationIndicatorSpec('choice', allocationIndicatorBucket(student).choice);
+  return allocationMark(spec.markTitle, spec.mode, spec.kind);
 }
 
 function allocationLevelMark(student) {
-  const selected = String(student && student.selectedSubject || '').trim();
-  if (!selected) return allocationMark('No subject drafted', 'idle', 'hl');
-  const settings = (state.allocationDesk && state.allocationDesk.settings) || {};
-  const flag = diplomaLevelFlag(selected, student.dynamicData || {}, settings.hlColumn || '');
-  if (flag === 'match') return allocationMark('HL subject', 'on', 'hl');
-  return allocationMark('Subject is not listed as HL', 'warn', 'hl');
+  const spec = allocationIndicatorSpec('hl', allocationIndicatorBucket(student).hl);
+  return allocationMark(spec.markTitle, spec.mode, spec.kind);
 }
 
 function allocationInterdisciplinaryMark(student) {

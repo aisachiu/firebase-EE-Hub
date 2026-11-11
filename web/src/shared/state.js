@@ -27,6 +27,7 @@ export const state = {
   allocationFilterDraft: null,
   allocationFilterSnapshot: null,
   allocationWorkflowFilter: null,
+  allocationIndicatorFilter: null,
   allocationOpenStudent: '',
   allocationAssignedOpen: {},
   allocationDataSelected: [],
