@@ -1137,6 +1137,9 @@ test('allocation draft sheets export and ingest workspace interdisciplinary fiel
     interdisciplinarySubject: 'Theater',
     suggestedStaffId: SMITH,
     suggestedSubject: 'History',
+    isFlagged: true,
+    flagNote: 'keep',
+    pendingClear: false,
     token: { staffId: SMITH, assignedSubject: 'History', status: 'draft' },
     flags: { drafted: true, committed: false },
     dynamicData: { 'Y10 GPA': 3.4, SelectedSubject: 'ignore' },
@@ -1161,7 +1164,9 @@ test('allocation draft sheets export and ingest workspace interdisciplinary fiel
   ]);
   assert.equal(rows[0].includes('Y10 GPA'), true);
   assert.equal(rows[0].filter((header) => header === 'SelectedSubject').length, 1);
-  assert.deepEqual(rows[1].slice(0, 10), [JANE, 'Jane Doe', 'Draft', SMITH, 'History', 'History', SMITH, 'History', true, 'Theater']);
+  assert.deepEqual(rows[0].slice(10, 13), ['IsFlagged', 'FlagNote', 'PendingClear']);
+  assert.deepEqual(rows[1].slice(0, 13), [JANE, 'Jane Doe', 'Draft', SMITH, 'History', 'History', SMITH, 'History', true, 'Theater', true, 'keep', false]);
+  assert.equal(rows[1][13], 3.4);
   assert.equal(allocationTab('ALLOCATIONS 2026')?.kind, 'drafts');
   assert.equal(allocationTab('ALLOCATIONS: 2026')?.cohortId, '2026');
 
@@ -1304,8 +1309,10 @@ test('an older allocation sheet without the new columns still restores the draft
     workspaces: [{
       studentId: JANE,
       subjectChoices: { choice1: 'Art' },
-      dynamicData: {},
+      dynamicData: { 'Y10 GPA': 3.4 },
       pendingClear: false,
+      isFlagged: true,
+      flagNote: 'stay',
       selectedSubject: 'Biology',
       suggestedStaffId: '',
       suggestedSubject: '',
@@ -1318,6 +1325,213 @@ test('an older allocation sheet without the new columns still restores the draft
   assert.equal(plan.tokenWrites[0].allocatedTo, JANE);
   assert.equal(plan.tokenWrites[0].assignedSubject, 'History');
   assert.equal(plan.workspaceWrites.length, 0);
+});
+
+test('allocation sheets export and ingest coordinator flags without touching live dynamic data', () => {
+  const settings = {
+    ...emptySettings(),
+    columns: [
+      { key: 'Y10 GPA', showOnCard: true, filterable: false, sortable: true, colorScale: false, expanded: false, source: 'live' as const },
+      { key: 'Academic Flag', showOnCard: false, filterable: true, sortable: false, colorScale: false, expanded: false, source: 'live' as const },
+    ],
+  };
+  const flagged = {
+    studentId: JANE,
+    displayName: 'Jane Doe',
+    selectedSubject: 'History',
+    selectedInterdisciplinary: false,
+    interdisciplinarySubject: '',
+    suggestedStaffId: SMITH,
+    suggestedSubject: 'History',
+    isFlagged: true,
+    flagNote: 'Check the proposal',
+    pendingClear: true,
+    token: { staffId: SMITH, assignedSubject: 'History', status: 'committed' as const },
+    flags: { drafted: false, committed: true },
+    dynamicData: { 'Y10 GPA': 3.4, 'Academic Flag': 'Needs support' },
+  };
+  const clear = {
+    studentId: MARK,
+    displayName: 'Mark Lee',
+    selectedSubject: '',
+    selectedInterdisciplinary: false,
+    interdisciplinarySubject: '',
+    suggestedStaffId: '',
+    suggestedSubject: '',
+    isFlagged: false,
+    flagNote: '',
+    pendingClear: false,
+    token: null,
+    flags: { drafted: false, committed: false },
+    dynamicData: { 'Y10 GPA': 2 },
+  };
+  const rows = allocationExportRows([flagged, clear] as never, settings);
+  assert.deepEqual(rows[0].slice(0, 14), [
+    'StudentId',
+    'Display Name',
+    'Status',
+    'SupervisorEmail',
+    'AssignedSubject',
+    'SelectedSubject',
+    'SuggestedStaffEmail',
+    'SuggestedSubject',
+    'SelectedInterdisciplinary',
+    'InterdisciplinarySubject',
+    'IsFlagged',
+    'FlagNote',
+    'PendingClear',
+    'Y10 GPA',
+  ]);
+  assert.equal(rows[0].includes('Academic Flag'), false);
+  assert.deepEqual(rows[1].slice(10, 14), [true, 'Check the proposal', true, 3.4]);
+  assert.deepEqual(rows[2].slice(10, 14), [false, '', false, 2]);
+
+  const parsed = parseAllocationDraftGrid({ title: 'ALLOCATIONS 2026', rows });
+  assert.equal(parsed.warnings.length, 0);
+  assert.equal(parsed.rows[0].isFlagged, true);
+  assert.equal(parsed.rows[0].flagNote, 'Check the proposal');
+  assert.equal(parsed.rows[0].pendingClear, true);
+  assert.equal(parsed.rows[1].isFlagged, false);
+  assert.equal(parsed.rows[1].flagNote, '');
+  assert.equal(parsed.rows[1].pendingClear, false);
+
+  const jane = {
+    studentId: JANE,
+    subjectChoices: { choice1: 'History' },
+    dynamicData: { 'Y10 GPA': 3.4, 'Academic Flag': 'Needs support' },
+    pendingClear: true,
+    isFlagged: true,
+    flagNote: 'Check the proposal',
+    selectedSubject: 'History',
+    selectedInterdisciplinary: false,
+    interdisciplinarySubject: '',
+    suggestedStaffId: SMITH,
+    suggestedSubject: 'History',
+    updatedAt: '',
+  };
+  const unchanged = planAllocationDraftIngest({
+    rows: parsed.rows.filter((row) => row.studentId === JANE),
+    tokens: [token({ id: 'pub', staffId: SMITH, status: 'committed', allocatedTo: JANE, assignedSubject: 'History' })],
+    workspaces: [jane],
+    roster: [{ studentId: JANE, supervisorId: SMITH }],
+    activeSubjects: ['History'],
+    now: '2026-11-05T00:00:00.000Z',
+  });
+  assert.equal(unchanged.writing, 0);
+  assert.equal(unchanged.workspaceWrites.length, 0);
+  assert.equal(unchanged.tokenWrites.length, 0);
+
+  const editedGrid = rows.map((row) => row.slice());
+  editedGrid[1][editedGrid[0].indexOf('IsFlagged')] = 'no';
+  editedGrid[1][editedGrid[0].indexOf('FlagNote')] = 'Edited in the sheet';
+  editedGrid[1][editedGrid[0].indexOf('PendingClear')] = '0';
+  editedGrid[1][editedGrid[0].indexOf('Y10 GPA')] = 9;
+  const edited = parseAllocationDraftGrid({ title: 'ALLOCATIONS 2026', rows: editedGrid });
+  const applied = planAllocationDraftIngest({
+    rows: edited.rows.filter((row) => row.studentId === JANE),
+    tokens: [token({ id: 'pub', staffId: SMITH, status: 'committed', allocatedTo: JANE, assignedSubject: 'History' })],
+    workspaces: [jane],
+    roster: [{ studentId: JANE, supervisorId: SMITH }],
+    activeSubjects: ['History'],
+    now: '2026-11-05T00:00:00.000Z',
+  });
+  assert.equal(applied.writing, 1);
+  assert.equal(applied.tokenWrites.length, 0);
+  assert.equal(applied.workspaceWrites[0].isFlagged, false);
+  assert.equal(applied.workspaceWrites[0].flagNote, 'Edited in the sheet');
+  assert.equal(applied.workspaceWrites[0].pendingClear, false);
+  assert.equal(applied.workspaceWrites[0].selectedSubject, 'History');
+  assert.equal(applied.workspaceWrites[0].dynamicData['Y10 GPA'], 3.4);
+  assert.equal(applied.workspaceWrites[0].dynamicData['Academic Flag'], 'Needs support');
+  assert.equal(applied.workspaceWrites[0].subjectChoices.choice1, 'History');
+
+  const coerced = parseAllocationDraftGrid({
+    title: 'ALLOCATIONS 2026',
+    rows: [
+      ['StudentId', 'Is Flagged', 'Flag Note', 'Pending Clear'],
+      [JANE, 'YES', 'Watch', '1'],
+      [MARK, 'false', '', 'no'],
+      ['ada@vsa.edu', true, 'From a checkbox', false],
+      ['bea@vsa.edu', 0, 'zero', 1],
+      ['cy@vsa.edu', 'maybe', 'leave the flag', 'soon'],
+    ],
+  });
+  assert.equal(coerced.rows[0].isFlagged, true);
+  assert.equal(coerced.rows[0].flagNote, 'Watch');
+  assert.equal(coerced.rows[0].pendingClear, true);
+  assert.equal(coerced.rows[1].isFlagged, false);
+  assert.equal(coerced.rows[1].flagNote, '');
+  assert.equal(coerced.rows[1].pendingClear, false);
+  assert.equal(coerced.rows[2].isFlagged, true);
+  assert.equal(coerced.rows[2].pendingClear, false);
+  assert.equal(coerced.rows[3].isFlagged, false);
+  assert.equal(coerced.rows[3].flagNote, 'zero');
+  assert.equal(coerced.rows[3].pendingClear, true);
+  assert.equal(coerced.rows[4].isFlagged, undefined);
+  assert.equal(coerced.rows[4].flagNote, 'leave the flag');
+  assert.equal(coerced.rows[4].pendingClear, undefined);
+  assert.equal(coerced.warnings.length, 2);
+  assert.match(coerced.warnings.join('\n'), /IsFlagged must be true or false/);
+  assert.match(coerced.warnings.join('\n'), /PendingClear must be true or false/);
+
+  const cleared = planAllocationDraftIngest({
+    rows: [{ studentId: JANE, isFlagged: false, flagNote: '', pendingClear: false }],
+    tokens: [token({ id: 'pub', staffId: SMITH, status: 'committed', allocatedTo: JANE, assignedSubject: 'History' })],
+    workspaces: [jane],
+    roster: [{ studentId: JANE, supervisorId: SMITH }],
+    activeSubjects: ['History'],
+    now: '2026-11-05T00:00:00.000Z',
+  });
+  assert.equal(cleared.workspaceWrites[0].isFlagged, false);
+  assert.equal(cleared.workspaceWrites[0].flagNote, '');
+  assert.equal(cleared.workspaceWrites[0].pendingClear, false);
+  assert.equal(cleared.workspaceWrites[0].dynamicData['Y10 GPA'], 3.4);
+
+  const omitted = planAllocationDraftIngest({
+    rows: [{ studentId: JANE, selectedSubject: 'History' }],
+    tokens: [token({ id: 'pub', staffId: SMITH, status: 'committed', allocatedTo: JANE, assignedSubject: 'History' })],
+    workspaces: [jane],
+    roster: [{ studentId: JANE, supervisorId: SMITH }],
+    activeSubjects: ['History'],
+    now: '2026-11-05T00:00:00.000Z',
+  });
+  assert.equal(omitted.writing, 0);
+  assert.equal(omitted.workspaceWrites.length, 0);
+
+  const flagOnly = planAllocationDraftIngest({
+    rows: [{ studentId: MARK, isFlagged: true, flagNote: 'New flag' }],
+    tokens: [],
+    workspaces: [],
+    roster: [{ studentId: MARK }],
+    activeSubjects: ['History'],
+    now: '2026-11-05T00:00:00.000Z',
+  });
+  assert.equal(flagOnly.workspaceWrites[0].isFlagged, true);
+  assert.equal(flagOnly.workspaceWrites[0].flagNote, 'New flag');
+  assert.equal(flagOnly.workspaceWrites[0].pendingClear, false);
+  assert.deepEqual(flagOnly.workspaceWrites[0].dynamicData, {});
+
+  const drafted = planAllocationDraftIngest({
+    rows: [{
+      studentId: MARK,
+      status: 'Draft',
+      supervisorEmail: SMITH,
+      assignedSubject: 'History',
+      selectedSubject: 'History',
+      pendingClear: true,
+      isFlagged: true,
+      flagNote: 'Still flagged',
+    }],
+    tokens: [token({ id: 'open', staffId: SMITH, status: 'available', eligibleSubjects: ['History'] })],
+    workspaces: [],
+    roster: [{ studentId: MARK }],
+    activeSubjects: ['History'],
+    now: '2026-11-05T00:00:00.000Z',
+  });
+  assert.equal(drafted.tokenWrites[0].status, 'draft');
+  assert.equal(drafted.workspaceWrites[0].isFlagged, true);
+  assert.equal(drafted.workspaceWrites[0].flagNote, 'Still flagged');
+  assert.equal(drafted.workspaceWrites[0].pendingClear, false);
 });
 
 test('backfill copies a drafted token into an empty selected subject and suggestion', () => {

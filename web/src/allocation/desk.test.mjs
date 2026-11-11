@@ -97,6 +97,9 @@ test('allocation desk tags, filter, column order, supervisor cues, and token loa
     assert.doesNotMatch(settingsHtml, /id="alloc-secondary-score"/);
     assert.match(settingsHtml, /id="alloc-backfill-preview"/);
     assert.match(settingsHtml, /Selected Subject/);
+    assert.match(settingsHtml, /IsFlagged/);
+    assert.match(settingsHtml, /FlagNote/);
+    assert.match(settingsHtml, /PendingClear/);
     assert.match(deskMod.allocationConfirmCopy('drafts'), /Published tokens stay as they are/);
     state.allocationIngestKind = 'workspace';
 
