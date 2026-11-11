@@ -295,7 +295,9 @@ export async function getFormResponse(app: App, milestoneId: unknown, studentEma
   const definition = definitionFrom(record);
   const placement = await findPlacement(app, email);
   if (!placement) throw new HubError('Student was not found on a cohort roster.');
-  const allowed = user.permissions?.canAdmin || placement.supervisorId === user.email || !placement.supervisorId;
+  // Coordinators and admins, or the supervisor named on the roster. A blank supervisor does not open the response to every staff member.
+  const assignedSupervisor = normalizeEmail(placement.supervisorId);
+  const allowed = !!user.permissions?.canAdmin || (assignedSupervisor !== '' && assignedSupervisor === normalizeEmail(user.email));
   if (!allowed) return deny(app, user, 'VIEW_FORM_RESPONSE', 'Form answers are visible to the assigned supervisor.');
   const template = await requireFormTemplate(app, definition.milestoneId);
   const response = await app.store.get(COLLECTIONS.formResponses, formResponseId(definition.milestoneId, email));
