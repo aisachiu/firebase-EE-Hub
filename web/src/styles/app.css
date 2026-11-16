@@ -200,9 +200,20 @@ a.icon-button svg { display: block; }
 .journey .step.sync-confirmed,
 .here-card.sync-confirmed,
 .form-panel.sync-confirmed { animation: plan-saved-outline .85s ease both; }
-.journey .step.done h3 { color: var(--muted); font-weight: 600; }
+.journey .step.done .journey-step-title { color: var(--muted); font-weight: 600; }
 .step-top { display: flex; justify-content: space-between; gap: 6px 10px; align-items: baseline; flex-wrap: wrap; }
 .step-top h3 { margin: 0; font-size: 15px; }
+.journey-step-heading { flex: 1; min-width: 0; margin: 0; }
+.journey-step-toggle { display: flex; flex: 1; align-items: baseline; gap: 6px 10px; width: 100%; min-width: 0; padding: 0; border: 0; color: inherit; background: transparent; text-align: left; cursor: pointer; }
+.journey-step-toggle:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
+.journey-step-title { flex: 1; min-width: 0; font-size: 15px; font-weight: 700; overflow-wrap: anywhere; }
+.journey-step-toggle .muted { font-size: 13px; }
+.journey-step-chevron { flex: none; width: 8px; height: 8px; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; transform: rotate(45deg); }
+.journey-step-toggle[aria-expanded="true"] .journey-step-chevron { transform: rotate(225deg); }
+.here-card .journey-step-title { font-size: 18px; }
+.here-card .step-actions .icon-button { color: white; }
+.here-card .step-actions .icon-button:hover, .here-card .step-actions .icon-button:focus-visible { color: var(--ink); }
+.journey [data-journey-details][hidden] { display: none; }
 .journey .step p { margin: 3px 0 0; }
 .journey-panel { position: fixed; top: 0; right: 0; z-index: 25; height: 100vh; width: 36px; overflow: hidden; background: var(--ink); transition: width .2s ease; }
 .journey-panel.open { width: clamp(300px, 34vw, 420px); background: #f6f8f9; border-left: 1px solid var(--line); box-shadow: -8px 0 24px rgba(0, 30, 50, .12); }

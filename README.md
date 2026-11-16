@@ -4,6 +4,8 @@ Firebase version of the [VSA Extended Essay hub](https://github.com/aisachiu/GAS
 
 Students see Document, Journey, and Supervisor. Published resources sit on Journey as research support, and `/resources` opens that module. Staff see My Students, resources, messages, and notes. Coordinators and admins also see Admin. Milestone ownership, phase prerequisites, tickets, and milestone forms are enforced in the function. The browser cannot write Firestore directly.
 
+On Journey, select a milestone or to-do heading to expand its details and available actions; select it again to collapse them. Staff see the same controls when viewing a student.
+
 ## Web app
 
 The browser UI is a Vite app in `web/`. `web/index.html` is the shell. Screens live in ES modules under `web/src/`. `web/src/main.js` owns Firebase Auth and `window.eeCall`. View modules call that. They do not talk to Cloud Functions on their own.

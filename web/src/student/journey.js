@@ -155,6 +155,12 @@ export function bindJourneyHero(main) {
 export function paintStudentJourney(home, host) {
   const main = host || document.getElementById('journey-body') || document.getElementById('journey-module');
   if (!main) return;
+  const identity = JSON.stringify([home.staffView === true, home.email || '', home.cohort || '']);
+  if (state.journeyDisclosureIdentity !== identity) {
+    state.journeyDisclosureIdentity = identity;
+    state.journeyExpanded = {};
+    state.editingTodo = '';
+  }
   const embedded = main.id === 'journey-module';
   const phases = home.phases || [];
   const items = home.actionItems || [];
@@ -212,11 +218,12 @@ export function journeyHereCard(home, current, phaseTitle, zoom, currentPhaseId)
   const actions = journeyActions(item, current.template, home);
   const check = journeyCheck(item, 'Mark ' + shownTitle + ' done', canCheck, current.template.milestoneId);
   const edit = milestoneEditButton(home, item, shownTitle, current.template);
-  return `<section class="here-card" data-task-id="${item ? escapeHtml(item.TaskId) : ''}" data-milestone-id="${escapeHtml(current.template.milestoneId || '')}"><p class="eyebrow">You are here · ${escapeHtml(title)}</p><div class="step-top">${check}<div class="step-title"><h2>${escapeHtml(shownTitle)}</h2>${edit}</div></div><p>${escapeHtml(milestoneDescriptionText(current.template, item) || 'This is your next step.')}</p><div class="step-actions">${due ? `<span class="chip">${escapeHtml(due)}</span>` : ''}${actions || `<span class="chip">${escapeHtml(milestoneStatusText(home, item, current.template))}</span>`}</div></section>`;
+  const key = 'milestone:' + current.template.milestoneId;
+  const expanded = !!state.journeyExpanded[key];
+  return `<section class="here-card" data-journey-disclosure data-task-id="${item ? escapeHtml(item.TaskId) : ''}" data-milestone-id="${escapeHtml(current.template.milestoneId || '')}"><p class="eyebrow">You are here · ${escapeHtml(title)}</p><div class="step-top">${check}<h2 class="journey-step-heading"><button type="button" class="journey-step-toggle" data-journey-toggle="${escapeHtml(key)}" aria-expanded="${expanded}"><span class="journey-step-title">${escapeHtml(shownTitle)}</span><span class="journey-step-chevron" aria-hidden="true"></span></button></h2></div><div data-journey-details${expanded ? '' : ' hidden'}><p>${escapeHtml(milestoneDescriptionText(current.template, item) || 'This is your next step.')}</p><div class="step-actions">${due ? `<span class="chip">${escapeHtml(due)}</span>` : ''}${actions || `<span class="chip">${escapeHtml(milestoneStatusText(home, item, current.template))}</span>`}${edit}</div></div></section>`;
 }
 
 export function renderJourneyPhase(home, phase, phaseTitle, current, zoom, currentPhaseId) {
-  const detailed = zoom !== 'all' || phase.phaseId === currentPhaseId;
   const milestones = (home.templates || []).filter(function(template) {
     return milestonePhaseId(template, systemItemFor(home, template.milestoneId)) === phase.phaseId;
   });
@@ -231,7 +238,7 @@ export function renderJourneyPhase(home, phase, phaseTitle, current, zoom, curre
     rows.push({
       due: item && item.DueDate,
       title: template.title,
-      html: renderJourneyMilestone(home, template, item, detailed, current, zoom)
+      html: renderJourneyMilestone(home, template, item, current)
     });
   });
   if (showTodos) todos.forEach(function(item) {
@@ -265,18 +272,18 @@ export function journeyCheck(item, label, enabled, milestoneId) {
   return `<input type="checkbox" class="rail-check" data-milestone-check${milestone} ${checked ? 'checked' : ''} ${interactive ? '' : 'disabled'} aria-label="${escapeHtml(label)}">`;
 }
 
-export function renderJourneyMilestone(home, template, item, detailed, current, zoom) {
+export function renderJourneyMilestone(home, template, item, current) {
   const title = milestoneTitleText(template, item);
   const status = item ? item.Status : 'Pending';
   const isHere = current && current.template.milestoneId === template.milestoneId && status !== 'Completed';
-  const coordinator = !!home.canUpdateMilestones;
   const canAct = milestoneWritable(home, item);
-  const showActions = canAct && (zoom !== 'all' || status === 'Completed' || template.type === 'form' || (coordinator && (template.type === 'approval' || template.type === 'meeting')));
   const due = item && item.DueDate ? shortDate(item.DueDate) : '';
   const closed = template.type === 'form' && item && item.formOpen === false ? ' · Form closed' : '';
   const check = journeyCheck(item, 'Mark ' + title + ' done', canAct, template.milestoneId);
   const edit = milestoneEditButton(home, item, title, template);
-  return `<li class="step ${status === 'Completed' ? 'done' : ''} ${isHere ? 'here' : ''}" data-task-id="${item ? escapeHtml(item.TaskId) : ''}" data-milestone-id="${escapeHtml(template.milestoneId || '')}" data-creator-type="System">${check}<div><div class="step-top"><div class="step-title"><h3>${escapeHtml(title)}</h3>${edit}</div><span class="muted">${escapeHtml(milestoneKind(template))}${due ? ' · ' + escapeHtml(due) : ''}${closed}</span></div>${detailed ? `<p class="muted">${escapeHtml(milestoneDescriptionText(template, item))}</p>` : ''}${item && item.returnedComment ? `<p class="notice">Returned: ${escapeHtml(item.returnedComment)}</p>` : ''}<div class="step-actions"><span class="muted">${escapeHtml(milestoneStatusText(home, item, template))}</span>${showActions ? journeyActions(item, template, home) : ''}</div></div></li>`;
+  const key = 'milestone:' + template.milestoneId;
+  const expanded = !!state.journeyExpanded[key];
+  return `<li class="step ${status === 'Completed' ? 'done' : ''} ${isHere ? 'here' : ''}" data-journey-disclosure data-task-id="${item ? escapeHtml(item.TaskId) : ''}" data-milestone-id="${escapeHtml(template.milestoneId || '')}" data-creator-type="System">${check}<div><h3 class="journey-step-heading"><button type="button" class="journey-step-toggle" data-journey-toggle="${escapeHtml(key)}" aria-expanded="${expanded}"><span class="journey-step-title">${escapeHtml(title)}</span><span class="muted">${escapeHtml(milestoneKind(template))}${due ? ' · ' + escapeHtml(due) : ''}${closed}</span><span class="journey-step-chevron" aria-hidden="true"></span></button></h3><div data-journey-details${expanded ? '' : ' hidden'}><p class="muted">${escapeHtml(milestoneDescriptionText(template, item))}</p>${item && item.returnedComment ? `<p class="notice">Returned: ${escapeHtml(item.returnedComment)}</p>` : ''}<div class="step-actions"><span class="muted">${escapeHtml(milestoneStatusText(home, item, template))}</span>${canAct ? journeyActions(item, template, home) : ''}${edit}</div></div></div></li>`;
 }
 
 export function renderJourneyTodo(item) {
@@ -287,7 +294,9 @@ export function renderJourneyTodo(item) {
     ? `<div class="step-actions"><button type="button" class="link-button" data-edit-todo="${escapeHtml(item.TaskId)}">Edit</button></div>`
     : '';
   const check = journeyCheck(item, 'Mark ' + (item.Title || 'to-do') + ' done', writable);
-  return `<li class="step todo ${item.Status === 'Completed' ? 'done' : ''}" data-task-id="${escapeHtml(item.TaskId)}" data-creator-type="Student">${check}<div><div class="step-top"><h3>${escapeHtml(item.Title)}</h3><span class="muted">To-do${due ? ' · ' + escapeHtml(shortDate(due)) : ''}</span></div>${item.Description && !editing ? `<p class="muted">${escapeHtml(item.Description)}</p>` : ''}${editing ? `<div class="todo-edit"><input data-todo-title value="${escapeHtml(item.Title)}" maxlength="240" aria-label="To-do title"><textarea data-todo-description aria-label="To-do note">${escapeHtml(item.Description || '')}</textarea><input type="date" data-todo-date value="${escapeHtml(due)}" aria-label="To-do date"><div class="step-actions"><button type="button" class="button" data-save-todo="${escapeHtml(item.TaskId)}">Save</button><button type="button" class="button secondary" data-close-todo>Close</button></div></div>` : actions}</div></li>`;
+  const key = 'todo:' + item.TaskId;
+  const expanded = !!state.journeyExpanded[key];
+  return `<li class="step todo ${item.Status === 'Completed' ? 'done' : ''}" data-journey-disclosure data-task-id="${escapeHtml(item.TaskId)}" data-creator-type="Student">${check}<div><h3 class="journey-step-heading"><button type="button" class="journey-step-toggle" data-journey-toggle="${escapeHtml(key)}" aria-expanded="${expanded}"><span class="journey-step-title">${escapeHtml(item.Title)}</span><span class="muted">To-do${due ? ' · ' + escapeHtml(shortDate(due)) : ''}</span><span class="journey-step-chevron" aria-hidden="true"></span></button></h3><div data-journey-details${expanded ? '' : ' hidden'}>${item.Description && !editing ? `<p class="muted">${escapeHtml(item.Description)}</p>` : ''}${editing ? `<div class="todo-edit"><input data-todo-title value="${escapeHtml(item.Title)}" maxlength="240" aria-label="To-do title"><textarea data-todo-description aria-label="To-do note">${escapeHtml(item.Description || '')}</textarea><input type="date" data-todo-date value="${escapeHtml(due)}" aria-label="To-do date"><div class="step-actions"><button type="button" class="button" data-save-todo="${escapeHtml(item.TaskId)}">Save</button><button type="button" class="button secondary" data-close-todo>Close</button></div></div>` : actions}</div></div></li>`;
 }
 
 export function journeyActions(item, template, home) {
@@ -343,6 +352,7 @@ export function milestoneProgressLabel(item, template) {
 }
 
 export function bindJourney(main, home, currentPhaseId) {
+  bindJourneyDisclosures(main);
   function paintHere(record) {
     paintStudentJourney(record, main);
   }
@@ -536,6 +546,25 @@ export function bindJourney(main, home, currentPhaseId) {
   main.querySelectorAll('[data-edit-milestone]').forEach(function(button) {
     button.addEventListener('click', function() {
       openMilestoneEditor(home, button.dataset.editMilestone || '', button.dataset.milestoneId || '');
+    });
+  });
+}
+
+export function bindJourneyDisclosures(main) {
+  const buttons = main.querySelectorAll('[data-journey-toggle]');
+  buttons.forEach(function(button) {
+    button.addEventListener('click', function() {
+      const key = button.dataset.journeyToggle;
+      const expanded = button.getAttribute('aria-expanded') !== 'true';
+      if (expanded) state.journeyExpanded[key] = true;
+      else delete state.journeyExpanded[key];
+      buttons.forEach(function(other) {
+        if (other.dataset.journeyToggle !== key) return;
+        other.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+        const container = other.closest('[data-journey-disclosure]');
+        const details = container && container.querySelector('[data-journey-details]');
+        if (details) details.hidden = !expanded;
+      });
     });
   });
 }
