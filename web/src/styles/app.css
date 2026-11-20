@@ -434,6 +434,8 @@ main.plan-wide { max-width: none; padding-inline: clamp(12px, 2vw, 28px); }
 .chip.ok { background: var(--green-soft); color: #0d7a5f; }
 .form-dialog { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: 12px; background: rgba(0, 30, 50, .45); }
 .form-dialog[hidden] { display: none; }
+.form-panel.milestone-management { width: min(760px, 100%); max-height: 90vh; overflow-y: auto; }
+.milestone-management-table { max-height: 320px; }
 .form-panel { width: min(720px, 100%); max-height: calc(100vh - 24px); overflow: auto; padding: 14px; background: white; border-top: 4px solid var(--gold); }
 .form-panel.member-editor { width: min(920px, 100%); }
 .milestone-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 8px 0; border-top: 1px solid var(--line); }

@@ -4,22 +4,7 @@ import { COLLECTIONS, fieldConfig } from './schema';
 import { App, audited, deny, requireAdmin, requireStaff, requireUser } from './session';
 import { addDays, dateOnlyValue, Doc, HubError, normalizeEmail, nowIso, parseActionDate, serializeDateOnly, shortId, text, toBoolean, uuid, validateEmail } from './util';
 import { formWritesClosed } from './formsPure';
-
-function creatorKind(record: Doc): string {
-  const value = text(record.CreatorType || record.creatorType).toLowerCase();
-  if (value === 'system') return 'System';
-  if (value === 'student') return 'Student';
-  if (value === 'supervisor') return 'Supervisor';
-  return text(record.CreatorType || record.creatorType);
-}
-
-function actionTemplateId(record: Doc): string {
-  return text(record.TemplateId || record.templateId || record.MilestoneId || record.milestoneId);
-}
-
-function actionStudentId(record: Doc): string {
-  return normalizeEmail(record.StudentId || record.studentId);
-}
+import { actionStudentId, actionTemplateId, creatorKind } from './actionIdentifiers';
 
 function sameStudent(record: Doc, aliases: string[]): boolean {
   return aliases.includes(actionStudentId(record));

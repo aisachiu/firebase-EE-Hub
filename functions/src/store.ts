@@ -1,7 +1,9 @@
-import { Firestore } from 'firebase-admin/firestore';
+import { Firestore, Transaction } from 'firebase-admin/firestore';
 import { nextDocCommentSyncWrite, pairRecordId } from './docCommentsPure';
 import { COLLECTIONS } from './schema';
-import { cleanDoc, Doc, normalizeEmail, parseDriveId, text } from './util';
+import { cleanDoc, Doc, HubError, normalizeEmail, parseDriveId, text } from './util';
+import { milestoneAssignmentScope } from './milestoneManagement';
+import { actionStudentId, actionTemplateId, creatorKind } from './actionIdentifiers';
 
 function tokenWithoutInterdisciplinary(data: Doc): Doc {
   const token = { ...data };
@@ -45,6 +47,62 @@ export class Store {
 
   async remove(name: string, id: string): Promise<void> {
     await this.col(name).doc(id).delete();
+  }
+
+  private milestoneActionQueries(milestoneId: string) {
+    return ['TemplateId', 'templateId', 'MilestoneId', 'milestoneId'].map((field) =>
+      this.col(COLLECTIONS.studentActionItems).where(field, '==', milestoneId));
+  }
+
+  private async milestoneActionDocuments(milestoneId: string, transaction?: Transaction) {
+    const snapshots = await Promise.all(this.milestoneActionQueries(milestoneId).map((query) =>
+      transaction ? transaction.get(query) : query.get()));
+    return [...new Map(snapshots.flatMap((snapshot) => snapshot.docs).map((doc) => [doc.id, doc])).values()];
+  }
+
+  async listMilestoneActionItems(milestoneId: string): Promise<Doc[]> {
+    return (await this.milestoneActionDocuments(milestoneId)).map((doc) => doc.data() as Doc);
+  }
+
+  async manageCohortMilestoneAssignments(cohortId: string, milestoneId: string, signature: string, action: 'reset' | 'delete', actor: string, now: string): Promise<number> {
+    return this.db.runTransaction(async (transaction) => {
+      const [milestone, members, tasks] = await Promise.all([
+        transaction.get(this.cohortMilestones(cohortId).doc(milestoneId)),
+        transaction.get(this.members(cohortId)),
+        this.milestoneActionDocuments(milestoneId, transaction),
+      ]);
+      if (!milestone.exists) throw new HubError('Milestone not found. Refresh and try again.');
+      const scope = milestoneAssignmentScope(tasks.map((doc) => doc.data() as Doc), members.docs.map((doc) => doc.data() as Doc), cohortId, milestoneId);
+      if (scope.signature !== signature) throw new HubError('Assignments changed since the preview. Refresh the preview and try again.');
+      const byId = new Map(tasks.map((doc) => [doc.id, doc]));
+      for (const assignment of scope.assignments) {
+        const doc = byId.get(assignment.taskId);
+        const record = doc?.data();
+        if (!doc || !record || text(record.TaskId) !== assignment.taskId || actionStudentId(record) !== assignment.studentId
+          || text(record.cohortId) !== assignment.cohortId || actionTemplateId(record) !== milestoneId || creatorKind(record) !== 'System') {
+          throw new HubError('An action item TaskId does not match its document ID. Correct it before managing this milestone.');
+        }
+        if (action === 'delete') transaction.delete(doc.ref);
+        else transaction.update(doc.ref, { Status: 'Pending', LastUpdated: now, UpdatedBy: actor });
+      }
+
+      return scope.assignments.length;
+    });
+  }
+
+  async deleteUnassignedCohortMilestone(cohortId: string, milestoneId: string): Promise<void> {
+    await this.db.runTransaction(async (transaction) => {
+      const ref = this.cohortMilestones(cohortId).doc(milestoneId);
+      const [milestone, members, tasks] = await Promise.all([
+        transaction.get(ref),
+        transaction.get(this.members(cohortId)),
+        this.milestoneActionDocuments(milestoneId, transaction),
+      ]);
+      if (!milestone.exists) throw new HubError('Record not found.');
+      const scope = milestoneAssignmentScope(tasks.map((doc) => doc.data() as Doc), members.docs.map((doc) => doc.data() as Doc), cohortId, milestoneId);
+      if (scope.assignments.length) throw new HubError('This milestone has assigned action items in this cohort and cannot be deleted.');
+      transaction.delete(ref);
+    });
   }
 
   async whereEqual(name: string, field: string, value: unknown): Promise<Doc[]> {

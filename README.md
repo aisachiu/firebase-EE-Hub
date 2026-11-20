@@ -6,6 +6,8 @@ Students see Document, Journey, and Supervisor. Published resources sit on Journ
 
 On Journey, select a milestone or to-do heading to expand its details and available actions; select it again to collapse them. Staff see the same controls when viewing a student.
 
+In Admin → Phases and Milestones → Cohort, **Manage assignments** previews a milestone's system tasks and their statuses. Reset sets existing assignments to Pending without changing due dates; delete removes assignments after confirmation and then offers to delete the milestone separately. Both retain form responses, milestone events, notes and audit history. Cohort-tagged tasks (including former members) and legacy tasks without a cohort ID for current members are included; tasks explicitly tagged to another cohort are reported but not changed. Legacy records can be ambiguous if a student belongs to multiple cohorts. Operations are atomic and subject to Firestore's transaction limits; refresh the preview if records change before saving.
+
 ## Web app
 
 The browser UI is a Vite app in `web/`. `web/index.html` is the shell. Screens live in ES modules under `web/src/`. `web/src/main.js` owns Firebase Auth and `window.eeCall`. View modules call that. They do not talk to Cloud Functions on their own.
