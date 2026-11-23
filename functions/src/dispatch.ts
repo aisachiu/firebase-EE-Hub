@@ -40,6 +40,8 @@ import {
   getPathwayPlan,
   previewCohortMilestoneAssignments,
   manageCohortMilestoneAssignments,
+  listCohortMilestoneArchives,
+  restoreCohortMilestoneAssignment,
   saveCohortMilestone,
   saveCohortPhase,
   saveCohortPlanAnchor,
@@ -135,7 +137,9 @@ export async function dispatch(app: App, method: string, args: unknown[]): Promi
     case 'saveCohortMilestone': return saveCohortMilestone(app, args[0], (args[1] || {}) as any, args[2]);
     case 'deleteCohortMilestone': return deleteCohortMilestone(app, args[0], args[1]);
     case 'previewCohortMilestoneAssignments': return previewCohortMilestoneAssignments(app, args[0], args[1]);
-    case 'manageCohortMilestoneAssignments': return manageCohortMilestoneAssignments(app, args[0], args[1], args[2], args[3]);
+    case 'manageCohortMilestoneAssignments': return manageCohortMilestoneAssignments(app, args[0], args[1], args[2], args[3], args[4]);
+    case 'listCohortMilestoneArchives': return listCohortMilestoneArchives(app, args[0]);
+    case 'restoreCohortMilestoneAssignment': return restoreCohortMilestoneAssignment(app, args[0], args[1]);
     case 'saveCohortPlanAnchor': return saveCohortPlanAnchor(app, args[0], args[1]);
     case 'seedCohortPathway': return seedCohortPathway(app, args[0], args[1], args[2]);
     case 'saveAdminRecord': return saveAdminRecord(app, text(args[0]), (args[1] || {}) as any, args[2]);

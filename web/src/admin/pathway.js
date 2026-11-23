@@ -543,7 +543,7 @@ export function pathwayMarkup() {
     <div class="plan-main">
     ${calendar}
     <section class="plan-block" aria-labelledby="plan-list-heading">
-      <div class="toolbar"><h2 id="plan-list-heading">Milestones</h2><button type="button" class="button" data-plan-action="add-milestone">Add milestone</button>${template ? '' : '<button type="button" class="button secondary" data-plan-action="manage-assignments">Manage assignments</button>'}<button type="button" class="button secondary" data-plan-action="email-notifications">Email notifications</button><span class="muted">${template ? 'Edit the template list here. Hidden phases are left out.' : 'Edit the list here. Hidden phases are left out.'}</span></div>
+      <div class="toolbar"><h2 id="plan-list-heading">Milestones</h2><button type="button" class="button" data-plan-action="add-milestone">Add milestone</button>${template ? '' : '<button type="button" class="button secondary" data-plan-action="manage-assignments">Manage milestones</button>'}<button type="button" class="button secondary" data-plan-action="email-notifications">Email notifications</button><span class="muted">${template ? 'Edit the template list here. Hidden phases are left out.' : 'Edit the list here. Hidden phases are left out.'}</span></div>
       ${visible.length ? `<div class="plan-edit-list">${visible.map(pathwayMilestoneMarkup).join('')}</div>` : '<div class="empty">No milestones in the phases that are shown. Show a phase, or add a milestone.</div>'}
     </section>
     </div>
@@ -742,12 +742,17 @@ export function pathwayRunAction(node) {
       return;
     }
     const scope = pathwayScopeNow();
-    openMilestoneManagement(plan.cohortId, plan.milestones.filter(function(milestone) { return !!plan.persistedMilestones[milestone.milestoneId]; }), function(id) {
-      if (!pathwayScopeCurrent(scope)) {
-        showError(new Error('The selected cohort changed. Reopen milestone management to delete this milestone.'));
-        return;
-      }
-      pathwayDeleteMilestone(id);
+    openMilestoneManagement(plan.cohortId, plan.milestones.filter(function(milestone) { return !!plan.persistedMilestones[milestone.milestoneId]; }), function() {
+      callServer('getPathwayPlan', scope).then(function(result) {
+        if (!pathwayScopeCurrent(scope)) return;
+        if (Object.keys(state.pathwayPlan.saving).length || Object.keys(state.pathwayPlan.timers).length) {
+          showError(new Error('The pathway changed during cleanup. Wait for edits to save, then refresh the page.'));
+          return;
+        }
+        pathwayApplyResult(result);
+        state.pathwayPlan.pendingScroll = 'preserve';
+        paintPathway();
+      }).catch(showError);
     });
   }
   else if (action === 'mode') pathwaySetMode(node.dataset.mode);

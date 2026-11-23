@@ -12,15 +12,16 @@ export function milestoneAssignmentScope(items: Doc[], members: Doc[], cohortId:
       if (email) memberIdentities.set(email, { name: name || studentId, studentId });
     });
   });
-  const assignments: { taskId: string; studentId: string; canonicalStudentId: string; studentName: string; status: string; cohortId: string; legacy: boolean; updatedAt: string }[] = [];
-  const excluded: { taskId: string; studentId: string; canonicalStudentId: string; studentName: string; status: string; cohortId: string }[] = [];
+  const assignments: { taskId: string; studentId: string; canonicalStudentId: string; studentName: string; status: string; cohortId: string; creator: string; legacy: boolean; updatedAt: string }[] = [];
+  const excluded: { taskId: string; studentId: string; canonicalStudentId: string; studentName: string; status: string; cohortId: string; creator: string; reason: string }[] = [];
   items.forEach((item) => {
-    if (creatorKind(item) !== 'System' || actionTemplateId(item) !== milestoneId) return;
+    if (actionTemplateId(item) !== milestoneId) return;
     const studentId = actionStudentId(item);
     const taskCohort = text(item.cohortId);
-    const belongs = taskCohort === cohortId || (!taskCohort && memberIdentities.has(studentId));
+    const belongs = taskCohort === cohortId;
+    const ambiguous = !taskCohort && memberIdentities.has(studentId);
     const otherCohort = !!taskCohort && taskCohort !== cohortId && memberIdentities.has(studentId);
-    if (!belongs && !otherCohort) return;
+    if (!belongs && !otherCohort && !ambiguous) return;
     const taskId = text(item.TaskId);
     if (belongs && !taskId) throw new HubError('A matching action item has no TaskId. Correct it before managing this milestone.');
     const row = {
@@ -30,9 +31,10 @@ export function milestoneAssignmentScope(items: Doc[], members: Doc[], cohortId:
       studentName: memberIdentities.get(studentId)?.name || studentId || '(unknown student)',
       status: text(item.Status) || '(no status)',
       cohortId: taskCohort,
+      creator: creatorKind(item),
     };
     if (belongs) assignments.push({ ...row, legacy: !taskCohort, updatedAt: text(item.LastUpdated) });
-    else excluded.push(row);
+    else excluded.push({ ...row, reason: ambiguous ? 'legacy' : 'other-cohort' });
   });
   const compare = (left: { taskId: string }, right: { taskId: string }) => left.taskId.localeCompare(right.taskId);
   assignments.sort(compare);

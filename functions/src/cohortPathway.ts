@@ -239,17 +239,38 @@ export async function previewCohortMilestoneAssignments(app: App, cohortId: unkn
   return milestoneAssignmentScope(items, members, cohort, key);
 }
 
-export async function manageCohortMilestoneAssignments(app: App, cohortId: unknown, milestoneId: unknown, actionValue: unknown, signatureValue: unknown) {
+export async function manageCohortMilestoneAssignments(app: App, cohortId: unknown, milestoneId: unknown, actionValue: unknown, signatureValue: unknown, selectedValue?: unknown) {
   const user = await requireAdmin(app, 'MANAGE_COHORT_MILESTONE_ASSIGNMENTS');
   const cohort = await requireSeededCohort(app, cohortId);
   const milestone = text(milestoneId);
   const action = text(actionValue);
   const signature = text(signatureValue);
   if (!milestone || !/^[a-f0-9]{64}$/.test(signature)) throw new HubError('Refresh the assignment preview before continuing.');
-  if (action !== 'reset' && action !== 'delete') throw new HubError('Choose reset or delete assignments.');
-  return audited(app, user, 'MANAGE_COHORT_MILESTONE_ASSIGNMENTS', { cohortId: cohort, milestoneId: milestone, action }, async () => {
-    const changed = await app.store.manageCohortMilestoneAssignments(cohort, milestone, signature, action, user.email, nowIso());
+  if (action !== 'reset' && action !== 'delete' && action !== 'archive') throw new HubError('Choose reset, archive or delete assignments.');
+  if (selectedValue !== undefined && (!Array.isArray(selectedValue) || !selectedValue.length || selectedValue.some((value) => typeof value !== 'string' || !text(value)))) {
+    throw new HubError('Select at least one valid assignment.');
+  }
+  const selected = selectedValue as string[] | undefined;
+  return audited(app, user, 'MANAGE_COHORT_MILESTONE_ASSIGNMENTS', { cohortId: cohort, milestoneId: milestone, action, taskIds: selected || 'all' }, async () => {
+    const changed = await app.store.manageCohortMilestoneAssignments(cohort, milestone, signature, action, user.email, nowIso(), selected);
     return { changed, action };
+  });
+}
+
+export async function listCohortMilestoneArchives(app: App, cohortId: unknown) {
+  await requireAdmin(app, 'LIST_COHORT_MILESTONE_ARCHIVES');
+  const cohort = await requireSeededCohort(app, cohortId);
+  return app.store.listCohortMilestoneArchives(cohort);
+}
+
+export async function restoreCohortMilestoneAssignment(app: App, cohortId: unknown, archiveId: unknown) {
+  const user = await requireAdmin(app, 'RESTORE_COHORT_MILESTONE_ASSIGNMENT');
+  const cohort = await requireSeededCohort(app, cohortId);
+  const id = text(archiveId);
+  if (!id || id.includes('/')) throw new HubError('Select a valid archive entry.');
+  return audited(app, user, 'RESTORE_COHORT_MILESTONE_ASSIGNMENT', { cohortId: cohort, archiveId: id }, async () => {
+    await app.store.restoreCohortMilestoneAssignment(cohort, id);
+    return { restored: true };
   });
 }
 
