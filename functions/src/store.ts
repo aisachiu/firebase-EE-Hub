@@ -1,7 +1,10 @@
-import { Firestore } from 'firebase-admin/firestore';
+import { Firestore, Transaction } from 'firebase-admin/firestore';
 import { nextDocCommentSyncWrite, pairRecordId } from './docCommentsPure';
 import { COLLECTIONS } from './schema';
-import { cleanDoc, Doc, normalizeEmail, parseDriveId, text } from './util';
+import { cleanDoc, Doc, HubError, normalizeEmail, parseDriveId, text, toBoolean } from './util';
+import { milestoneAssignmentScope } from './milestoneManagement';
+import { actionStudentId, actionTemplateId, creatorKind } from './actionIdentifiers';
+import { isDeepStrictEqual } from 'node:util';
 
 function tokenWithoutInterdisciplinary(data: Doc): Doc {
   const token = { ...data };
@@ -45,6 +48,123 @@ export class Store {
 
   async remove(name: string, id: string): Promise<void> {
     await this.col(name).doc(id).delete();
+  }
+
+  private milestoneActionQueries(milestoneId: string) {
+    return ['TemplateId', 'templateId', 'MilestoneId', 'milestoneId'].map((field) =>
+      this.col(COLLECTIONS.studentActionItems).where(field, '==', milestoneId));
+  }
+
+  private async milestoneActionDocuments(milestoneId: string, transaction?: Transaction) {
+    const snapshots = await Promise.all(this.milestoneActionQueries(milestoneId).map((query) =>
+      transaction ? transaction.get(query) : query.get()));
+    return [...new Map(snapshots.flatMap((snapshot) => snapshot.docs).map((doc) => [doc.id, doc])).values()];
+  }
+
+  async listMilestoneActionItems(milestoneId: string): Promise<Doc[]> {
+    return (await this.milestoneActionDocuments(milestoneId)).map((doc) => doc.data() as Doc);
+  }
+
+  async manageCohortMilestoneAssignments(cohortId: string, milestoneId: string, signature: string, action: 'reset' | 'delete' | 'archive', actor: string, now: string, selectedIds?: string[]): Promise<number> {
+    return this.db.runTransaction(async (transaction) => {
+      const [milestone, members, tasks] = await Promise.all([
+        transaction.get(this.cohortMilestones(cohortId).doc(milestoneId)),
+        transaction.get(this.members(cohortId)),
+        this.milestoneActionDocuments(milestoneId, transaction),
+      ]);
+      if (!milestone.exists) throw new HubError('Milestone not found. Refresh and try again.');
+      const scope = milestoneAssignmentScope(tasks.map((doc) => doc.data() as Doc), members.docs.map((doc) => doc.data() as Doc), cohortId, milestoneId);
+      if (scope.signature !== signature) throw new HubError('Assignments changed since the preview. Refresh the preview and try again.');
+      const selected = selectedIds ? new Set(selectedIds) : null;
+      if (selected && (selected.size !== selectedIds!.length || [...selected].some((id) => !scope.assignments.some((row) => row.taskId === id)))) {
+        throw new HubError('The selected assignments changed. Refresh the preview and try again.');
+      }
+      const assignments = scope.assignments.filter((row) => !selected || selected.has(row.taskId));
+      const byId = new Map(tasks.map((doc) => [doc.id, doc]));
+      for (const assignment of assignments) {
+        const doc = byId.get(assignment.taskId);
+        const record = doc?.data();
+        if (!doc || !record || text(record.TaskId) !== assignment.taskId || actionStudentId(record) !== assignment.studentId
+          || text(record.cohortId) !== assignment.cohortId || actionTemplateId(record) !== milestoneId || creatorKind(record) !== assignment.creator) {
+          throw new HubError('An action item TaskId does not match its document ID. Correct it before managing this milestone.');
+        }
+        if (action === 'archive') {
+          const archive = this.cohortMilestoneArchives(cohortId).doc();
+          transaction.create(archive, { task: record, milestone: milestone.data(), archivedAt: now, archivedBy: actor });
+          transaction.delete(doc.ref);
+        } else if (action === 'delete') transaction.delete(doc.ref);
+        else transaction.update(doc.ref, { Status: 'Pending', LastUpdated: now, UpdatedBy: actor });
+      }
+
+      return assignments.length;
+    });
+  }
+
+  async deleteUnassignedCohortMilestone(cohortId: string, milestoneId: string): Promise<void> {
+    await this.db.runTransaction(async (transaction) => {
+      const ref = this.cohortMilestones(cohortId).doc(milestoneId);
+      const [milestone, members, tasks] = await Promise.all([
+        transaction.get(ref),
+        transaction.get(this.members(cohortId)),
+        this.milestoneActionDocuments(milestoneId, transaction),
+      ]);
+      if (!milestone.exists) throw new HubError('Record not found.');
+      const scope = milestoneAssignmentScope(tasks.map((doc) => doc.data() as Doc), members.docs.map((doc) => doc.data() as Doc), cohortId, milestoneId);
+      if (scope.assignments.length || scope.excluded.some((row) => row.reason === 'legacy')) throw new HubError('This milestone has assigned action items or ambiguous legacy assignments and cannot be deleted.');
+      transaction.delete(ref);
+    });
+  }
+
+  private cohortMilestoneArchives(cohortId: string) {
+    return this.db.collection(COLLECTIONS.cohorts).doc(cohortId).collection('milestoneAssignmentArchive');
+  }
+
+  async listCohortMilestoneArchives(cohortId: string) {
+    const snapshot = await this.cohortMilestoneArchives(cohortId).get();
+    return snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+  }
+
+  async restoreCohortMilestoneAssignment(cohortId: string, archiveId: string): Promise<void> {
+    await this.db.runTransaction(async (transaction) => {
+      const archiveRef = this.cohortMilestoneArchives(cohortId).doc(archiveId);
+      const archive = await transaction.get(archiveRef);
+      if (!archive.exists) throw new HubError('Archive entry not found. Refresh and try again.');
+      const data = archive.data() as Doc;
+      const task = data.task as Doc;
+      const originalMilestone = data.milestone as Doc;
+      const taskId = text(task?.TaskId);
+      const milestoneId = actionTemplateId(task || {});
+      const phaseId = text(originalMilestone?.phase);
+      if (!taskId || !milestoneId || !phaseId || [taskId, milestoneId, phaseId].some((id) => id.includes('/')) || text(task?.cohortId) !== cohortId || text(originalMilestone?.milestoneId) !== milestoneId) {
+        throw new HubError('This archive entry is invalid and cannot be restored.');
+      }
+      const taskRef = this.col(COLLECTIONS.studentActionItems).doc(taskId);
+      const milestoneRef = this.cohortMilestones(cohortId).doc(milestoneId);
+      const phaseRef = this.cohortPhases(cohortId).doc(phaseId);
+      const [existingTask, milestone, phase, members, tasks, milestones] = await Promise.all([
+        transaction.get(taskRef), transaction.get(milestoneRef), transaction.get(phaseRef),
+        transaction.get(this.members(cohortId)), this.milestoneActionDocuments(milestoneId, transaction), transaction.get(this.cohortMilestones(cohortId)),
+      ]);
+      if (existingTask.exists) throw new HubError('An assignment with this ID already exists. Restore stopped.');
+      if (!phase.exists || !toBoolean(phase.data()?.active)) throw new HubError('The original phase is missing or inactive. Restore it before restoring this assignment.');
+      if (milestone.exists && !isDeepStrictEqual(milestone.data(), originalMilestone)) {
+        throw new HubError('The milestone has changed since archiving. Restore stopped to avoid attaching progress to a different milestone.');
+      }
+      if (!milestone.exists && toBoolean(originalMilestone.isAnchor) && milestones.docs.some((doc) => toBoolean(doc.data().isAnchor))) {
+        throw new HubError('Another milestone is now the anchor. Resolve the anchor before restoring this assignment.');
+      }
+      const scope = milestoneAssignmentScope(tasks.map((doc) => doc.data() as Doc), members.docs.map((doc) => doc.data() as Doc), cohortId, milestoneId);
+      const student = actionStudentId(task);
+      const identities = members.docs.map((doc) => doc.data() as Doc);
+      const member = identities.find((row) => [row.StudentId, row['Student Email']].some((value) => normalizeEmail(value) === student));
+      const aliases = new Set([student, normalizeEmail(member?.StudentId), normalizeEmail(member?.['Student Email'])].filter(Boolean));
+      if (scope.assignments.some((row) => aliases.has(row.studentId)) || scope.excluded.some((row) => row.reason === 'legacy' && aliases.has(row.studentId))) {
+        throw new HubError('This student already has an assignment for the milestone. Restore stopped.');
+      }
+      if (!milestone.exists) transaction.create(milestoneRef, originalMilestone);
+      transaction.create(taskRef, task);
+      transaction.delete(archiveRef);
+    });
   }
 
   async whereEqual(name: string, field: string, value: unknown): Promise<Doc[]> {
@@ -203,6 +323,10 @@ export class Store {
 
   async setWorkspace(cohortId: string, studentId: string, data: Doc): Promise<void> {
     await this.workspace(cohortId).doc(studentId).set(cleanDoc(data));
+  }
+
+  async updateWorkspace(cohortId: string, studentId: string, data: Doc): Promise<void> {
+    await this.workspace(cohortId).doc(studentId).set(cleanDoc(data), { merge: true });
   }
 
   allocationConfig(cohortId: string) {

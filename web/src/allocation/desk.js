@@ -407,7 +407,7 @@ export function allocationRowMarkup(student, supervisors, columns, extents) {
       <div class="alloc-marks">${flagIcon}${allocationFirstMark(student)}${allocationChoiceMark(student)}${allocationLevelMark(student)}</div>
       <div class="alloc-flag-panel"${flagOpen ? '' : ' hidden'}><label class="check-option alloc-flag-toggle"><input type="checkbox" data-alloc-flag="${escapeHtml(student.studentId)}" ${flagged ? 'checked' : ''} aria-label="Flag ${escapeHtml(student.displayName)}"> Flag</label><input class="alloc-flag-note" type="text" data-alloc-flag-note="${escapeHtml(student.studentId)}" value="${escapeHtml(flagNote)}" placeholder="Flag note" aria-label="Flag note for ${escapeHtml(student.displayName)}" maxlength="500"></div>
     </td>
-    <td><div class="alloc-subject-list">${subjectTags || '<span class="muted">No subject choices</span>'}</div>${suggestionLine}<label class="check-option alloc-ee-flag ${interdisciplinaryChosen ? 'is-chosen' : 'is-unset'}"><input type="checkbox" data-alloc-ee-inter="${escapeHtml(student.studentId)}" ${interdisciplinaryOn ? 'checked' : ''} ${locked ? 'disabled' : ''}> Interdisciplinary EE</label>${interdisciplinarySelect}</td>
+    <td><div class="alloc-subject-list">${subjectTags || '<span class="muted">No subject choices</span>'}</div><label class="check-option alloc-ee-flag ${interdisciplinaryChosen ? 'is-chosen' : 'is-unset'}"><input type="checkbox" data-alloc-ee-inter="${escapeHtml(student.studentId)}" ${interdisciplinaryOn ? 'checked' : ''} ${locked ? 'disabled' : ''}> Interdisciplinary EE</label>${interdisciplinarySelect}${suggestionLine}</td>
     <td><div class="alloc-supervisor-name${supervisorName ? '' : ' muted'}">${escapeHtml(supervisorName || 'Unassigned')}</div>${assignedSubject}${teacherPick}</td>
     ${fields}
   </tr>${open ? allocationExpandedMarkup(student, 4 + (columns || []).length) : ''}`;
@@ -968,10 +968,13 @@ export function allocationSubjectAction(student, subject) {
 
 export function allocationSuggestionMarkup(student, locked) {
   const staffId = student && student.suggestedStaffId ? student.suggestedStaffId : '';
-  if (!staffId) return '';
-  const name = (student.suggestedStaffName || staffId);
-  const approve = locked ? '' : `<button type="button" class="alloc-approve-link" data-alloc-approve="${escapeHtml(student.studentId)}">Approve</button>`;
-  return `<p class="alloc-suggestion">Suggested: ${escapeHtml(name)} ${approve}</p>`;
+  const note = student && student.suggestionNote ? String(student.suggestionNote) : '';
+  if (!staffId && !note) return '';
+  const name = student.suggestedStaffName || staffId;
+  const approve = locked || !staffId ? '' : `<button type="button" class="alloc-approve-link" data-alloc-approve="${escapeHtml(student.studentId)}">Approve</button>`;
+  const suggestion = staffId ? `<div class="alloc-suggestion">Suggested: ${escapeHtml(name)} ${approve}</div>` : '';
+  const noteLine = note ? `<div class="alloc-suggestion-note">Note: ${escapeHtml(note)}</div>` : '';
+  return suggestion + noteLine;
 }
 
 export function allocationSupervisorCues(student, supervisors, desk) {
@@ -1250,6 +1253,36 @@ function openAllocationUndoDialog(logId, count) {
       if (state.allocationListenFallback) loadAllocation();
     }).catch(function(error) {
       confirm.disabled = false;
+      showError(error);
+    });
+  });
+}
+
+function openAllocationSuggestionNote(student) {
+  openAdminDialog('allocation-suggestion-note', `<div class="form-panel member-editor" role="dialog" aria-modal="true" aria-labelledby="alloc-suggestion-note-title"><div class="toolbar"><h2 id="alloc-suggestion-note-title">Suggestion note for ${escapeHtml(student.displayName || student.studentId)}</h2><button type="button" class="button secondary" data-close-admin-dialog>Close</button></div>
+    <label for="alloc-suggestion-note-input">Note</label><textarea id="alloc-suggestion-note-input" maxlength="2000" rows="4">${escapeHtml(student.suggestionNote || '')}</textarea>
+    <div class="toolbar"><button type="button" class="button" id="alloc-suggestion-note-save">Save</button><button type="button" class="button secondary" data-close-admin-dialog>Cancel</button></div></div>`);
+  const save = document.getElementById('alloc-suggestion-note-save');
+  const input = document.getElementById('alloc-suggestion-note-input');
+  if (!save || !input) return;
+  save.addEventListener('click', function() {
+    const cohortId = state.cohortId;
+    save.disabled = true;
+    callServer('saveAllocationSuggestionNote', cohortId, student.studentId, input.value).then(function(result) {
+      if (adminDialogKind() === 'allocation-suggestion-note' && document.getElementById('alloc-suggestion-note-input') === input) closeAdminDialog();
+      if (state.cohortId !== cohortId) return;
+      const remote = ((state.allocationRemoteDesk && state.allocationRemoteDesk.students) || []).find(function(item) {
+        return item.studentId === student.studentId;
+      });
+      if (remote && String(remote.suggestionNote || '') === String(student.suggestionNote || '')) {
+        remote.suggestionNote = result.suggestionNote;
+        applyPendingDesk();
+        paintAllocationLive();
+      }
+      if (state.allocationListenFallback) loadAllocation();
+      showSuccess('Suggestion note saved.');
+    }).catch(function(error) {
+      save.disabled = false;
       showError(error);
     });
   });
@@ -2073,7 +2106,15 @@ export function allocationHodRowMarkup(student, desk, enabled) {
   const assignedLine = assigned ? `<div class="muted">Assigned: ${escapeHtml(assigned)}</div>` : '';
   const open = state.allocationOpenStudent === student.studentId;
   const name = `<button type="button" class="link-button alloc-student-name" data-alloc-expand="${escapeHtml(student.studentId)}" aria-expanded="${open ? 'true' : 'false'}">${escapeHtml(student.displayName || student.studentId)}</button>`;
-  return `<tr class="${locked ? 'alloc-hod-lock' : ''}"><td>${name}</td><td>${escapeHtml(student.selectedSubject || '')}</td><td><select data-alloc-suggest="${escapeHtml(student.studentId)}" aria-label="Suggested teacher for ${escapeHtml(student.displayName || student.studentId)}"${locked ? ' disabled' : ''}><option value="">No suggestion</option>${options}</select>${assignedLine}</td></tr>${open ? allocationExpandedMarkup(student, 3) : ''}`;
+  const interdisciplinary = student.selectedInterdisciplinary === true;
+  const tag = interdisciplinary ? allocationInterdisciplinaryMark(student, true) : '';
+  const secondSubject = interdisciplinary && String(student.interdisciplinarySubject || '').trim();
+  const subject = escapeHtml(student.selectedSubject || '') + (secondSubject ? ` (and ${escapeHtml(secondSubject)})` : '');
+  const note = String(student.suggestionNote || '');
+  const noteControl = locked
+    ? (note ? `<span class="alloc-hod-note-text">${escapeHtml(note)}</span>` : '')
+    : `<button type="button" class="alloc-hod-note-button" data-alloc-suggestion-note="${escapeHtml(student.studentId)}" aria-label="${note ? 'Edit' : 'Add'} suggestion note for ${escapeHtml(student.displayName || student.studentId)}">${note ? escapeHtml(note) : '+ note'}</button>`;
+  return `<tr class="${locked ? 'alloc-hod-lock' : ''}"><td>${name}</td><td><div class="alloc-hod-subject"><span class="alloc-hod-subject-tag">${tag}</span><span>${subject}</span></div></td><td><div class="alloc-hod-suggestion"><select data-alloc-suggest="${escapeHtml(student.studentId)}" aria-label="Suggested teacher for ${escapeHtml(student.displayName || student.studentId)}"${locked ? ' disabled' : ''}><option value="">No suggestion</option>${options}</select>${noteControl}</div>${assignedLine}</td></tr>${open ? allocationExpandedMarkup(student, 3) : ''}`;
 }
 
 export function allocationHodMarkup(desk) {
@@ -2092,6 +2133,8 @@ export function allocationHodMarkup(desk) {
     if (key === 'teacher') return String(student.suggestedStaffName || student.suggestedStaffId || '').toLowerCase();
     return String(student.displayName || '').toLowerCase();
   });
+  const cohortStudents = (desk && desk.students) || [];
+  const suggested = function(rows) { return rows.filter(function(student) { return !!student.suggestedStaffId; }).length; };
   const certify = editable ? '<button type="button" class="button" id="alloc-hod-certify">Certify & Submit Suggestions</button>' : '';
   const reopen = submitted && (allocationPermissions().canAdmin || (allocationPermissions().isHOD && own))
     ? `<button type="button" class="button secondary" data-alloc-hod-reopen="${escapeHtml(department)}">Reopen suggestions</button>`
@@ -2101,7 +2144,7 @@ export function allocationHodMarkup(desk) {
     : '<tr><td class="empty" colspan="3">No students with a selected subject in this department.</td></tr>';
   return `<div class="alloc-layout"><div>
       ${allocationHodStatusMarkup(desk)}
-      <div class="alloc-filters"><label for="alloc-hod-department">Department</label><select id="alloc-hod-department">${options}</select>${certify}${reopen}</div>
+      <div class="alloc-filters"><label for="alloc-hod-department">Department</label><select id="alloc-hod-department">${options}</select>${certify}${reopen}<div class="alloc-hod-stats"><span>Department allocation: ${suggested(students)}/${students.length}</span><span>Cohort allocation: ${suggested(cohortStudents)}/${cohortStudents.length}</span></div></div>
       <div class="table-wrap"><table class="alloc-desk"><thead><tr>${sortableHeader('alloc-hod', 'name', 'Student')}${sortableHeader('alloc-hod', 'subject', 'Selected subject')}${sortableHeader('alloc-hod', 'teacher', 'Suggested teacher')}</tr></thead><tbody>${body}</tbody></table></div>
     </div></div>${allocationDrawerMarkup(desk, (desk && desk.supervisors) || [])}`;
 }
@@ -2849,6 +2892,13 @@ export function bindAllocation(target, desk) {
         return;
       }
       queueSuggestion(student, select.value);
+    });
+    target.querySelectorAll('[data-alloc-suggestion-note]').forEach(function(button) {
+      button.addEventListener('click', function() {
+        const studentId = button.getAttribute('data-alloc-suggestion-note');
+        const student = (desk.students || []).find(function(item) { return item.studentId === studentId; });
+        if (student) openAllocationSuggestionNote(student);
+      });
     });
   });
   const publicationAction = document.getElementById('alloc-batch-publication-action');
@@ -4114,9 +4164,8 @@ function allocationLevelMark(student) {
   return allocationMark(spec.markTitle, spec.mode, spec.kind);
 }
 
-function allocationInterdisciplinaryMark(student) {
+function allocationInterdisciplinaryMark(student, enabled = allocationInterdisciplinaryOn(student)) {
   const selected = !!String(student && student.selectedSubject || '').trim();
-  const enabled = allocationInterdisciplinaryOn(student);
   const mode = !selected ? 'neutral' : enabled ? 'on' : 'warn';
   const title = !selected ? 'No subject drafted' : enabled ? 'Interdisciplinary allocation selected' : 'Subject drafted without interdisciplinary allocation';
   return `<span class="id-tag id-tag-${mode}" title="${escapeHtml(title)}">ID</span>`;

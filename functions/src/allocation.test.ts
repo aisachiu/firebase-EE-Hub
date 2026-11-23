@@ -23,6 +23,7 @@ import {
   reopenHodSuggestions,
   setAllocationSubject,
   suggestAllocation,
+  saveAllocationSuggestionNote,
   listCohortTokens,
   saveAllocationChoices,
   saveAllocationConfig,
@@ -85,6 +86,10 @@ function memory() {
     async listWorkspace(cohortId: string) { return [...workspace.keys()].filter((id) => id.startsWith(`${cohortId}\u0000`)).map((id) => ({ ...workspace.get(id)!, id: id.split('\u0000')[1] })); },
     async getWorkspace(cohortId: string, id: string) { return copy(workspace.get(`${cohortId}\u0000${id}`)); },
     async setWorkspace(cohortId: string, id: string, data: Doc) { workspace.set(`${cohortId}\u0000${id}`, { ...data }); },
+    async updateWorkspace(cohortId: string, id: string, data: Doc) {
+      const current = workspace.get(`${cohortId}\u0000${id}`) || {};
+      workspace.set(`${cohortId}\u0000${id}`, { ...current, ...data });
+    },
     async getAllocationConfig(cohortId: string) { return copy(config.get(cohortId)); },
     async setAllocationConfig(cohortId: string, data: Doc) { config.set(cohortId, { ...data }); },
     async getHodStatus(cohortId: string) { return copy(hodStatus.get(cohortId)); },
@@ -745,7 +750,11 @@ test('a head of department suggests and certifies, and a coordinator approves', 
   await assert.rejects(commitAllocations(hod, '2026'), /Access denied/);
   await store.setWorkspace('2026', JANE, { ...(await store.getWorkspace('2026', JANE) || {}), selectedSubject: 'Biology' });
   await assert.rejects(suggestAllocation(hod, '2026', JANE, SMITH), /outside your department/);
+  await assert.rejects(saveAllocationSuggestionNote(hod, '2026', JANE, 'No'), /outside your department/);
   await store.setWorkspace('2026', JANE, { ...(await store.getWorkspace('2026', JANE) || {}), selectedSubject: 'History' });
+  await assert.rejects(saveAllocationSuggestionNote(app, '2026', JANE, 'No'), /Access denied/);
+  await assert.rejects(saveAllocationSuggestionNote(hod, '2026', JANE, 'x'.repeat(2001)), /2,000/);
+  await saveAllocationSuggestionNote(hod, '2026', JANE, '  Good fit\nfor topic  ');
   await assert.rejects(suggestAllocation(hod, '2026', JANE, COORDINATOR), /does not match/);
   const suggested = await suggestAllocation(hod, '2026', JANE, SMITH);
   assert.equal(suggested.suggestedStaffId, SMITH);
@@ -754,17 +763,26 @@ test('a head of department suggests and certifies, and a coordinator approves', 
   assert.equal(saved?.selectedSubject, 'History');
   assert.equal(saved?.isFlagged, true);
   assert.equal(saved?.flagNote, 'Keep');
+  assert.equal(saved?.suggestionNote, 'Good fit\nfor topic');
+  await suggestAllocation(hod, '2026', JANE, '');
+  assert.equal((await store.getWorkspace('2026', JANE))?.suggestionNote, 'Good fit\nfor topic');
+  await suggestAllocation(hod, '2026', JANE, SMITH);
 
   await certifyHodSuggestions(hod, '2026');
   await assert.rejects(suggestAllocation(hod, '2026', JANE, ''), /Reopen/);
+  await assert.rejects(saveAllocationSuggestionNote(hod, '2026', JANE, 'No'), /Reopen/);
   const hidden = await getAllocationDesk(hod, '2026');
   assert.deepEqual(hidden.auditLogs, []);
   assert.equal(hidden.hodStatus.byDepartment.humanities.submitted, true);
   assert.equal(hidden.students.find((student) => student.studentId === JANE)?.suggestedStaffName, 'Mr. Smith');
+  assert.equal(hidden.students.find((student) => student.studentId === JANE)?.suggestionNote, 'Good fit\nfor topic');
   assert.equal(hidden.students.find((student) => student.studentId === JANE)?.token, null);
 
   await assert.rejects(reopenHodSuggestions(hod, '2026', 'Science'), /own department/);
   await reopenHodSuggestions(app, '2026', 'Humanities');
+  await saveAllocationSuggestionNote(hod, '2026', JANE, '');
+  assert.equal((await store.getWorkspace('2026', JANE))?.suggestionNote, '');
+  await saveAllocationSuggestionNote(hod, '2026', JANE, 'Good fit');
   await suggestAllocation(hod, '2026', JANE, SMITH);
   const approved = await approveAllocationSuggestion(app, '2026', JANE);
   assert.equal(approved.changed, true);
@@ -796,6 +814,7 @@ test('a head of department suggests and certifies, and a coordinator approves', 
   await suggestAllocation(hod, '2026', JANE, SMITH);
   await suggestAllocation(hod, '2026', MARK, SMITH);
   await commitAllocations(app, '2026', [JANE]);
+  await assert.rejects(saveAllocationSuggestionNote(hod, '2026', JANE, 'No'), /published/);
   const skipped = await batchApproveAllocationSuggestions(app, '2026', [JANE, MARK]);
   assert.equal(skipped.skipped.some((row) => row.studentId === JANE && /published/i.test(row.reason)), true);
   assert.equal(skipped.assigned.includes(MARK), true);

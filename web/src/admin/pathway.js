@@ -1,4 +1,5 @@
 import { closeAdminDialog, openAdminDialog } from './records.js';
+import { openMilestoneManagement } from './milestoneManagement.js';
 import { renderAdmin } from './sections.js';
 import { requestPush } from '../router.js';
 import { callServer, markSync } from '../shared/api.js';
@@ -542,7 +543,7 @@ export function pathwayMarkup() {
     <div class="plan-main">
     ${calendar}
     <section class="plan-block" aria-labelledby="plan-list-heading">
-      <div class="toolbar"><h2 id="plan-list-heading">Milestones</h2><button type="button" class="button" data-plan-action="add-milestone">Add milestone</button><button type="button" class="button secondary" data-plan-action="email-notifications">Email notifications</button><span class="muted">${template ? 'Edit the template list here. Hidden phases are left out.' : 'Edit the list here. Hidden phases are left out.'}</span></div>
+      <div class="toolbar"><h2 id="plan-list-heading">Milestones</h2><button type="button" class="button" data-plan-action="add-milestone">Add milestone</button>${template ? '' : '<button type="button" class="button secondary" data-plan-action="manage-assignments">Manage milestones</button>'}<button type="button" class="button secondary" data-plan-action="email-notifications">Email notifications</button><span class="muted">${template ? 'Edit the template list here. Hidden phases are left out.' : 'Edit the list here. Hidden phases are left out.'}</span></div>
       ${visible.length ? `<div class="plan-edit-list">${visible.map(pathwayMilestoneMarkup).join('')}</div>` : '<div class="empty">No milestones in the phases that are shown. Show a phase, or add a milestone.</div>'}
     </section>
     </div>
@@ -734,6 +735,26 @@ export function pathwayRunAction(node) {
   else if (action === 'release-anchor') pathwayReleaseAnchor(node.dataset.milestoneId);
   else if (action === 'phase-colour') pathwaySetPhaseColour(node.dataset.phaseId, node.dataset.colour);
   else if (action === 'delete-milestone') pathwayDeleteMilestone(node.dataset.milestoneId);
+  else if (action === 'manage-assignments') {
+    const plan = state.pathwayPlan;
+    if (Object.keys(plan.saving).length || Object.keys(plan.timers).length) {
+      showError(new Error('Wait for pathway changes to finish saving before managing assignments.'));
+      return;
+    }
+    const scope = pathwayScopeNow();
+    openMilestoneManagement(plan.cohortId, plan.milestones.filter(function(milestone) { return !!plan.persistedMilestones[milestone.milestoneId]; }), function() {
+      callServer('getPathwayPlan', scope).then(function(result) {
+        if (!pathwayScopeCurrent(scope)) return;
+        if (Object.keys(state.pathwayPlan.saving).length || Object.keys(state.pathwayPlan.timers).length) {
+          showError(new Error('The pathway changed during cleanup. Wait for edits to save, then refresh the page.'));
+          return;
+        }
+        pathwayApplyResult(result);
+        state.pathwayPlan.pendingScroll = 'preserve';
+        paintPathway();
+      }).catch(showError);
+    });
+  }
   else if (action === 'mode') pathwaySetMode(node.dataset.mode);
   else if (action === 'seed') pathwaySeed();
   else if (action === 'email-notifications') openEmailNotifications('');
@@ -1393,13 +1414,13 @@ export function pathwayDeletePhase(id) {
 export function pathwayDeleteMilestone(id) {
   const milestone = pathwayFindMilestone(id);
   if (!milestone) return;
+  const scope = pathwayScopeNow();
   const title = milestone.milestoneTitle || milestone.milestoneId;
   if (!window.confirm('Delete ' + title + '?')) return;
   milestone.deleting = true;
   state.pathwayPlan.pendingScroll = 'preserve';
   paintPathway();
   pathwayEnqueue('pathway:milestone:' + id, function() {
-    const scope = pathwayScopeNow();
     if (!pathwayScopeCurrent(scope)) return null;
     if (!state.pathwayPlan.persistedMilestones[id]) {
       pathwayRemoveMilestone(id);

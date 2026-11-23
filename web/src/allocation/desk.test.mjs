@@ -1027,10 +1027,16 @@ test('allocation overviews repaint on live snapshots in dashboard and department
         studentId: 'jane@school.edu',
         subjectChoices: { choice1: 'Economics' },
         selectedSubject: 'Economics',
+        selectedInterdisciplinary: true,
+        interdisciplinarySubject: 'History',
+        suggestionNote: 'A live note',
       }],
     });
     assert.equal(paints, 2);
     assert.equal(state.allocationDesk.students[0].selectedSubject, 'Economics');
+    assert.equal(state.allocationDesk.students[0].selectedInterdisciplinary, true);
+    assert.equal(state.allocationDesk.students[0].interdisciplinarySubject, 'History');
+    assert.equal(state.allocationDesk.students[0].suggestionNote, 'A live note');
 
     state.allocationView = 'dashboard';
     handlers.onData({
@@ -1073,15 +1079,20 @@ test('suggestions, department rows, and the HOD drawer', async () => {
       selectedSubject: 'Psychology',
       suggestedStaffId: 'psy@school.edu',
       suggestedStaffName: 'Dr Psy',
+      selectedInterdisciplinary: true,
+      interdisciplinarySubject: 'Theater',
+      suggestionNote: 'Great & relevant',
     }), supervisors(), [], {});
     assert.match(suggested.split('</td>')[2], /Suggested: Dr Psy/);
     assert.match(suggested.split('</td>')[2], /class="alloc-approve-link"[^>]*>Approve</);
     assert.match(suggested.split('</td>')[2], /data-alloc-approve="jane@school.edu"/);
     assert.doesNotMatch(suggested.split('</td>')[2], /class="button"/);
+    assert.match(suggested.split('</td>')[2], /Interdisciplinary EE[\s\S]*Second subject[\s\S]*Suggested: Dr Psy[\s\S]*Approve[\s\S]*Note: Great &amp; relevant/);
     const published = deskMod.allocationRowMarkup(student({
       selectedSubject: 'Psychology',
       suggestedStaffId: 'psy@school.edu',
       suggestedStaffName: 'Dr Psy',
+      suggestionNote: 'Great & relevant',
       flags: { committed: true, drafted: false, needsSupport: false, subjectMatch: 'none', hlMatch: 'none' },
       token: { status: 'committed', staffId: 'psy@school.edu', assignedSubject: 'Psychology', staffName: 'Dr Psy' },
     }), supervisors(), [], {});
@@ -1107,6 +1118,7 @@ test('suggestions, department rows, and the HOD drawer', async () => {
         suggestedStaffId: 'psy@school.edu',
         suggestedSubject: 'Psychology',
         suggestedStaffName: 'Dr Psy',
+        suggestionNote: 'Great & relevant',
       }),
       student({ studentId: 'pat@school.edu', displayName: 'Jones, Pat', sortName: 'jones, pat', selectedSubject: 'Psychology', suggestedStaffId: 'psy@school.edu', suggestedSubject: 'Psychology', suggestedStaffName: 'Dr Psy' }),
       student({ studentId: 'mark@school.edu', displayName: 'Lee, Mark', sortName: 'lee, mark', selectedSubject: 'Theater', requestedSubjects: [theater] }),
@@ -1114,18 +1126,51 @@ test('suggestions, department rows, and the HOD drawer', async () => {
     state.allocationView = 'hod';
     state.allocationHodDepartment = 'Arts';
     const other = deskMod.allocationHodMarkup(hodDesk);
+    assert.match(other, /Department allocation: 0\/1/);
+    assert.match(other, /Cohort allocation: 2\/3/);
     assert.match(other, /data-alloc-suggest="mark@school.edu"[^>]*disabled/);
     assert.doesNotMatch(other, /data-alloc-suggest="jane@school.edu"/);
     state.allocationHodDepartment = 'Humanities';
     state.allocationHodStatus = { byDepartment: {} };
+    state.allocationInterdisciplinary = { 'jane@school.edu': false, 'pat@school.edu': true };
     const own = deskMod.allocationHodMarkup(hodDesk);
+    assert.match(own, /Department allocation: 2\/2/);
+    assert.match(own, /Cohort allocation: 2\/3/);
+    assert.match(own, /data-alloc-suggest="jane@school.edu"[\s\S]*?<\/select><button[^>]*data-alloc-suggestion-note="jane@school.edu"[^>]*>Great &amp; relevant<\/button>/);
+    assert.match(own, /data-alloc-suggestion-note="pat@school.edu"[^>]*>\+ note<\/button>/);
+    const empty = deskMod.allocationHodMarkup({ ...hodDesk, students: [] });
+    assert.match(empty, /Department allocation: 0\/0/);
+    assert.match(empty, /Cohort allocation: 0\/0/);
     const janeAt = own.indexOf('data-alloc-suggest="jane@school.edu"');
     assert.doesNotMatch(own.slice(janeAt, janeAt + 220), /disabled/);
+    assert.match(own, /<div class="alloc-hod-subject"><span class="alloc-hod-subject-tag"><span class="id-tag id-tag-on"[^>]*>ID<\/span><\/span><span>Psychology \(and Theater\)<\/span><\/div>/);
+    assert.match(own, /<div class="alloc-hod-subject"><span class="alloc-hod-subject-tag"><\/span><span>Psychology<\/span><\/div>/);
+    const longSubject = deskMod.allocationHodRowMarkup(student({
+      selectedSubject: 'Business Management',
+      selectedInterdisciplinary: true,
+      interdisciplinarySubject: 'Sports, Exercise & Health Sciences',
+    }), hodDesk, true);
+    assert.match(longSubject, /<span>Business Management \(and Sports, Exercise &amp; Health Sciences\)<\/span>/);
+    const missingSubject = deskMod.allocationHodRowMarkup(student({
+      selectedSubject: 'Psychology',
+      selectedInterdisciplinary: true,
+      interdisciplinarySubject: '  ',
+    }), hodDesk, true);
+    assert.match(missingSubject, /id-tag-on/);
+    assert.doesNotMatch(missingSubject, /\(and /);
+    const notSelected = deskMod.allocationHodRowMarkup(student({
+      selectedSubject: 'Psychology',
+      selectedInterdisciplinary: false,
+      interdisciplinarySubject: 'Theater',
+    }), hodDesk, true);
+    assert.doesNotMatch(notSelected, /id-tag|and Theater/);
     assert.match(own, /Dr Psy \(2\/3\)/);
     assert.match(own, /Certify & Submit Suggestions/);
     state.allocationHodStatus = { byDepartment: { humanities: { department: 'Humanities', submitted: true, submittedAt: '2026-11-04T00:00:00.000Z', submittedBy: 'hod@school.edu' } } };
     const locked = deskMod.allocationHodMarkup(hodDesk);
     assert.match(locked, /data-alloc-suggest="jane@school.edu"[^>]*disabled/);
+    assert.match(locked, /class="alloc-hod-note-text">Great &amp; relevant<\/span>/);
+    assert.doesNotMatch(locked, /data-alloc-suggestion-note=/);
     assert.match(locked, /Submitted/);
     assert.match(own, /data-table-header="alloc-hod-status"/);
     assert.match(own, /HOD listing/);

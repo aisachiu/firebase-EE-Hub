@@ -4,6 +4,10 @@ import { assignMilestonesToStudents } from './actions';
 import { setMilestoneAnchor } from './admin';
 import {
   deleteCohortMilestone,
+  previewCohortMilestoneAssignments,
+  manageCohortMilestoneAssignments,
+  listCohortMilestoneArchives,
+  restoreCohortMilestoneAssignment,
   getPathwayPlan,
   saveCohortMilestone,
   saveCohortPhase,
@@ -18,6 +22,7 @@ import { COLLECTIONS } from './schema';
 import { App } from './session';
 import { Store } from './store';
 import { addDays, Doc, parseActionDate, serializeDateOnly } from './util';
+import { milestoneAssignmentScope } from './milestoneManagement';
 
 const coordinator: HubUser = {
   email: 'coordinator@vsa.example.edu',
@@ -35,6 +40,10 @@ class MemoryStore {
 
   async list(name: string): Promise<Doc[]> {
     return Object.values(this.docs[name] || {}).map((row) => ({ ...row }));
+  }
+
+  async listMilestoneActionItems(_milestoneId: string): Promise<Doc[]> {
+    return this.list(COLLECTIONS.studentActionItems);
   }
 
   async get(name: string, id: string): Promise<Doc | null> {
@@ -99,6 +108,32 @@ class MemoryStore {
 
   async removeCohortMilestone(cohortId: string, milestoneId: string): Promise<void> {
     delete (this.milestones[cohortId] || {})[milestoneId];
+  }
+
+  async manageCohortMilestoneAssignments(cohortId: string, milestoneId: string, signature: string, action: 'reset' | 'delete', actor: string, now: string): Promise<number> {
+    const scope = milestoneAssignmentScope(await this.list(COLLECTIONS.studentActionItems), await this.listMembers(cohortId), cohortId, milestoneId);
+    if (scope.signature !== signature) throw new Error('Assignments changed since the preview. Refresh the preview and try again.');
+    for (const row of scope.assignments) {
+      if (action === 'delete') await this.remove(COLLECTIONS.studentActionItems, row.taskId);
+      else await this.set(COLLECTIONS.studentActionItems, row.taskId, { ...await this.get(COLLECTIONS.studentActionItems, row.taskId), Status: 'Pending', LastUpdated: now, UpdatedBy: actor });
+    }
+    return scope.assignments.length;
+  }
+
+  async deleteUnassignedCohortMilestone(cohortId: string, milestoneId: string): Promise<void> {
+    if (!await this.getCohortMilestone(cohortId, milestoneId)) throw new Error('Record not found.');
+    const scope = milestoneAssignmentScope(await this.list(COLLECTIONS.studentActionItems), await this.listMembers(cohortId), cohortId, milestoneId);
+    if (scope.assignments.length || scope.excluded.some((row) => row.reason === 'legacy')) throw new Error('This milestone has assigned action items or ambiguous legacy assignments and cannot be deleted.');
+    await this.removeCohortMilestone(cohortId, milestoneId);
+  }
+
+  async listCohortMilestoneArchives(cohortId: string): Promise<Doc[]> {
+    return this.list(`archive:${cohortId}`);
+  }
+
+  async restoreCohortMilestoneAssignment(cohortId: string, archiveId: string): Promise<void> {
+    if (!await this.get(`archive:${cohortId}`, archiveId)) throw new Error('Archive entry not found.');
+    await this.remove(`archive:${cohortId}`, archiveId);
   }
 
   async addAudit(): Promise<void> {}
@@ -200,6 +235,85 @@ test('assigning milestones uses the cohort set when one exists', async () => {
   assert.equal(String(anchor?.DueDate).slice(0, 10), '2027-06-01');
   await assert.rejects(deleteCohortMilestone(app, '2027', 'm1'), /assigned action items/);
   await assert.rejects(deleteCohortMilestone(app, '2026', 'm1'), /Create this cohort/);
+});
+
+test('cohort milestone management previews, resets and deletes in-scope linked assignments', async () => {
+  const store = new MemoryStore();
+  await seedTemplate(store);
+  const app = appFor(store, coordinator);
+  await seedCohortPathway(app, '2027', { kind: 'template' }, '2027-12-01');
+  const task = { CreatorType: 'System', TemplateId: 'm1', StudentId: student.email, Status: 'Completed', DueDate: '2027-02-01', LastUpdated: 'original' };
+  await store.set(COLLECTIONS.studentActionItems, 'current', { ...task, TaskId: 'current', cohortId: '2027' });
+  await store.set(COLLECTIONS.studentActionItems, 'legacy', { ...task, TaskId: 'legacy', Status: 'In Progress' });
+  await store.set(COLLECTIONS.studentActionItems, 'other', { ...task, TaskId: 'other', cohortId: '2026' });
+  await store.set(COLLECTIONS.studentActionItems, 'former', { ...task, TaskId: 'former', StudentId: 'former@example.edu', cohortId: '2027' });
+  await store.set(COLLECTIONS.studentActionItems, 'todo', { ...task, TaskId: 'todo', TemplateId: '', cohortId: '2027', CreatorType: 'Student' });
+  await store.set(COLLECTIONS.studentActionItems, 'linked-todo', { ...task, TaskId: 'linked-todo', cohortId: '2027', CreatorType: 'Student' });
+  await store.set(COLLECTIONS.formResponses, 'response', { MilestoneId: 'm1', StudentId: student.email, Status: 'Submitted' });
+  await store.set(COLLECTIONS.milestoneEvents, 'event', { MilestoneId: 'm1', TaskId: 'current', Comment: 'Kept' });
+  const preview = await previewCohortMilestoneAssignments(app, '2027', 'm1');
+  assert.deepEqual(preview.assignments.map((row) => row.taskId), ['current', 'former', 'linked-todo']);
+  assert.equal(preview.assignments.find((row) => row.taskId === 'linked-todo')?.creator, 'Student');
+  assert.deepEqual(preview.excluded.map((row) => row.taskId), ['legacy', 'other']);
+  await assert.rejects(previewCohortMilestoneAssignments(appFor(store, student), '2027', 'm1'), /Access denied/);
+  const reset = await manageCohortMilestoneAssignments(app, '2027', 'm1', 'reset', preview.signature);
+  assert.equal(reset.changed, 3);
+  assert.equal((await store.get(COLLECTIONS.studentActionItems, 'legacy'))?.Status, 'In Progress');
+  assert.equal((await store.get(COLLECTIONS.studentActionItems, 'current'))?.DueDate, '2027-02-01');
+  assert.equal((await store.get(COLLECTIONS.studentActionItems, 'other'))?.Status, 'Completed');
+  assert.equal((await store.get(COLLECTIONS.studentActionItems, 'todo'))?.Status, 'Completed');
+  await assert.rejects(manageCohortMilestoneAssignments(app, '2027', 'm1', 'delete', preview.signature), /changed since the preview/);
+  const fresh = await previewCohortMilestoneAssignments(app, '2027', 'm1');
+  await assert.rejects(manageCohortMilestoneAssignments(app, '2027', 'm1', 'invalid', fresh.signature), /Choose reset, archive or delete/);
+  await assert.rejects(manageCohortMilestoneAssignments(appFor(store, student), '2027', 'm1', 'delete', fresh.signature), /Access denied/);
+  const deleted = await manageCohortMilestoneAssignments(app, '2027', 'm1', 'delete', fresh.signature);
+  assert.equal(deleted.changed, 3);
+  assert.equal(await store.get(COLLECTIONS.studentActionItems, 'current'), null);
+  assert.ok(await store.get(COLLECTIONS.studentActionItems, 'other'));
+  assert.ok(await store.get(COLLECTIONS.studentActionItems, 'todo'));
+  assert.ok(await store.get(COLLECTIONS.formResponses, 'response'));
+  assert.ok(await store.get(COLLECTIONS.milestoneEvents, 'event'));
+  await assert.rejects(deleteCohortMilestone(app, '2027', 'm1'), /ambiguous legacy/);
+  await store.remove(COLLECTIONS.studentActionItems, 'legacy');
+  await deleteCohortMilestone(app, '2027', 'm1');
+  assert.equal(await store.getCohortMilestone('2027', 'm1'), null);
+});
+
+test('cohort assignment preview rejects invalid task IDs and handles empty cohorts', async () => {
+  const store = new MemoryStore();
+  await seedTemplate(store);
+  const app = appFor(store, coordinator);
+  await seedCohortPathway(app, '2027', { kind: 'template' }, '2027-12-01');
+  const empty = await previewCohortMilestoneAssignments(app, '2027', 'm1');
+  assert.deepEqual(empty.assignments, []);
+  await store.set(COLLECTIONS.studentActionItems, 'bad', { StudentId: student.email, CreatorType: 'System', TemplateId: 'm1', cohortId: '2027' });
+  await assert.rejects(previewCohortMilestoneAssignments(app, '2027', 'm1'), /no TaskId/);
+  await assert.rejects(deleteCohortMilestone(app, '2027', 'm1'), /no TaskId/);
+});
+
+test('archive listing and restoration require administrator access and a valid entry', async () => {
+  const store = new MemoryStore();
+  await seedTemplate(store);
+  const app = appFor(store, coordinator);
+  await seedCohortPathway(app, '2027', { kind: 'template' }, '2027-12-01');
+  await store.set('archive:2027', 'entry', { task: { TaskId: 'a' } });
+  await assert.rejects(listCohortMilestoneArchives(appFor(store, student), '2027'), /Access denied/);
+  await assert.rejects(restoreCohortMilestoneAssignment(appFor(store, student), '2027', 'entry'), /Access denied/);
+  await assert.rejects(restoreCohortMilestoneAssignment(app, '2027', 'bad/id'), /valid archive entry/);
+  assert.equal((await listCohortMilestoneArchives(app, '2027')).length, 1);
+  await restoreCohortMilestoneAssignment(app, '2027', 'entry');
+  assert.equal((await listCohortMilestoneArchives(app, '2027')).length, 0);
+});
+
+test('legacy aliases and malformed excluded records are handled without crossing cohorts', () => {
+  const member = { StudentId: 'login@example.edu', 'Student Email': 'other@example.edu', 'Display Name': 'Student' };
+  const legacy = { TaskId: 'legacy', studentId: 'other@example.edu', creatorType: 'system', milestoneId: 'm1', Status: 'Completed' };
+  const excluded = { StudentId: 'login@example.edu', CreatorType: 'System', TemplateId: 'm1', cohortId: '2026' };
+  const scope = milestoneAssignmentScope([legacy, excluded], [member], '2027', 'm1');
+  assert.equal(scope.assignments.length, 0);
+  assert.equal(scope.excluded.find((row) => row.reason === 'legacy')?.canonicalStudentId, 'login@example.edu');
+  assert.equal(scope.excluded.find((row) => row.reason === 'other-cohort')?.taskId, '');
+  assert.throws(() => milestoneAssignmentScope([{ ...legacy, cohortId: '2027' }, { ...legacy, cohortId: '2027' }], [member], '2027', 'm1'), /duplicate TaskIds/);
 });
 
 test('notification planning uses the cohort milestone owner', () => {

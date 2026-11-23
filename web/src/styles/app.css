@@ -200,9 +200,20 @@ a.icon-button svg { display: block; }
 .journey .step.sync-confirmed,
 .here-card.sync-confirmed,
 .form-panel.sync-confirmed { animation: plan-saved-outline .85s ease both; }
-.journey .step.done h3 { color: var(--muted); font-weight: 600; }
+.journey .step.done .journey-step-title { color: var(--muted); font-weight: 600; }
 .step-top { display: flex; justify-content: space-between; gap: 6px 10px; align-items: baseline; flex-wrap: wrap; }
 .step-top h3 { margin: 0; font-size: 15px; }
+.journey-step-heading { flex: 1; min-width: 0; margin: 0; }
+.journey-step-toggle { display: flex; flex: 1; align-items: baseline; gap: 6px 10px; width: 100%; min-width: 0; padding: 0; border: 0; color: inherit; background: transparent; text-align: left; cursor: pointer; }
+.journey-step-toggle:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
+.journey-step-title { flex: 1; min-width: 0; font-size: 15px; font-weight: 700; overflow-wrap: anywhere; }
+.journey-step-toggle .muted { font-size: 13px; }
+.journey-step-chevron { flex: none; width: 8px; height: 8px; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; transform: rotate(45deg); }
+.journey-step-toggle[aria-expanded="true"] .journey-step-chevron { transform: rotate(225deg); }
+.here-card .journey-step-title { font-size: 18px; }
+.here-card .step-actions .icon-button { color: white; }
+.here-card .step-actions .icon-button:hover, .here-card .step-actions .icon-button:focus-visible { color: var(--ink); }
+.journey [data-journey-details][hidden] { display: none; }
 .journey .step p { margin: 3px 0 0; }
 .journey-panel { position: fixed; top: 0; right: 0; z-index: 25; height: 100vh; width: 36px; overflow: hidden; background: var(--ink); transition: width .2s ease; }
 .journey-panel.open { width: clamp(300px, 34vw, 420px); background: #f6f8f9; border-left: 1px solid var(--line); box-shadow: -8px 0 24px rgba(0, 30, 50, .12); }
@@ -423,6 +434,8 @@ main.plan-wide { max-width: none; padding-inline: clamp(12px, 2vw, 28px); }
 .chip.ok { background: var(--green-soft); color: #0d7a5f; }
 .form-dialog { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: 12px; background: rgba(0, 30, 50, .45); }
 .form-dialog[hidden] { display: none; }
+.form-panel.milestone-management { width: min(760px, 100%); max-height: 90vh; overflow-y: auto; }
+.milestone-management-table { max-height: 320px; }
 .form-panel { width: min(720px, 100%); max-height: calc(100vh - 24px); overflow: auto; padding: 14px; background: white; border-top: 4px solid var(--gold); }
 .form-panel.member-editor { width: min(920px, 100%); }
 .milestone-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 8px 0; border-top: 1px solid var(--line); }
@@ -849,6 +862,15 @@ main.staff-list { max-width: 1480px; }
 .alloc-hod-status-row { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; padding: 8px 10px; background: white; border: 1px solid var(--line); border-radius: 4px; }
 .alloc-hod-lock select { color: var(--muted); }
 .alloc-hod-warn { margin: 8px 0 0; }
+.alloc-hod-subject { display: grid; grid-template-columns: 36px minmax(0, 1fr); align-items: start; gap: 8px; }
+.alloc-hod-subject-tag { white-space: nowrap; }
+.alloc-hod-stats { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 4px 16px; color: var(--muted); font-size: 12px; }
+.alloc-hod-suggestion { display: flex; align-items: flex-start; gap: 8px; }
+.alloc-hod-suggestion select { min-width: 0; max-width: 100%; }
+.alloc-hod-note-button, .alloc-hod-note-text { min-width: 0; flex: 1 1 100px; overflow-wrap: anywhere; white-space: pre-wrap; font-size: 12px; }
+.alloc-hod-note-button { padding: 2px 0; border: 0; background: transparent; color: var(--green); text-align: left; text-decoration: underline; cursor: pointer; }
+.alloc-suggestion-note { margin: 4px 0; color: var(--muted); font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+#alloc-suggestion-note-input { display: block; width: 100%; max-width: 100%; }
 .alloc-teacher-select { width: 100%; min-width: 160px; padding: 7px 9px; color: var(--ink); background: white; border: 1px solid var(--line); border-radius: 3px; }
 .alloc-teacher-select option.alloc-teacher-empty,
 .alloc-batch select option.alloc-teacher-empty {

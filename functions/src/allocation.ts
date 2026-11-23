@@ -630,14 +630,41 @@ export async function suggestAllocation(app: App, cohortId: unknown, studentId: 
       suggestedSubject = existing.selectedSubject;
     }
     const now = nowIso();
-    await app.store.setWorkspace(cohort.id, email, {
-      ...existing,
+    await app.store.updateWorkspace(cohort.id, email, {
       studentId: email,
       suggestedStaffId,
       suggestedSubject,
       updatedAt: now,
     });
     return { studentId: email, suggestedStaffId, suggestedSubject };
+  });
+}
+
+export async function saveAllocationSuggestionNote(app: App, cohortId: unknown, studentId: unknown, noteValue: unknown) {
+  const user = await requireHod(app, 'SAVE_ALLOCATION_SUGGESTION_NOTE');
+  const cohort = await requireCohort(app, text(cohortId));
+  const email = normalizeEmail(studentId);
+  if (typeof noteValue !== 'string') throw new HubError('Suggestion note must be text.');
+  const note = noteValue.trim();
+  if (note.length > 2000) throw new HubError('Suggestion notes must be 2,000 characters or fewer.');
+  return audited(app, user, 'SAVE_ALLOCATION_SUGGESTION_NOTE', { cohortId: cohort.id, studentId: email }, async () => {
+    await requireActiveMember(app, cohort.id, email);
+    const department = await callerDepartment(app, user.email);
+    if (!departmentKey(department)) throw new HubError('Your staff record has no primary department.');
+    const catalogue = subjectCatalogueFrom(await app.store.list(COLLECTIONS.subjects));
+    const existing = workspaceFromDoc(await app.store.getWorkspace(cohort.id, email) || {}, email);
+    if (!existing.selectedSubject) throw new HubError('Choose a subject before adding a suggestion note.');
+    if (!departmentsMatch(departmentOfSubject(existing.selectedSubject, catalogue), department)) {
+      throw new HubError('That subject is outside your department.');
+    }
+    const status = hodStatusFromDoc(await app.store.getHodStatus(cohort.id));
+    if (departmentSubmitted(status, department)) throw new HubError('Suggestions for this department are submitted. Reopen them before editing.');
+    const tokens = tokensFrom(await app.store.listTokens(cohort.id), cohort.id);
+    if (tokens.some((token) => token.allocatedTo === email && token.status === 'committed')) {
+      throw new HubError('This allocation is published. Unpublish it before changing the suggestion.');
+    }
+    await app.store.updateWorkspace(cohort.id, email, { suggestionNote: note, updatedAt: nowIso() });
+    return { studentId: email, suggestionNote: note };
   });
 }
 

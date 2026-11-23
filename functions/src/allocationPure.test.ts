@@ -870,6 +870,7 @@ test('workspace fields round-trip and survive choice merges', () => {
     selectedSubject: 'History',
     suggestedStaffId: 'Smith@Vsa.edu',
     suggestedSubject: 'History',
+    suggestionNote: 'Consider this teacher',
     isFlagged: true,
     flagNote: 'Check the proposal',
   }, JANE);
@@ -877,6 +878,7 @@ test('workspace fields round-trip and survive choice merges', () => {
   assert.equal(round.selectedSubject, 'History');
   assert.equal(round.suggestedStaffId, SMITH);
   assert.equal(round.suggestedSubject, 'History');
+  assert.equal(round.suggestionNote, 'Consider this teacher');
   assert.equal(round.isFlagged, true);
   assert.equal(round.flagNote, 'Check the proposal');
   const legacy = workspaceFromDoc({}, JANE);
@@ -897,6 +899,7 @@ test('workspace fields round-trip and survive choice merges', () => {
     selectedSubject: 'History',
     suggestedStaffId: SMITH,
     suggestedSubject: 'History',
+    suggestionNote: 'Keep this note',
   };
   const live = mergeLiveChoiceRow(prior, {
     line: 2,
@@ -915,6 +918,7 @@ test('workspace fields round-trip and survive choice merges', () => {
   assert.equal(live.selectedSubject, 'History');
   assert.equal(live.suggestedStaffId, SMITH);
   assert.equal(live.suggestedSubject, 'History');
+  assert.equal(live.suggestionNote, 'Keep this note');
   assert.equal(live.isFlagged, true);
   assert.equal(live.flagNote, 'Keep me');
   const again = mergeStaticWorkspaceRow({
@@ -926,6 +930,7 @@ test('workspace fields round-trip and survive choice merges', () => {
   assert.equal(again.subjectChoices.choice1, 'Physics');
   assert.equal(again.selectedSubject, 'History');
   assert.equal(again.suggestedStaffId, SMITH);
+  assert.equal(again.suggestionNote, 'Keep this note');
   assert.equal(again.isFlagged, true);
   assert.equal(again.flagNote, 'Keep me');
 });

@@ -28,7 +28,7 @@ import {
 } from '../shared/tables.js';
 
 export function listingDialogKind(kind) {
-  return kind === 'admin-record' || kind === 'notice-rule' || kind === 'cohort-token' || kind === 'assignment-anchor' || kind === 'pathway-anchor' || kind === 'allocation-data' || kind === 'allocation-interdisciplinary' || kind === 'allocation-undo';
+  return kind === 'admin-record' || kind === 'notice-rule' || kind === 'cohort-token' || kind === 'assignment-anchor' || kind === 'pathway-anchor' || kind === 'milestone-management' || kind === 'allocation-data' || kind === 'allocation-interdisciplinary' || kind === 'allocation-undo' || kind === 'allocation-suggestion-note';
 }
 
 export function adminDialogKind() {

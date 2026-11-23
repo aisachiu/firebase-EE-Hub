@@ -96,6 +96,8 @@ export const state = {
   importRecords: null,
   journeyHeroExpanded: true,
   journeyFilters: { phaseId: 'all', showSystem: true, showStudent: true },
+  journeyDisclosureIdentity: '',
+  journeyExpanded: {},
   editingTodo: '',
   journeySync: {},
   formViews: {},

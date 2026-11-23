@@ -38,6 +38,7 @@ export interface WorkspaceRecord {
   suggestedStaffId?: string;
   /** selectedSubject at the time of the suggestion. */
   suggestedSubject?: string;
+  suggestionNote?: string;
   updatedAt: string;
 }
 
@@ -209,6 +210,7 @@ export interface DeskStudent {
   suggestedStaffId: string;
   suggestedSubject: string;
   suggestedStaffName: string;
+  suggestionNote: string;
   flags: {
     drafted: boolean;
     committed: boolean;
@@ -1240,6 +1242,7 @@ export function emptyWorkspaceRecord(studentId: string, now: string): WorkspaceR
     interdisciplinarySubject: '',
     suggestedStaffId: '',
     suggestedSubject: '',
+    suggestionNote: '',
     updatedAt: now,
   };
 }
@@ -1254,6 +1257,7 @@ function carriedWorkspace(existing: WorkspaceRecord | undefined) {
     interdisciplinarySubject: text(existing?.interdisciplinarySubject),
     suggestedStaffId: normalizeEmail(existing?.suggestedStaffId),
     suggestedSubject: text(existing?.suggestedSubject),
+    suggestionNote: text(existing?.suggestionNote),
   };
 }
 
@@ -1488,6 +1492,7 @@ export function workspaceFromDoc(doc: Doc, id: string): WorkspaceRecord {
     selectedSubject: text(doc.selectedSubject),
     suggestedStaffId: normalizeEmail(doc.suggestedStaffId),
     suggestedSubject: text(doc.suggestedSubject),
+    suggestionNote: text(doc.suggestionNote),
     selectedInterdisciplinary: typeof doc.selectedInterdisciplinary === 'boolean' ? doc.selectedInterdisciplinary : undefined,
     interdisciplinarySubject: text(doc.interdisciplinarySubject),
     updatedAt: text(doc.updatedAt),
@@ -2573,6 +2578,7 @@ export function buildDesk(input: {
         suggestedStaffId: normalizeEmail(workspace?.suggestedStaffId),
         suggestedSubject: text(workspace?.suggestedSubject),
         suggestedStaffName: names.get(normalizeEmail(workspace?.suggestedStaffId)) || '',
+        suggestionNote: text(workspace?.suggestionNote),
         requestedSubjects,
         supportFlags,
         token: token ? {
